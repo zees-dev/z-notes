@@ -1,0 +1,226 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: znotes
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+spec:
+  # ===========================================================================
+  # SINGLE REPLICA. THIS IS A CORRECTNESS CONSTRAINT, NOT A COST DECISION.
+  # Do not raise it. Two things break, both silently:
+  #
+  #   1. THE SQLITE INDEX. <vault>/.znotes/index.db is opened read-write by
+  #      every replica. WAL permits multiple *processes*, but only via POSIX
+  #      advisory locks on one machine — and each replica would additionally
+  #      maintain its own in-memory reconcile state, its own AI session table
+  #      writes and its own proposal pre-image stack. SPEC §8's LIFO revert is
+  #      enforced server-side against that stack; a second writer turns
+  #      "revert strictly LIFO" into a race. On a ReadWriteMany volume it is
+  #      worse: sqlite over a network filesystem corrupts.
+  #
+  #   2. THE WATCHER. watch.ts is one fs.watch on the vault root, debounced
+  #      120ms, then a full reconcile (research §3). Reconcile is a
+  #      read-modify-write against the index, serialised in-process by
+  #      recon.lock(). That lock is a JS mutex — it is process-local and means
+  #      nothing to a second pod. Two reconcilers racing on the same directory
+  #      produce interleaved index writes and duplicate/missing `doc-changed`
+  #      SSE events.
+  #
+  #   3. (and git) SPEC §7 sync does add/commit/push against one working tree.
+  #      Two pods each taking .git/index.lock is a coin flip, not a merge.
+  #
+  # Multi-DEVICE is already supported and is a different thing: any number of
+  # browsers on the tailnet talk to this one process, and SPEC §5's doc-rev +
+  # SSE reconciliation is what makes concurrent viewers safe.
+  # ===========================================================================
+  replicas: 1
+  # Recreate, not RollingUpdate: RWO means the new pod cannot attach the volume
+  # while the old one holds it, so a rolling update would deadlock on the PVC
+  # even before the two-writers problem above.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: z-notes
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: z-notes
+    spec:
+      # The process exits within milliseconds of SIGTERM: server.ts's
+      # shutdown() closes every SSE controller, stops the reconciler, calls
+      # gitSync.stop() — which SIGKILLs every live git child so a push can
+      # never outlive the pod and strand .git/index.lock — closes the sqlite
+      # handle and calls process.exit(0). There is no drain loop to wait on.
+      #
+      # 30s is therefore pure headroom, and it is the right amount: it is long
+      # enough that the kubelet never has to escalate to SIGKILL (which would
+      # skip index.close() and leave the WAL to be replayed on next boot), and
+      # short enough that a restart is not a coffee break. Raising it buys
+      # nothing, because nothing in the shutdown path blocks. Lowering it below
+      # ~5s risks racing the git children's reaping.
+      terminationGracePeriodSeconds: 30
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000        # `bun` in the oven/bun base image
+        runAsGroup: 1000
+        # fsGroup makes the PVC group-owned by 1000 so the non-root process can
+        # write the vault, the sqlite WAL and the git tree. OnRootMismatch skips
+        # the recursive chown when the top-level ownership is already right —
+        # without it every restart walks the whole vault plus .git.
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: znotes
+          # Built from deploy/Dockerfile and side-loaded with
+          # `k3s ctr images import` (see deploy/README.md). IfNotPresent — not
+          # Always — because there is no registry to pull from; Always would
+          # make the pod ImagePullBackOff forever. The tag is pinned (never
+          # :latest) so an imported image is unambiguous.
+          image: z-notes:0.1.0
+          imagePullPolicy: IfNotPresent
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # Nothing writes to the image filesystem: server.ts only ever
+            # writes under $ZNOTES_VAULT, and the /vendor/age.js bundle is built
+            # by Bun.build into MEMORY at boot and never hits disk. /tmp is an
+            # emptyDir below for anything in bun or git that wants scratch.
+            readOnlyRootFilesystem: true
+
+          ports:
+            - name: http
+              containerPort: 4700
+              protocol: TCP
+
+          env:
+            # The vault path is injected, never derived from the code's own
+            # location — research §5's /$bunfs/root caveat, and the reason this
+            # image works identically under `docker run -v` and under k8s.
+            - name: ZNOTES_VAULT
+              value: /vault
+            - name: ZNOTES_PORT
+              value: "4700"
+            # git 2.35.2+ refuses to operate on a repo whose owning UID differs
+            # from the caller's ("detected dubious ownership"). fsGroup fixes
+            # the GROUP of the PVC but leaves the UID as whatever created it, so
+            # a vault seeded by root on the host would break every sync with a
+            # message that looks nothing like a permissions problem. These three
+            # env vars are git's file-less config channel: equivalent to
+            # `git config --global --add safe.directory /vault`, but with no
+            # writable HOME and no baked-in config file.
+            - name: GIT_CONFIG_COUNT
+              value: "1"
+            - name: GIT_CONFIG_KEY_0
+              value: safe.directory
+            - name: GIT_CONFIG_VALUE_0
+              value: /vault
+            # NOTE ON SECRETS: there is deliberately no GitHub token and no AI
+            # key here. SPEC §7/§9 put both in sqlite inside the vault, entered
+            # through the settings UI. Nothing in this manifest is a credential,
+            # so nothing in this manifest needs to be sealed, and `kubectl get
+            # deploy -o yaml` leaks nothing.
+            #
+            # NOTE ON THE AI ENDPOINT: it is a SETTING, not an env var, so it
+            # comes from `.znotes/settings.toml` in the mounted vault (the same
+            # value the Settings UI writes). The shipped default —
+            # `https://cliproxy.k3s.lan/v1` — is the Traefik ingress, which is
+            # correct from a laptop on the LAN but WRONG from inside this
+            # cluster: `.lan` is resolved by the LAN's DNS, not CoreDNS, and
+            # routing pod → ingress → back into the cluster is a hairpin for no
+            # gain. A vault mounted here should set:
+            #
+            #   [ai]
+            #   baseUrl = "http://cliproxy.cliproxy.svc.cluster.local:8317/v1"
+            #
+            # (plain http is fine on that path: it never leaves the cluster
+            # network, and the ingress TLS exists for the LAN hop.)
+
+          volumeMounts:
+            - name: vault
+              mountPath: /vault
+            - name: tmp
+              mountPath: /tmp
+
+          # ---- probes: all three point at GET /healthz, which touches no
+          # disk, no sqlite and no git (see the route comment in server.ts) ----
+
+          # Bun.serve is only called AFTER the boot-time full reconcile, the
+          # vendor bundle build and the first git observation have awaited — so
+          # the port does not open until the index is warm, and a connection
+          # refused here means "still indexing", not "broken". 60 * 2s = up to
+          # two minutes for a cold first index on a large vault; the liveness
+          # probe does not start until this one passes, so a slow first boot can
+          # never be mistaken for a hang and restart-looped.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+
+          # Is the event loop still serving HTTP? Nothing more. Generous
+          # thresholds on purpose: restarting this pod costs a full reindex, so
+          # a single slow response must never trigger one.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Tight, because this is what gates the Service. /healthz answers 503
+          # the instant `closing` flips in shutdown(), so the endpoint is pulled
+          # before the socket goes away.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          # ---- resources, sized for ONE person's markdown vault ----
+          #
+          # requests are what the scheduler reserves and what the pod is
+          # guaranteed. Steady state for this process is a Bun runtime (~40-70MB
+          # RSS), the sqlite index and its page cache, and the in-memory
+          # /vendor/age.js bundle — comfortably inside 192Mi, and near-zero CPU
+          # while nobody is typing.
+          #
+          # limits cover the three genuine spikes: the boot-time Bun.build of
+          # the age bundle, a full Glob+stat+hash reconcile of the vault, and an
+          # AI turn streaming through gpt-tokenizer. 1 CPU lets each of those
+          # finish fast instead of being throttled into a probe timeout.
+          #
+          # The memory limit is the load-bearing one: without it a runaway
+          # reconcile evicts other workloads on a single-node k3s box. With it,
+          # the worst case is an OOMKill — which WAL makes survivable (the next
+          # open replays the log) and which the markdown-is-truth model makes
+          # non-destructive (SPEC §5: deleting the index never loses notes).
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+
+      volumes:
+        - name: vault
+          persistentVolumeClaim:
+            claimName: znotes-vault
+        # Required because readOnlyRootFilesystem is true. Small and ephemeral:
+        # nothing durable is ever written here — git's scratch, Bun's scratch.
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

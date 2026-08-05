@@ -1,0 +1,205 @@
+# z-notes CI — PHASE 6 (SPEC.md §11 + §12).
+#
+# Three jobs, run in parallel:
+#   hygiene  — bun-only toolchain and no disabled tests (seconds, no install)
+#   gates    — the five SPEC §11 acceptance gates, one named step each
+#   suite    — the whole `bun test` run, so nothing outside the gates rots
+#
+# Bun-only by construction: oven-sh/setup-bun + `bun install --frozen-lockfile`.
+# No npm, no node, no `npx` anywhere — `bunx` is bun's runner.
+#
+# Nothing is uploaded as an artifact: test vaults, server stdout and the AI mock
+# transcripts all carry note content, so they stay inside the runner.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # keep CI on the same bun the app is developed against
+  BUN_VERSION: "1.3.14"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  hygiene:
+    name: hygiene (bun-only, no disabled tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No npm/node lockfiles, node_modules or nvm pins in the repo
+        run: |
+          set -uo pipefail
+          fail=0
+
+          if [ ! -f bun.lock ]; then
+            echo "::error file=bun.lock::bun.lock is missing — the bun-only toolchain needs its lockfile committed"
+            fail=1
+          fi
+
+          # anything git is tracking that belongs to npm/yarn/pnpm/node
+          tracked=$(git ls-files -- \
+            '*package-lock.json' '*npm-shrinkwrap.json' '*yarn.lock' '*pnpm-lock.yaml' \
+            '*pnpm-workspace.yaml' '*.nvmrc' '*.npmrc' '*.yarnrc' '*.yarnrc.yml' \
+            'node_modules/*' '*/node_modules/*' | sort -u)
+          if [ -n "$tracked" ]; then
+            echo "::error::committed npm/node artifacts (this repo is bun-only):"
+            echo "$tracked"
+            fail=1
+          fi
+
+          # and anything present in the checkout, tracked or not
+          present=$(find . \
+            -path ./.git -prune -o -path ./node_modules -prune -o \
+            -type f \( -name package-lock.json -o -name npm-shrinkwrap.json \
+                       -o -name yarn.lock -o -name pnpm-lock.yaml \
+                       -o -name .nvmrc -o -name .npmrc \) -print | sort -u)
+          if [ -n "$present" ]; then
+            echo "::error::npm/node lockfiles present in the working tree (this repo is bun-only):"
+            echo "$present"
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "bun-only: bun.lock present, no npm/yarn/pnpm/node artifacts."
+
+      - name: No .skip / .only / .todo in test files
+        run: |
+          set -uo pipefail
+          # matches describe/test/it followed by .skip( .only( .todo( .failing(
+          # — the trailing "(" is what keeps the legitimate conditional guards
+          # (test.skipIf(...), test.todoIf(...)) out of the net.
+          pattern='(^|[^A-Za-z0-9_$.])(describe|test|it)[[:space:]]*\.[[:space:]]*(skip|only|todo|failing)[[:space:]]*\('
+          if grep -rnE "$pattern" tests/; then
+            echo "::error::a test is disabled or exclusive — CI gates only mean something when every test runs"
+            exit 1
+          fi
+          echo "no disabled or exclusive tests."
+
+  # ---------------------------------------------------------------------------
+  gates:
+    name: SPEC §11 gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+
+      - name: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile
+
+      # The browser gates drive puppeteer-core over a Playwright-cached Chromium.
+      # tests/helpers.ts findChromium() globs the Playwright cache root, which on
+      # linux is ~/.cache/ms-playwright — exactly what `playwright install`
+      # populates below, so CI and a laptop find the browser the same way.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(bunx playwright --version | tr -d '\r' | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-chromium
+
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      # git.ts shells out to `git`; the gates that commit set their own per-repo
+      # identity, this is the belt-and-braces global so a bare runner cannot
+      # turn a gate failure into a "please tell me who you are" failure.
+      - name: Git identity
+        run: |
+          git config --global user.email "ci@z-notes.invalid"
+          git config --global user.name "z-notes CI"
+          git config --global init.defaultBranch main
+
+      - name: Gate 1/5 — round-trip (tests/roundtrip.test.ts)
+        timeout-minutes: 3
+        run: bun test tests/roundtrip.test.ts
+
+      - name: Gate 2/5 — reconcile (tests/reconcile.test.ts)
+        timeout-minutes: 3
+        run: bun test tests/reconcile.test.ts
+
+      - name: Gate 3/5 — LIFO (tests/ai.test.ts)
+        timeout-minutes: 5
+        run: bun test tests/ai.test.ts
+
+      - name: Gate 4/5 — leak canary (tests/leak.test.ts)
+        timeout-minutes: 3
+        run: bun test tests/leak.test.ts
+
+      - name: Gate 5/5 — parity (tests/e2e.test.ts)
+        timeout-minutes: 5
+        run: bun test tests/e2e.test.ts
+
+  # ---------------------------------------------------------------------------
+  suite:
+    name: full suite (bun test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+
+      - name: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile
+
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(bunx playwright --version | tr -d '\r' | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-chromium
+
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      # git.ts shells out to `git commit`; a runner with no identity aborts.
+      - name: Git identity for the sync tests
+        run: |
+          git config --global user.email "ci@z-notes.invalid"
+          git config --global user.name "z-notes CI"
+          git config --global init.defaultBranch main
+
+      - name: bun test
+        timeout-minutes: 10
+        run: bun test

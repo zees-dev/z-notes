@@ -1,0 +1,76 @@
+# z-notes settings — committed with the vault.
+#
+# This file is the STARTUP surface: hand-write it before first boot and the
+# server adopts it. Every key here is also editable at RUNTIME in Settings
+# (⌘,), which rewrites this file — so these comments are regenerated on
+# every write and your own will not survive. Out-of-range or unparseable
+# values are healed back to the default rather than refused, so a bad line
+# from another machine can never stop the app booting.
+#
+# FIRST-RUN CREDENTIALS. Credentials are deliberately absent below: they live
+# in .znotes/index.db only and are served masked. To configure one without
+# touching the UI, add `apiKey = "…"` to the ai section (or `token = "…"` to
+# the git section) and start the server — it is absorbed into index.db and
+# stripped from this file on the next write, so it is never committed.
+
+# Stylesheet: modern | minimal | terminal. Default: "minimal".
+theme = "minimal"
+# comfy | compact. Comfy is the everyday scale; compact is tighter still. Default: "comfy".
+density = "compact"
+# system | dark | light. `system` follows the OS and repaints live. Default: "system".
+colorScheme = "system"
+
+# Editor behaviour.
+[editor]
+# Write to disk this long after you stop typing. 1–3600 seconds, step 1. Default: 10.
+autosaveSeconds = 10
+# Clicking rendered text jumps to that line in Raw. Default: true.
+clickToEdit = true
+# Doc the vault button (top left) opens. Vault-relative path; empty means the first doc. Default: "index.md".
+homeDoc = "index.md"
+
+# Git sync. The remote itself is ordinary git config (`git remote add origin …`).
+[git]
+# Branch every sync commits to. Default: "main".
+branch = "main"
+# Commit + push after each autosave, pull on focus. Default: true.
+autoSync = true
+# Debounce: sync this long after the last change settles. 1–3600 seconds, step 1. Default: 60.
+autoSyncSeconds = 60
+
+# Browser-side auto-lock policy for encrypted blocks. Applied by the crypto worker.
+[secrets]
+# Lock the vault after this much inactivity. 1–480 minutes, step 1. Default: 15.
+idleLockMinutes = 15
+# Lock the vault after the tab has been hidden this long. 1–480 minutes, step 1. Default: 5.
+hiddenLockMinutes = 5
+# Hard ceiling on one unlocked session, activity or not. 1–72 hours, step 1. Default: 8.
+sessionHours = 8
+# Clear a copied secret from the clipboard after this long. 5–600 seconds, step 5. Default: 30.
+clipboardClearSeconds = 30
+
+# AI relay. The browser never talks to the endpoint; the server does.
+[ai]
+# OpenAI-compatible endpoint (POST {baseUrl}/responses); http:// or https:// only. Default: "https://cliproxy.k3s.lan/v1".
+baseUrl = "https://cliproxy.k3s.lan/v1"
+# Model id, as the endpoint names it. Default: "gpt-5.6-sol".
+model = "gpt-5.6-sol"
+# Reasoning effort. The UI offers low | medium | high; an endpoint may accept more. Default: "high".
+effort = "high"
+# Cap on one reply. 1000–200000 tokens, step 1000. Default: 32000.
+maxOutputTokens = 32000
+# Cap on the context assembled from your notes. 1000–2000000 tokens, step 1000. Default: 200000.
+contextBudgetTokens = 200000
+
+# Backend command runner. The password is NOT here — only a scrypt hash, in .znotes/index.db. To set one on a fresh install add `password = "…"` below and start the server; it is hashed, stripped from this file and never committed. An existing password can only be changed from Settings.
+[terminal]
+# Hard off-switch. Off also hides the run_command tool from the assistant. Default: true.
+enabled = true
+# Re-lock the terminal after this much inactivity. 1–480 minutes, step 1. Default: 10.
+idleLockMinutes = 10
+# Absolute path to the shell, or "" for $SHELL (else /bin/sh). Default: "".
+shell = ""
+# Absolute directory the first command starts in, or "" for the vault root. Default: "".
+startupCwd = ""
+# Let the assistant run commands WITHOUT your per-command approval. Off by default: note text and fetched documents can carry injected instructions, and this is what stops them becoming a shell. Default: false.
+allowAiAutoRun = false

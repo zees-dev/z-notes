@@ -1,0 +1,2770 @@
+<!DOCTYPE html>
+<html lang="en" data-density="comfy">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>z-notes — Modern</title>
+<style>
+/* ============================================================
+   z-notes · theme 01 "Modern"
+   Crisp SaaS-grade: clean neutrals, one confident indigo accent,
+   soft layered shadows, 10px radii, micro-interactions everywhere.
+   ============================================================ */
+
+:root{
+  /* palette */
+  --bg:          #eef0f5;
+  --bg-grad-a:   #e9ecf4;
+  --bg-grad-b:   #f4f5f8;
+  --panel:       #ffffff;
+  --panel-2:     #f7f8fb;
+  --panel-3:     #f1f3f8;
+  --line:        #e4e7ef;
+  --line-2:      #edeff5;
+  --text:        #12141c;
+  --text-2:      #3d4356;
+  --muted:       #8a90a4;
+  --muted-2:     #a7adbe;
+
+  --accent:      #4f46e5;
+  --accent-h:    #4338ca;
+  --accent-soft: #eef0fe;
+  --accent-soft2:#e2e5fd;
+  --accent-ring: rgba(79,70,229,.22);
+
+  --ok:          #12a150;
+  --ok-soft:     #e7f7ee;
+  --warn:        #b7791f;
+  --warn-soft:   #fdf5e5;
+  --danger:      #d5352c;
+  --danger-soft: #fdeceb;
+
+  --add-bg:      #e9f8ef;
+  --add-bd:      #b9e6cb;
+  --del-bg:      #fdedec;
+  --del-bd:      #f4c7c3;
+
+  --r-sm: 6px; --r: 9px; --r-lg: 14px; --r-xl: 20px;
+
+  --sh-1: 0 1px 1px rgba(16,20,40,.04), 0 1px 2px rgba(16,20,40,.05);
+  --sh-2: 0 1px 2px rgba(16,20,40,.05), 0 4px 12px -2px rgba(16,20,40,.08);
+  --sh-3: 0 2px 4px rgba(16,20,40,.04), 0 12px 28px -6px rgba(16,20,40,.16), 0 0 0 1px rgba(16,20,40,.04);
+  --sh-4: 0 24px 64px -12px rgba(12,16,38,.32), 0 0 0 1px rgba(16,20,40,.06);
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --ease: cubic-bezier(.32,.72,0,1);
+  --sidebar-w: 258px;
+  --chat-w: 348px;
+}
+
+/* ---------- density (this genuinely drives the whole app) ----------
+   Round 2: the old "Compact" values are now Comfy — and Comfy is the
+   default, so the whole app ships denser. Compact is tighter still. */
+:root[data-density="comfy"]{
+  --d-font: 14.5px;
+  --d-lh: 1.55;
+  --d-blk-gap: 6px;
+  --d-list-gap: 1px;
+  --d-sec-gap: 14px;
+  --d-row-h: 26px;
+  --d-row-gap: 0px;
+  --d-pane-pad: 9px;
+  --d-topbar: 46px;
+  --d-msg-gap: 11px;
+  --d-msg-pad: 8px 11px;
+  --d-doc-pad: 26px;
+  --d-ctl-h: 28px;
+  --d-status: 28px;
+  --d-raw-fs: 12.8px;
+  --d-raw-lh: 1.55;
+  --d-cell-pad: 5px 10px;
+  --d-pre-pad: 9px 12px;
+  --d-pre-lh: 1.5;
+}
+:root[data-density="compact"]{
+  --d-font: 13.4px;
+  --d-lh: 1.45;
+  --d-blk-gap: 4px;
+  --d-list-gap: 0px;
+  --d-sec-gap: 10px;
+  --d-row-h: 22px;
+  --d-row-gap: 0px;
+  --d-pane-pad: 7px;
+  --d-topbar: 38px;
+  --d-msg-gap: 8px;
+  --d-msg-pad: 6px 9px;
+  --d-doc-pad: 16px;
+  --d-ctl-h: 25px;
+  --d-status: 24px;
+  --d-raw-fs: 12.1px;
+  --d-raw-lh: 1.45;
+  --d-cell-pad: 3px 8px;
+  --d-pre-pad: 6px 10px;
+  --d-pre-lh: 1.42;
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  color:var(--text);
+  background:var(--bg);
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  font-size:var(--d-font);
+  overflow:hidden;
+  text-rendering:optimizeLegibility;
+}
+button,input,textarea,select{ font:inherit; color:inherit; }
+button{ background:none; border:0; padding:0; cursor:pointer; }
+a{ color:inherit; text-decoration:none; }
+
+::selection{ background:var(--accent-soft2); color:var(--text); }
+
+/* ---------- scrollbars ---------- */
+*{ scrollbar-width:thin; scrollbar-color:#cfd4e0 transparent; }
+::-webkit-scrollbar{ width:10px; height:10px; }
+::-webkit-scrollbar-track{ background:transparent; }
+::-webkit-scrollbar-thumb{
+  background:#d2d7e3; border-radius:99px;
+  border:3px solid transparent; background-clip:content-box;
+}
+::-webkit-scrollbar-thumb:hover{ background:#b9c0d1; background-clip:content-box; }
+
+/* ---------- shell ---------- */
+.app{
+  display:grid;
+  grid-template-columns:var(--sidebar-w) minmax(0,1fr) 0px;
+  /* explicit row track: without minmax(0,1fr) the auto min-size of the grid
+     items lets the shell grow past the viewport (see .scroll below) */
+  grid-template-rows:minmax(0,1fr);
+  height:100dvh; max-height:100dvh; overflow:hidden;
+  background:
+    radial-gradient(900px 420px at 8% -6%, #e5e8fb 0%, transparent 62%),
+    linear-gradient(168deg, var(--bg-grad-a), var(--bg-grad-b));
+  transition:grid-template-columns .38s var(--ease);
+}
+.app.chat-open{ grid-template-columns:var(--sidebar-w) minmax(0,1fr) var(--chat-w); }
+.app.sidebar-collapsed{ grid-template-columns:0px minmax(0,1fr) 0px; }
+.app.sidebar-collapsed.chat-open{ grid-template-columns:0px minmax(0,1fr) var(--chat-w); }
+
+/* ================= SIDEBAR ================= */
+.sidebar{
+  min-width:0; min-height:0; overflow:hidden;
+  display:flex; flex-direction:column;
+  border-right:1px solid rgba(210,215,228,.7);
+  background:linear-gradient(180deg, rgba(255,255,255,.55), rgba(255,255,255,.2));
+  backdrop-filter:saturate(1.2) blur(6px);
+}
+.sb-head{
+  height:var(--d-topbar); flex:0 0 auto;
+  display:flex; align-items:center; gap:9px;
+  padding:0 12px 0 14px;
+  transition:height .2s var(--ease);
+}
+.vault{
+  display:flex; align-items:center; gap:9px; min-width:0; flex:1;
+  padding:5px 7px 5px 5px; margin-left:-5px; border-radius:var(--r);
+  transition:background .15s;
+}
+.vault:hover{ background:rgba(255,255,255,.85); }
+.vault-mark{
+  width:26px; height:26px; flex:0 0 auto; border-radius:8px;
+  background:linear-gradient(145deg, #6d64f5, var(--accent) 55%, #3f36c9);
+  box-shadow:0 2px 6px -1px rgba(79,70,229,.55), inset 0 1px 0 rgba(255,255,255,.4);
+  display:grid; place-items:center; color:#fff; font-weight:700; font-size:13px; letter-spacing:-.04em;
+}
+.vault-name{ font-weight:640; font-size:13.5px; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.vault-sub{ font-size:11px; color:var(--muted); font-weight:500; margin-top:-1px; }
+
+.sb-search{ padding:0 12px 8px; flex:0 0 auto; }
+.search{
+  display:flex; align-items:center; gap:7px;
+  height:var(--d-ctl-h); padding:0 9px;
+  background:rgba(255,255,255,.9); border:1px solid var(--line);
+  border-radius:var(--r); box-shadow:var(--sh-1);
+  color:var(--muted); transition:border-color .15s, box-shadow .15s;
+}
+.search:focus-within{ border-color:#c3c6f7; box-shadow:0 0 0 3px var(--accent-ring); }
+.search{ width:100%; text-align:left; }
+.search:hover{ border-color:#c3c6f7; }
+.search .ph{ font-size:13px; color:var(--muted-2); }
+.search kbd{ margin-left:auto; }
+
+kbd{
+  font-family:var(--font); font-size:10.5px; font-weight:600; color:var(--muted);
+  background:#fff; border:1px solid var(--line); border-bottom-width:2px;
+  border-radius:5px; padding:1px 5px; line-height:1.5; white-space:nowrap;
+}
+
+.tree{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:2px var(--d-pane-pad) 10px; }
+.sec-label{
+  font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--muted-2); padding:10px 8px 6px;
+}
+.row{
+  display:flex; align-items:center; gap:7px; width:100%;
+  height:var(--d-row-h); margin-bottom:var(--d-row-gap);
+  padding:0 8px; border-radius:var(--r);
+  font-size:13.5px; color:var(--text-2); font-weight:500;
+  position:relative; text-align:left;
+  transition:background .13s var(--ease), color .13s;
+}
+.row:hover{ background:rgba(255,255,255,.92); color:var(--text); }
+.row .ico{ flex:0 0 auto; color:var(--muted-2); display:grid; place-items:center; transition:color .13s, transform .2s var(--ease); }
+.row:hover .ico{ color:var(--muted); }
+.row .lbl{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.row.folder .chev{ transition:transform .22s var(--ease); }
+.row.folder.open .chev{ transform:rotate(90deg); }
+.row.file{ padding-left:14px; }
+.row.file .dot{ margin-left:auto; width:5px; height:5px; border-radius:50%; background:var(--muted-2); opacity:0; transition:opacity .15s; }
+.row.file.inert .lbl{ color:var(--muted); }
+.row.file.inert .dot{ opacity:.45; }
+.row.active{
+  background:#fff; color:var(--text); font-weight:600;
+  box-shadow:var(--sh-2), inset 0 0 0 1px rgba(79,70,229,.10);
+}
+.row.active .ico{ color:var(--accent); }
+.row.active::before{
+  content:""; position:absolute; left:-6px; top:50%; transform:translateY(-50%);
+  width:3px; height:16px; border-radius:0 3px 3px 0; background:var(--accent);
+}
+.children{ overflow:hidden; }
+.children.closed{ display:none; }
+
+.sb-foot{
+  flex:0 0 auto; border-top:1px solid var(--line-2); padding:9px var(--d-pane-pad);
+  display:flex; gap:6px;
+}
+.mini{
+  display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 9px;
+  border-radius:var(--r-sm); font-size:12.5px; font-weight:550; color:var(--text-2);
+  transition:background .14s, color .14s;
+}
+.mini:hover{ background:rgba(255,255,255,.95); color:var(--accent); }
+.mini svg{ opacity:.7; }
+
+/* ================= MAIN ================= */
+.main{ min-width:0; min-height:0; overflow:hidden; display:flex; flex-direction:column; background:var(--panel); position:relative; }
+.topbar{
+  height:var(--d-topbar); flex:0 0 auto;
+  display:flex; align-items:center; gap:8px; padding:0 12px 0 14px;
+  border-bottom:1px solid var(--line-2);
+  background:rgba(255,255,255,.86); backdrop-filter:blur(14px) saturate(1.3);
+  position:relative; z-index:5;
+  transition:height .2s var(--ease);
+}
+.crumbs{ display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; white-space:nowrap; font-size:13px; color:var(--muted); font-weight:500; }
+.crumbs{ flex:0 1 auto; }
+.crumbs > *{ flex:0 0 auto; }
+.crumbs .cr-dir{ flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; }
+.crumbs b{ flex:0 1 auto; min-width:5.5em; overflow:hidden; text-overflow:ellipsis; }
+.crumbs .sep{ color:#ccd1de; }
+.crumbs b{ color:var(--text); font-weight:620; }
+.crumbs .chip-mono{ font-family:var(--mono); font-size:12px; }
+.spacer{ flex:1 1 auto; }
+
+.iconbtn{
+  width:var(--d-ctl-h); height:var(--d-ctl-h); border-radius:var(--r-sm); flex:0 0 auto;
+  display:grid; place-items:center; justify-content:center; color:var(--muted);
+  transition:background .14s, color .14s, transform .1s;
+}
+.iconbtn:hover{ background:var(--panel-3); color:var(--text); }
+.iconbtn:active{ transform:scale(.94); }
+.iconbtn.on{ background:var(--accent-soft); color:var(--accent); }
+.iconbtn:focus-visible, .btn:focus-visible, .row:focus-visible, .mini:focus-visible{
+  outline:none; box-shadow:0 0 0 3px var(--accent-ring);
+}
+
+.btn{
+  display:inline-flex; align-items:center; gap:7px; height:var(--d-ctl-h);
+  padding:0 11px; border-radius:var(--r-sm);
+  background:#fff; border:1px solid var(--line); box-shadow:var(--sh-1);
+  font-size:13px; font-weight:560; color:var(--text-2);
+  transition:background .14s, border-color .14s, transform .08s, box-shadow .14s;
+}
+.btn:hover{ background:var(--panel-2); border-color:#d8dce7; color:var(--text); }
+.btn:active{ transform:translateY(1px); box-shadow:none; }
+.btn.primary{
+  background:linear-gradient(180deg,#5d55e8,var(--accent)); border-color:#3f36c9; color:#fff;
+  box-shadow:0 1px 2px rgba(30,25,90,.24), 0 2px 8px -2px rgba(79,70,229,.5), inset 0 1px 0 rgba(255,255,255,.22);
+}
+.btn.primary:hover{ background:linear-gradient(180deg,#544ce6,var(--accent-h)); border-color:#3730a3; color:#fff; }
+.btn.ghost{ background:transparent; border-color:transparent; box-shadow:none; }
+.btn.ghost:hover{ background:var(--panel-3); }
+.btn.sm{ height:26px; padding:0 9px; font-size:12.5px; border-radius:var(--r-sm); }
+.btn kbd{ background:rgba(255,255,255,.14); border-color:rgba(255,255,255,.25); color:rgba(255,255,255,.86); border-bottom-width:1px; }
+.btn:not(.primary) kbd{ background:var(--panel-2); border-color:var(--line); color:var(--muted); }
+
+/* save indicator */
+.saved{
+  display:inline-flex; align-items:center; gap:7px; height:var(--d-ctl-h);
+  padding:0 10px; border-radius:99px; font-size:12.5px; font-weight:550; color:var(--muted);
+  background:var(--panel-2); border:1px solid transparent;
+  transition:color .2s, background .2s, border-color .2s;
+  white-space:nowrap;
+}
+.saved .pip{ width:6px; height:6px; border-radius:50%; background:#c3c8d6; transition:background .2s, box-shadow .2s; }
+.saved.dirty{ color:var(--warn); background:var(--warn-soft); }
+.saved.dirty .pip{ background:#e0a63c; box-shadow:0 0 0 3px rgba(224,166,60,.18); }
+.saved.flash{ color:var(--ok); background:var(--ok-soft); border-color:#c4e9d4; animation:savepop .5s var(--ease); }
+.saved.flash .pip{ background:var(--ok); box-shadow:0 0 0 4px rgba(18,161,80,.16); }
+@keyframes savepop{ 0%{transform:scale(.94)} 45%{transform:scale(1.045)} 100%{transform:scale(1)} }
+
+/* ---------- editor ---------- */
+/* min-height:0 is load-bearing: a flex child defaults to min-height:auto, so
+   without it .scroll refuses to shrink below its content, the app shell grows
+   past 100dvh, the statusbar falls off-screen and — because .scroll then has
+   nothing to scroll — focusing the raw textarea scrolls the *document*,
+   yanking the whole UI upward. */
+.scroll{ flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; position:relative; }
+/* Round 3 · amendment 11 — ONE doc container, shared by both modes.
+   Preview and Raw render into this exact element with byte-identical box
+   metrics (max-width, margin, padding, border, background, radius, shadow)
+   and the same scroll container (#scroll). `.raw-mode` is a state hook only:
+   it must never change chrome or layout, or the mode switch stops reading as
+   "the text changed" and starts reading as "the component was swapped". */
+.doc{
+  max-width:820px; margin:0 auto;
+  padding:var(--d-doc-pad) 52px 38vh 52px;
+  border:0; background:transparent; border-radius:0; box-shadow:none;
+  transition:padding .2s var(--ease);   /* density only — never mode */
+}
+.doc.fade-in{ animation:docin .3s var(--ease); }
+@keyframes docin{ from{ opacity:0; transform:translateY(6px);} to{ opacity:1; transform:none;} }
+
+.doc-meta{
+  display:flex; align-items:center; gap:10px; margin-bottom:14px;
+  font-size:11.5px; color:var(--muted-2); font-weight:500;
+}
+.doc-meta .tag{
+  font-family:var(--mono); font-size:11px; padding:2px 7px; border-radius:99px;
+  background:var(--panel-3); color:var(--muted);
+}
+.doc-meta .mode-note{ margin-left:auto; font-family:var(--mono); font-size:11px; letter-spacing:-.01em; }
+
+/* ---------- Preview | Raw switch (editor header) ---------- */
+.seg.mode{ flex:0 0 auto; }
+.seg.mode button{
+  height:calc(var(--d-ctl-h) - 5px); display:inline-flex; align-items:center; gap:5px;
+}
+.seg.mode button svg{ opacity:.6; }
+.seg.mode button.on{ background:#fff; color:var(--accent); box-shadow:var(--sh-1); }
+.seg.mode button.on svg{ opacity:1; }
+
+/* ---------- raw markdown surface (chromeless — amendment 11) ----------
+   The textarea is a bare text layer inside .doc: no border, no background,
+   no radius, no inset padding, no focus ring, no width jump. It occupies the
+   same content column the rendered markdown does, so switching modes only
+   changes glyphs (proportional → monospace), never the box around them. */
+.raw{
+  display:block; width:100%; min-height:min(46vh, 480px);
+  border:0; border-radius:0; background:transparent; box-shadow:none;
+  padding:0; margin:0; resize:none; outline:none; overflow:hidden;
+  font-family:var(--mono); font-size:var(--d-raw-fs); line-height:var(--d-raw-lh);
+  color:var(--text-2); tab-size:2;
+  caret-color:var(--accent);
+}
+.raw::placeholder{ color:var(--muted-2); }
+/* focus must be visually inert: the caret is the affordance, not a ring */
+.raw:focus, .raw:focus-visible{ background:transparent; border:0; box-shadow:none; outline:none; }
+
+/* ---------- markdown preview ---------- */
+.md > * + *{ margin-top:var(--d-blk-gap); }
+.md h1, .md h2, .md h3{ margin:0; color:var(--text); }
+.md h1{ font-size:1.95em; line-height:1.2; font-weight:700; letter-spacing:-.028em; }
+.md h2{ font-size:1.28em; line-height:1.32; font-weight:660; letter-spacing:-.017em; }
+.md h3{ font-size:1.08em; line-height:1.4; font-weight:640; letter-spacing:-.012em; }
+.md > * + h2{ margin-top:var(--d-sec-gap); }
+.md > * + h3{ margin-top:calc(var(--d-sec-gap) * .7); }
+.md > h1 + *, .md > h2 + *, .md > h3 + *{ margin-top:calc(var(--d-blk-gap) * .7); }
+
+/* ---------- blank-line surplus (amendment 13) ----------
+   The source rhythm survives into Preview. One blank line between blocks is
+   the ordinary separator and still renders as whatever gap that block pair
+   normally gets — untouched. Every *additional* consecutive blank line is
+   worth one body line-box, and the renderer emits a .bgap element that tall
+   between the two blocks, so two blank lines read as a doubled gap the way
+   Raw shows it. A bare-height element rather than a margin because half the
+   block types (p, ul, blockquote, .divider) pin their own margin and would
+   swallow one. Its own top margin is zeroed so it adds only its height: the
+   pair keeps its standard gap and gains exactly the surplus. Height is built
+   from the density variables, so Compact and Comfy scale with everything
+   else. It carries no [data-line], so click-to-edit reads a click here as
+   whitespace — the same fall-through an ordinary block gap already gets. */
+.md > .bgap{ margin-top:0; pointer-events:none; }
+.md p{ margin:0; line-height:var(--d-lh); color:var(--text-2); }
+.md strong{ color:var(--text); font-weight:640; }
+.md em{ color:var(--text-2); }
+code.ic{
+  font-family:var(--mono); font-size:.855em; padding:.12em .4em; border-radius:5px;
+  background:var(--panel-3); color:#b3245c; border:1px solid rgba(16,20,40,.05);
+}
+
+/* lists */
+.md ul{ margin:0; padding:0; list-style:none; }
+.md li + li{ margin-top:var(--d-list-gap); }
+.md li.bul{ display:flex; gap:10px; line-height:var(--d-lh); color:var(--text-2); }
+.md li.bul::before{ content:""; flex:0 0 auto; width:5px; height:5px; border-radius:50%; background:var(--muted-2); margin-top:calc(var(--d-lh) * .5em - 2px); }
+
+/* tasks */
+.task{ display:flex; gap:10px; align-items:flex-start; line-height:var(--d-lh); }
+.cb{
+  flex:0 0 auto; width:17px; height:17px; border-radius:5.5px; margin-top:calc(var(--d-lh) * .5em - 9px);
+  border:1.6px solid #ccd1de; background:#fff; display:grid; place-items:center;
+  transition:background .16s var(--ease), border-color .16s, transform .1s;
+}
+.cb:hover{ border-color:var(--accent); }
+.cb:active{ transform:scale(.9); }
+.cb svg{ opacity:0; transform:scale(.6); transition:opacity .14s, transform .18s var(--ease); color:#fff; }
+.task.done .cb{ background:linear-gradient(180deg,#5d55e8,var(--accent)); border-color:var(--accent-h); }
+.task.done .cb svg{ opacity:1; transform:none; }
+.task.done .tx{ color:var(--muted); text-decoration:line-through; text-decoration-color:#ccd1de; }
+.tx{ color:var(--text-2); }
+
+/* wikilink */
+.wl{
+  display:inline-flex; align-items:center; gap:3px;
+  color:var(--accent); font-weight:560; cursor:pointer;
+  padding:1px 5px 1px 4px; margin:0 -1px; border-radius:5px;
+  background:var(--accent-soft); box-shadow:inset 0 0 0 1px rgba(79,70,229,.10);
+  transition:background .14s, box-shadow .14s, color .14s;
+  white-space:nowrap;
+}
+.wl:hover{ background:var(--accent-soft2); box-shadow:inset 0 0 0 1px rgba(79,70,229,.24); color:var(--accent-h); }
+.wl svg{ opacity:.6; }
+
+/* quote */
+.md blockquote{
+  margin:0; padding:2px 0 2px 16px; border-left:3px solid var(--accent-soft2);
+  color:var(--text-2); font-style:italic; line-height:var(--d-lh);
+}
+
+/* divider */
+.divider{ height:1px; background:linear-gradient(90deg, var(--line), transparent); margin:8px 0; }
+
+/* table */
+.tblwrap{ overflow-x:auto; border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--sh-1); background:#fff; }
+table{ border-collapse:collapse; width:100%; font-size:.9em; }
+th,td{ text-align:left; padding:var(--d-cell-pad); border-bottom:1px solid var(--line-2); white-space:nowrap; }
+th{ font-weight:620; font-size:.86em; letter-spacing:.02em; text-transform:uppercase; color:var(--muted); background:var(--panel-2); }
+tbody tr{ transition:background .12s; }
+tbody tr:hover{ background:var(--panel-2); }
+tbody tr:last-child td{ border-bottom:0; }
+td:first-child{ font-family:var(--mono); font-size:.95em; color:var(--text); }
+td:nth-child(2){ font-family:var(--mono); font-size:.9em; color:var(--accent); }
+
+/* code */
+.code{
+  border:1px solid var(--line); border-radius:var(--r); background:#fbfbfd;
+  box-shadow:var(--sh-1); overflow:hidden;
+}
+.code-bar{
+  display:flex; align-items:center; gap:8px; padding:6px 10px;
+  border-bottom:1px solid var(--line-2); background:var(--panel-2);
+}
+.code-bar .lang{ font-family:var(--mono); font-size:11px; font-weight:600; color:var(--muted); letter-spacing:.02em; }
+.code-bar .dots{ display:flex; gap:4px; }
+.code-bar .dots i{ width:8px; height:8px; border-radius:50%; background:#dfe3ec; }
+.code pre{
+  margin:0; padding:var(--d-pre-pad); overflow-x:auto;
+  font-family:var(--mono); font-size:12.75px; line-height:var(--d-pre-lh); color:#2c3140;
+}
+.tk-key{ color:#7c3aed; } .tk-str{ color:#0f7a4d; } .tk-com{ color:#9aa1b4; font-style:italic; }
+.tk-num{ color:#b3245c; } .tk-fn{ color:#2563c9; }
+
+/* secret block */
+.secret{
+  border-radius:var(--r); border:1px solid var(--line);
+  background:linear-gradient(180deg,#fff, #fbfbfe); box-shadow:var(--sh-1);
+  overflow:hidden; transition:border-color .2s, box-shadow .2s;
+}
+.secret.open{ border-color:#bfe3cd; box-shadow:0 0 0 3px rgba(18,161,80,.08), var(--sh-1); }
+.secret-bar{ display:flex; align-items:center; gap:9px; padding:9px 11px; }
+.secret-ico{
+  width:26px; height:26px; border-radius:7px; display:grid; place-items:center; flex:0 0 auto;
+  background:var(--panel-3); color:var(--text-2);
+  transition:background .2s, color .2s;
+}
+.secret.open .secret-ico{ background:var(--ok-soft); color:var(--ok); }
+.secret-t{ font-size:12.5px; font-weight:620; letter-spacing:-.01em; }
+.secret-s{ font-size:11px; color:var(--muted); font-family:var(--mono); }
+.secret-body{ border-top:1px solid var(--line-2); background:var(--panel-2); }
+.secret-body pre{
+  margin:0; padding:11px 13px; font-family:var(--mono); font-size:12px; line-height:1.62;
+  color:var(--muted); overflow-x:auto; word-break:break-all; white-space:pre-wrap;
+}
+.secret.open .secret-body{ background:#f6fbf8; }
+.secret.open .secret-body pre{ color:#1d4231; }
+.secret-body .kv b{ color:#0f172a; font-weight:600; }
+.badge{
+  display:inline-flex; align-items:center; gap:4px; height:19px; padding:0 7px; border-radius:99px;
+  font-size:10.5px; font-weight:650; letter-spacing:.02em; text-transform:uppercase;
+}
+.badge.lock{ background:var(--panel-3); color:var(--muted); }
+.badge.unlock{ background:var(--ok-soft); color:var(--ok); }
+
+/* empty doc state */
+.empty-doc{ text-align:center; padding:60px 0; color:var(--muted); }
+.empty-doc .ring{
+  width:52px; height:52px; margin:0 auto 14px; border-radius:15px; display:grid; place-items:center;
+  background:var(--panel-2); border:1px solid var(--line); color:var(--muted-2); box-shadow:var(--sh-1);
+}
+.empty-doc h3{ margin:0 0 5px; font-size:15px; color:var(--text); font-weight:620; }
+.empty-doc p{ margin:0; font-size:13.5px; }
+
+/* ---------- statusbar ---------- */
+.statusbar{
+  flex:0 0 auto; height:var(--d-status); display:flex; align-items:center; gap:9px;
+  padding:0 11px; border-top:1px solid var(--line-2);
+  background:rgba(250,251,253,.9); backdrop-filter:blur(10px);
+  font-size:11px; color:var(--muted); font-weight:500; overflow:hidden;
+}
+.statusbar .sb-i{ display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+.statusbar .ok{ color:var(--ok); }
+.statusbar .divider-v{ width:1px; height:11px; background:var(--line); flex:0 0 auto; }
+.statusbar .path{ font-family:var(--mono); font-size:10.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; min-width:4.5em; }
+/* the bar sheds its least important items before it squeezes the doc path */
+@media (max-width:1599px){ .statusbar .sb-wide{ display:none !important; } }
+@media (max-width:1499px){ .statusbar .sb-mid{ display:none !important; } }
+@media (max-width:1349px){ .statusbar .sb-narrow{ display:none !important; } }
+@media (max-width:1149px){ .statusbar .sb-xnarrow{ display:none !important; } }
+/* three panels at ~1000px leaves no room for hints — the ? overlay still has them */
+@media (max-width:1019px){
+  .statusbar .hintset{ display:none !important; }
+  .statusbar .conn .cw{ display:none; }
+  .statusbar{ gap:6px; padding:0 8px; }
+  .statusbar .path{ min-width:3em; }
+}
+@media (max-width:869px){ .statusbar .sb-tiny{ display:none !important; } }
+.statusbar kbd{ font-size:9.5px; padding:0 4px; border-bottom-width:1px; }
+.statusbar .hintset{ display:inline-flex; align-items:center; gap:8px; }
+.statusbar .hintset span{ display:inline-flex; align-items:center; gap:3px; }
+/* connection indicator — fake websocket to the backend */
+.conn{ display:inline-flex; align-items:center; gap:5px; font-weight:600; color:var(--ok); }
+.conn .dot{
+  width:7px; height:7px; border-radius:50%; background:var(--ok);
+  box-shadow:0 0 0 3px rgba(18,161,80,.15); transition:background .2s, box-shadow .2s;
+}
+.conn.blip .dot{ animation:blip .9s var(--ease); }
+@keyframes blip{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.5); } }
+.conn.down{ color:var(--warn); }
+.conn.down .dot{ background:transparent; box-shadow:inset 0 0 0 1.6px var(--warn); }
+
+/* ================= CHAT ================= */
+.chat{
+  min-width:0; min-height:0; overflow:hidden; display:flex; flex-direction:column;
+  border-left:1px solid var(--line); background:var(--panel-2);
+}
+.chat-head{
+  flex:0 0 auto; height:var(--d-topbar); display:flex; align-items:center; gap:8px;
+  padding:0 10px 0 14px; border-bottom:1px solid var(--line-2);
+  background:rgba(255,255,255,.7); backdrop-filter:blur(10px);
+}
+.chat-title{ font-size:13.5px; font-weight:640; letter-spacing:-.01em; display:flex; align-items:center; gap:7px; }
+.spark{ color:var(--accent); display:grid; place-items:center; }
+.model-chip{
+  display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 8px; border-radius:99px;
+  background:#fff; border:1px solid var(--line); box-shadow:var(--sh-1);
+  font-family:var(--mono); font-size:10.5px; color:var(--muted); white-space:nowrap;
+}
+.model-chip .live{ width:5px; height:5px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 3px rgba(18,161,80,.14); }
+.model-chip b{ color:var(--text-2); font-weight:600; }
+
+.msgs{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:16px 14px; display:flex; flex-direction:column; gap:var(--d-msg-gap); }
+.msg{ display:flex; flex-direction:column; gap:6px; animation:msgin .35s var(--ease) backwards; }
+@keyframes msgin{ from{ opacity:0; transform:translateY(6px);} to{ opacity:1; transform:none;} }
+.msg.user{ align-items:flex-end; }
+.msg .who{ font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--muted-2); }
+.bubble{
+  max-width:94%; padding:var(--d-msg-pad); border-radius:14px; font-size:13.4px; line-height:1.62;
+}
+.msg.user .bubble{
+  background:linear-gradient(180deg,#5d55e8,var(--accent)); color:#fff;
+  border-bottom-right-radius:5px;
+  box-shadow:0 2px 10px -3px rgba(79,70,229,.55);
+}
+.msg.ai .bubble{
+  background:#fff; color:var(--text-2); border:1px solid var(--line);
+  border-bottom-left-radius:5px; box-shadow:var(--sh-1);
+}
+.msg.ai .bubble b{ color:var(--text); font-weight:620; }
+
+/* diff card */
+.diffcard{
+  border:1px solid var(--line); border-radius:var(--r-lg); background:#fff;
+  box-shadow:var(--sh-2); overflow:hidden; transition:border-color .25s, box-shadow .25s, opacity .25s;
+}
+.diffcard.applied{ border-color:#bfe3cd; box-shadow:0 0 0 3px rgba(18,161,80,.08), var(--sh-2); }
+.diff-head{ display:flex; align-items:center; gap:8px; padding:9px 11px; border-bottom:1px solid var(--line-2); background:var(--panel-2); }
+.diff-head .f{ font-family:var(--mono); font-size:11.5px; color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.diff-stat{ margin-left:auto; display:flex; gap:5px; font-family:var(--mono); font-size:11px; font-weight:600; }
+.diff-stat .p{ color:var(--ok); } .diff-stat .m{ color:var(--danger); }
+.diff-body{ font-family:var(--mono); font-size:11.6px; line-height:1.62; padding:5px 0; }
+.dl{ display:flex; gap:8px; padding:1px 11px 1px 0; }
+.dl .g{ width:24px; flex:0 0 auto; text-align:center; color:var(--muted-2); user-select:none; }
+.dl .t{ flex:1 1 auto; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.dl.add{ background:var(--add-bg); color:#12592f; }
+.dl.add .g{ color:#3f9e69; }
+.dl.del{ background:var(--del-bg); color:#8a231d; }
+.dl.del .g{ color:#c9645d; }
+.dl.ctx{ color:var(--muted); }
+.diff-foot{ display:flex; align-items:center; gap:7px; padding:9px 11px; border-top:1px solid var(--line-2); background:var(--panel-2); }
+.applied-note{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--ok); }
+.dismissed{
+  display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted);
+  border:1px dashed var(--line); border-radius:var(--r); padding:10px 12px; background:var(--panel-2);
+}
+
+.composer{ flex:0 0 auto; padding:10px 12px 12px; border-top:1px solid var(--line-2); background:rgba(255,255,255,.75); backdrop-filter:blur(10px); }
+.composer-box{
+  border:1px solid var(--line); border-radius:var(--r-lg); background:#fff; box-shadow:var(--sh-1);
+  padding:9px 10px 8px; transition:border-color .16s, box-shadow .16s;
+}
+.composer-box:focus-within{ border-color:#c3c6f7; box-shadow:0 0 0 3px var(--accent-ring); }
+.composer textarea{
+  width:100%; border:0; outline:0; resize:none; background:none; font-size:13.4px; line-height:1.55;
+  min-height:40px; max-height:110px; color:var(--text);
+}
+.composer textarea::placeholder{ color:var(--muted-2); }
+.composer-foot{ display:flex; align-items:center; gap:6px; margin-top:2px; }
+.composer-foot .hint{ font-size:11px; color:var(--muted-2); }
+.send{
+  margin-left:auto; width:28px; height:28px; border-radius:8px; display:grid; place-items:center;
+  background:linear-gradient(180deg,#5d55e8,var(--accent)); color:#fff;
+  box-shadow:0 2px 6px -2px rgba(79,70,229,.6); transition:transform .1s, filter .15s;
+}
+.send:hover{ filter:brightness(1.06); }
+.send:active{ transform:scale(.93); }
+
+/* ---------- chat session bar + details popover ---------- */
+.chat{ position:relative; }
+.chat-sub{
+  flex:0 0 auto; display:flex; align-items:center; gap:7px;
+  padding:6px 10px 6px 13px; border-bottom:1px solid var(--line-2);
+  background:rgba(255,255,255,.5);
+}
+.sess-chip{
+  display:inline-flex; align-items:center; gap:6px; min-width:0;
+  height:23px; padding:0 8px; border-radius:99px;
+  background:#fff; border:1px solid var(--line); box-shadow:var(--sh-1);
+  font-size:11px; color:var(--muted); font-weight:550; white-space:nowrap;
+  transition:border-color .15s, color .15s, background .15s;
+}
+.sess-chip:hover{ border-color:#c3c6f7; color:var(--text-2); }
+.sess-chip b{ color:var(--text-2); font-weight:650; font-variant-numeric:tabular-nums; }
+.sess-chip .tk{ font-family:var(--mono); font-size:10.5px; }
+.sess-chip svg{ opacity:.55; }
+.chat-sub .spacer{ flex:1 1 auto; }
+.newsess{
+  display:inline-flex; align-items:center; gap:5px; height:23px; padding:0 8px;
+  border-radius:99px; font-size:11px; font-weight:600; color:var(--accent);
+  background:var(--accent-soft); transition:background .15s, color .15s;
+  white-space:nowrap;
+}
+.newsess:hover{ background:var(--accent-soft2); color:var(--accent-h); }
+
+.pop{
+  position:absolute; z-index:120; top:calc(var(--d-topbar) + 34px); left:12px; right:12px;
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--r-lg);
+  box-shadow:var(--sh-3); padding:12px 13px;
+  opacity:0; transform:translateY(-6px) scale(.99); pointer-events:none;
+  transition:opacity .18s var(--ease), transform .2s var(--ease);
+}
+.pop.show{ opacity:1; transform:none; pointer-events:auto; }
+.pop h4{ margin:0 0 9px; font-size:12px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--accent); }
+.pop .kv{ display:flex; align-items:center; gap:10px; font-size:12px; padding:3.5px 0; }
+.pop .kv span{ color:var(--muted); }
+.pop .kv b{ margin-left:auto; font-weight:600; color:var(--text-2); font-variant-numeric:tabular-nums; }
+.pop .kv b.mono{ font-family:var(--mono); font-size:11.5px; }
+.ctxbar{ height:5px; border-radius:99px; background:var(--panel-3); overflow:hidden; margin:8px 0 5px; }
+.ctxbar i{ display:block; height:100%; border-radius:99px; background:linear-gradient(90deg,#6d64f5,var(--accent)); }
+.pop-foot{ display:flex; align-items:center; gap:7px; margin-top:9px; padding-top:9px; border-top:1px solid var(--line-2); }
+.pop-foot .note{ font-size:10.5px; color:var(--muted-2); }
+
+/* context-cleared divider in the thread */
+.ctx-div{
+  display:flex; align-items:center; gap:9px; font-size:10.5px; font-weight:650;
+  letter-spacing:.05em; text-transform:uppercase; color:var(--muted-2);
+}
+.ctx-div::before, .ctx-div::after{ content:""; flex:1 1 auto; height:1px; background:var(--line); }
+
+/* ---------- change stack (LIFO) ---------- */
+.stack{
+  flex:0 0 auto; border-top:1px solid var(--line-2); background:rgba(255,255,255,.6);
+  padding:8px 12px 4px; display:flex; flex-direction:column; gap:5px;
+}
+.stack[hidden]{ display:none; }
+.stack-t{
+  display:flex; align-items:center; gap:6px; font-size:10px; font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--muted-2);
+}
+.stack-t .cnt{ font-family:var(--mono); color:var(--accent); }
+.stack-row{
+  display:flex; align-items:center; gap:7px; padding:4px 6px 4px 8px;
+  background:#fff; border:1px solid var(--line); border-radius:var(--r-sm);
+  box-shadow:var(--sh-1); font-size:11.5px; min-width:0;
+}
+.stack-row.top{ border-color:#bfe3cd; }
+.stack-row .n{ font-family:var(--mono); font-weight:700; font-size:11px; color:var(--ok); flex:0 0 auto; }
+.stack-row .lbl{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-2); }
+.stack-row .btn{ margin-left:auto; flex:0 0 auto; }
+.btn[disabled], .btn[aria-disabled="true"]{ opacity:.42; cursor:not-allowed; box-shadow:none; }
+.btn[disabled]:hover{ background:#fff; border-color:var(--line); color:var(--text-2); }
+
+/* "revert #2 first" hint on non-top applied cards */
+.stack-hint{ font-size:11px; color:var(--muted-2); margin-left:auto; }
+
+/* ---------- click-to-edit affordance ---------- */
+.md.editable{ cursor:text; }
+.md.editable > p, .md.editable > h1, .md.editable > h2, .md.editable > h3,
+.md.editable > ul, .md.editable > blockquote{
+  border-radius:6px; transition:background .12s var(--ease);
+}
+.md.editable > p:hover, .md.editable > h1:hover, .md.editable > h2:hover,
+.md.editable > h3:hover, .md.editable > ul:hover, .md.editable > blockquote:hover{
+  background:rgba(79,70,229,.038);
+  box-shadow:-7px 0 0 rgba(79,70,229,.038), 7px 0 0 rgba(79,70,229,.038);
+}
+.md.editable .task, .md.editable li.bul{ border-radius:6px; }
+/* palette "jump to line" flash */
+.flash-line{ animation:lineflash 1.25s var(--ease); border-radius:6px; }
+@keyframes lineflash{
+  0%,55%{ background:rgba(79,70,229,.13); box-shadow:-7px 0 0 rgba(79,70,229,.13), 7px 0 0 rgba(79,70,229,.13); }
+  100%{ background:transparent; box-shadow:none; }
+}
+
+/* ---------- sidebar inline create ---------- */
+.newrow{
+  display:flex; align-items:center; gap:6px; margin-bottom:var(--d-row-gap);
+  height:var(--d-row-h); padding:0 8px 0 14px;
+}
+.newrow .ico{ flex:0 0 auto; color:var(--accent); display:grid; place-items:center; }
+.newrow input{
+  flex:1 1 auto; min-width:0; height:calc(var(--d-row-h) - 4px);
+  border:1px solid #c3c6f7; border-radius:var(--r-sm); background:#fff;
+  padding:0 7px; font-size:12.5px; outline:none; box-shadow:0 0 0 3px var(--accent-ring);
+}
+
+/* ================= MODAL ================= */
+.veil{
+  position:fixed; inset:0; z-index:200; background:rgba(20,24,44,.34);
+  backdrop-filter:blur(3px); opacity:0; pointer-events:none; transition:opacity .22s var(--ease);
+  display:grid; place-items:center; padding:20px;
+}
+.veil.show{ opacity:1; pointer-events:auto; }
+.modal{
+  width:min(660px,100%); max-height:min(86dvh, 720px); display:flex; flex-direction:column;
+  background:var(--panel); border-radius:var(--r-xl); box-shadow:var(--sh-4);
+  transform:translateY(10px) scale(.985); opacity:0; transition:transform .26s var(--ease), opacity .2s;
+  overflow:hidden;
+}
+.veil.show .modal{ transform:none; opacity:1; }
+.modal-head{ display:flex; align-items:center; gap:10px; padding:16px 18px 14px; border-bottom:1px solid var(--line-2); }
+.modal-head h2{ margin:0; font-size:16px; font-weight:660; letter-spacing:-.018em; }
+.modal-head p{ margin:1px 0 0; font-size:12.5px; color:var(--muted); }
+.modal-body{ overflow-y:auto; padding:6px 18px 18px; }
+.grp{ padding:16px 0 4px; }
+.grp + .grp{ border-top:1px solid var(--line-2); }
+.grp-t{
+  display:flex; align-items:center; gap:7px;
+  font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--accent);
+  margin-bottom:10px;
+}
+.field{ display:flex; align-items:center; gap:16px; padding:8px 0; }
+.field .lab{ flex:1 1 auto; min-width:0; }
+.field .lab b{ display:block; font-size:13.4px; font-weight:560; }
+.field .lab span{ display:block; font-size:11.8px; color:var(--muted); margin-top:1px; }
+.field .ctl{ flex:0 0 auto; }
+
+.seg{ display:inline-flex; padding:2.5px; background:var(--panel-3); border-radius:9px; gap:2px; }
+.seg button{
+  padding:0 11px; height:26px; border-radius:6.5px; font-size:12.5px; font-weight:560; color:var(--muted);
+  transition:background .16s var(--ease), color .16s, box-shadow .16s;
+}
+.seg button:hover{ color:var(--text-2); }
+.seg button.on{ background:#fff; color:var(--text); box-shadow:var(--sh-1); }
+.seg button.on.acc{ background:var(--accent); color:#fff; box-shadow:0 1px 3px rgba(79,70,229,.4); }
+
+.inp{
+  height:30px; padding:0 10px; border-radius:var(--r-sm); border:1px solid var(--line); background:#fff;
+  font-size:12.8px; box-shadow:var(--sh-1); min-width:190px; outline:none;
+  transition:border-color .15s, box-shadow .15s;
+}
+.inp:focus{ border-color:#c3c6f7; box-shadow:0 0 0 3px var(--accent-ring); }
+.inp.mono{ font-family:var(--mono); font-size:12px; }
+.inp.w-sm{ min-width:90px; }
+
+.sw{ width:38px; height:22px; border-radius:99px; background:#d7dbe6; position:relative; transition:background .22s var(--ease); }
+.sw::after{
+  content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
+  background:#fff; box-shadow:0 1px 3px rgba(16,20,40,.28); transition:transform .24s var(--ease);
+}
+.sw.on{ background:var(--accent); }
+.sw.on::after{ transform:translateX(16px); }
+
+.sync-line{
+  display:flex; align-items:center; gap:8px; padding:9px 11px; border-radius:var(--r);
+  background:var(--ok-soft); border:1px solid #cfeddc; color:#12703c; font-size:12.5px; font-weight:550;
+}
+.sync-line .mono{ font-family:var(--mono); font-size:11.5px; opacity:.8; }
+.modal-foot{ display:flex; align-items:center; gap:8px; padding:12px 18px; border-top:1px solid var(--line-2); background:var(--panel-2); }
+.modal-foot .note{ font-size:11.5px; color:var(--muted); }
+
+/* passphrase popover */
+.pp{ width:min(360px,100%); }
+.pp .modal-body{ padding:16px 18px 6px; }
+
+/* ---------- ⌘K fuzzy palette ---------- */
+.veil.top{ place-items:start center; padding-top:min(11vh, 90px); }
+.pal{ width:min(640px,100%); max-height:min(72dvh,600px); }
+.pal-in{ display:flex; align-items:center; gap:10px; padding:13px 16px; border-bottom:1px solid var(--line-2); }
+.pal-in svg{ color:var(--muted-2); flex:0 0 auto; }
+.pal-in input{ flex:1 1 auto; min-width:0; border:0; outline:0; background:none; font-size:15.5px; letter-spacing:-.01em; }
+.pal-in input::placeholder{ color:var(--muted-2); }
+.pal-in .count{ font-size:11px; color:var(--muted-2); font-family:var(--mono); white-space:nowrap; }
+.pal-list{ overflow-y:auto; padding:6px; min-height:80px; }
+.pal-sec{ font-size:10px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--muted-2); padding:8px 9px 4px; }
+.pal-item{
+  display:flex; align-items:flex-start; gap:10px; width:100%; text-align:left;
+  padding:6px 9px; border-radius:var(--r-sm); min-width:0;
+  transition:background .1s;
+}
+.pal-item .pico{ flex:0 0 auto; color:var(--muted-2); margin-top:2px; }
+.pal-item .col{ min-width:0; flex:1 1 auto; }
+.pal-item .nm{ font-size:13px; font-weight:600; color:var(--text); display:flex; align-items:baseline; gap:8px; }
+.pal-item .pth{ font-family:var(--mono); font-size:10.5px; color:var(--muted-2); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pal-item .sn{
+  font-family:var(--mono); font-size:11.5px; color:var(--muted); margin-top:2px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.pal-item .ln{ font-family:var(--mono); font-size:10.5px; color:var(--muted-2); flex:0 0 auto; margin-top:3px; }
+.pal-item mark{ background:transparent; color:var(--accent); font-weight:750; }
+.pal-item.sel{ background:var(--accent-soft); box-shadow:inset 0 0 0 1px rgba(79,70,229,.14); }
+.pal-item.sel .pico{ color:var(--accent); }
+.pal-item:hover{ background:var(--panel-3); }
+.pal-item.sel:hover{ background:var(--accent-soft); }
+.pal-empty{ padding:26px 10px; text-align:center; color:var(--muted); font-size:13px; }
+.pal-foot{
+  display:flex; align-items:center; gap:12px; padding:8px 14px; border-top:1px solid var(--line-2);
+  background:var(--panel-2); font-size:11px; color:var(--muted-2);
+}
+.pal-foot span{ display:inline-flex; align-items:center; gap:4px; }
+
+/* ---------- shortcuts overlay ---------- */
+.sc{ width:min(520px,100%); }
+.sc-grid{ display:grid; grid-template-columns:1fr 1fr; gap:2px 22px; }
+.sc-row{ display:flex; align-items:center; gap:10px; padding:6px 0; font-size:12.8px; color:var(--text-2); }
+.sc-row .k{ margin-left:auto; display:inline-flex; gap:3px; flex:0 0 auto; }
+@media (max-width:600px){ .sc-grid{ grid-template-columns:1fr; } }
+
+/* toast */
+.toast{
+  position:fixed; bottom:22px; left:50%; z-index:300;
+  transform:translate(-50%, 16px); opacity:0; pointer-events:none;
+  display:flex; align-items:center; gap:8px;
+  background:#171b2b; color:#fff; font-size:12.8px; font-weight:550;
+  padding:9px 14px; border-radius:99px; box-shadow:0 12px 32px -8px rgba(10,14,30,.5);
+  transition:opacity .22s var(--ease), transform .28s var(--ease);
+}
+.toast.show{ opacity:1; transform:translate(-50%,0); }
+.toast .ok{ color:#5ee39b; display:grid; place-items:center; }
+
+/* mobile scrim */
+.scrim{
+  position:fixed; inset:0; z-index:60; background:rgba(18,22,40,.34); backdrop-filter:blur(2px);
+  opacity:0; pointer-events:none; transition:opacity .25s var(--ease);
+}
+.scrim.show{ opacity:1; pointer-events:auto; }
+.only-mobile{ display:none !important; }
+
+/* ================= RESPONSIVE ================= */
+/* cramped desktop: reclaim header + measure space */
+@media (max-width:1150px){
+  .crumbs .cr-dir{ display:none; }
+  .topbar .btn.primary kbd{ display:none; }
+  .doc{ padding-left:34px; padding-right:34px; }
+}
+
+@media (max-width:767px){
+  :root{ --sidebar-w:min(84vw, 300px); --chat-w:100%; }
+  .only-mobile{ display:inline-flex !important; }
+  .no-mobile{ display:none !important; }
+
+  .app, .app.chat-open, .app.sidebar-collapsed{ grid-template-columns:minmax(0,1fr); }
+
+  .sidebar{
+    position:fixed; z-index:70; top:0; bottom:0; left:0; width:var(--sidebar-w);
+    background:linear-gradient(180deg,#fbfcfe,#f3f5fa);
+    box-shadow:0 24px 60px -12px rgba(12,16,38,.4);
+    transform:translateX(-102%); transition:transform .32s var(--ease);
+  }
+  .app.nav-open .sidebar{ transform:none; }
+
+  .chat{
+    position:fixed; z-index:80; left:0; right:0; bottom:0; height:min(78dvh, 640px);
+    border-left:0; border-top:1px solid var(--line);
+    border-radius:var(--r-xl) var(--r-xl) 0 0;
+    background:var(--panel-2);
+    box-shadow:0 -18px 50px -12px rgba(12,16,38,.34);
+    transform:translateY(102%); transition:transform .34s var(--ease);
+  }
+  .app.chat-open .chat{ transform:none; }
+  .chat::before{
+    content:""; position:absolute; top:7px; left:50%; transform:translateX(-50%);
+    width:38px; height:4px; border-radius:99px; background:#d3d8e4;
+  }
+  .chat-head{ padding-top:8px; height:calc(var(--d-topbar) + 8px); }
+
+  .doc{ padding:22px 18px 34vh; }   /* identical in both modes — see amendment 11 */
+  .statusbar .hide-sm{ display:none; }
+  .crumbs .cr-dir{ display:none; }   /* filename only — no room for the path */
+  .crumbs b{ font-size:12.5px; }
+  /* topbar gets tight: the mode switch stays, the save label folds to its pip */
+  .topbar{ gap:6px; padding:0 8px 0 10px; }
+  .saved{ padding:0 8px; }
+  .saved #saveTxt{ display:none; }
+  .seg.mode{ padding:2px; }
+  .seg.mode button{ padding:0 7px; gap:4px; font-size:11.5px; }
+  .crumbs b{ min-width:4.5em; }
+  .modal{ border-radius:var(--r-lg); }
+  .field{ flex-wrap:wrap; gap:8px; }
+  .field .ctl{ width:100%; }
+  .field .ctl .inp{ width:100%; }
+  .msgs{ padding:14px 12px; }
+
+  /* palette: nearly full-bleed sheet at the top of the screen */
+  .veil.top{ padding:10px 10px 0; align-items:start; }
+  .pal{ width:100%; max-height:min(80dvh, 620px); }
+  .pal-in{ padding:11px 13px; }
+  .pal-in input{ font-size:16px; }        /* ≥16px stops iOS zoom-on-focus */
+  .pal-in .count{ display:none; }
+  .pal-foot{ gap:9px; padding:7px 11px; font-size:10.5px; }
+  .pal-foot .hide-xs{ display:none; }
+
+  /* chat session strip + details popover inside the sheet */
+  .chat-sub{ padding:5px 9px 5px 12px; }
+  .sess-chip .tk{ display:none; }
+  .pop{ top:calc(var(--d-topbar) + 42px); left:9px; right:9px; }
+  .stack{ padding:7px 10px 3px; }
+
+  .statusbar{ gap:8px; padding:0 10px; }
+  .sc-grid{ grid-template-columns:1fr; }
+}
+
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:.01ms !important; transition-duration:.01ms !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="app chat-open" id="app">
+
+  <!-- ================= SIDEBAR ================= -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-head">
+      <button class="vault" title="Vault">
+        <span class="vault-mark">z</span>
+        <span style="min-width:0">
+          <span class="vault-name">z-notes</span>
+          <span class="vault-sub">~/vault · 7 docs</span>
+        </span>
+      </button>
+      <button class="iconbtn only-mobile" data-act="nav-close" title="Close">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="sb-search">
+      <button class="search" data-act="palette" aria-label="Search vault (⌘K)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+        <span class="ph">Search vault…</span>
+        <kbd>⌘K</kbd>
+      </button>
+    </div>
+
+    <nav class="tree" id="tree"></nav>
+
+    <div class="sb-foot">
+      <button class="mini" data-act="new-doc" title="New doc">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        New doc
+      </button>
+      <button class="mini" data-act="new-folder" title="New folder">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.4h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg>
+        Folder
+      </button>
+    </div>
+  </aside>
+
+  <!-- ================= MAIN ================= -->
+  <div class="main">
+    <header class="topbar">
+      <button class="iconbtn only-mobile" data-act="nav-open" title="Menu">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <button class="iconbtn no-mobile" data-act="toggle-sidebar" title="Toggle sidebar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></svg>
+      </button>
+      <div class="crumbs" id="crumbs"></div>
+      <div class="spacer"></div>
+      <div class="seg mode" id="modeSeg" data-seg="mode" role="tablist" aria-label="Editor mode">
+        <button class="on" data-v="preview" role="tab" aria-selected="true" title="Rendered preview (⌘E)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+          <span class="t">Preview</span>
+        </button>
+        <button data-v="raw" role="tab" aria-selected="false" title="Raw markdown source (⌘E)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4"/></svg>
+          <span class="t">Raw</span>
+        </button>
+      </div>
+      <div class="saved" id="saveInd" title="Autosave status"><span class="pip"></span><span id="saveTxt">Saved · just now</span></div>
+      <button class="btn primary no-mobile" data-act="save" title="Save now">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        Save <kbd>⌘S</kbd>
+      </button>
+      <button class="iconbtn only-mobile" data-act="save" title="Save (⌘S)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+      </button>
+      <button class="iconbtn" data-act="settings" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+      </button>
+      <button class="iconbtn on" id="chatBtn" data-act="toggle-chat" title="AI panel">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4.2A8 8 0 1 1 21 12z"/></svg>
+      </button>
+    </header>
+
+    <div class="scroll" id="scroll">
+      <article class="doc" id="doc"></article>
+    </div>
+
+    <footer class="statusbar">
+      <span class="sb-i path" id="stPath">architecture/z-notes-design.md</span>
+      <span class="divider-v"></span>
+      <span class="sb-i" id="stLines">— lines</span>
+      <span class="divider-v hide-sm sb-wide"></span>
+      <span class="sb-i hide-sm sb-wide" id="stWords">— words</span>
+      <span class="spacer"></span>
+      <span class="sb-i hintset hide-sm" title="Keyboard shortcuts (?)">
+        <span><kbd>⌘K</kbd> search</span>
+        <span class="sb-xnarrow"><kbd>⌘E</kbd> raw</span>
+        <span class="sb-narrow"><kbd>⌘S</kbd> save</span>
+        <span class="sb-narrow"><kbd>?</kbd> keys</span>
+      </span>
+      <span class="divider-v hide-sm sb-mid"></span>
+      <span class="sb-i hide-sm sb-mid">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M18 9v6M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><path d="M18 9a6 6 0 0 1-6 6"/></svg>
+        main
+      </span>
+      <span class="divider-v hide-sm"></span>
+      <span class="sb-i ok" id="stSync">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+        <span class="hide-sm sb-narrow">synced 2 min ago · </span><span class="sb-tiny" style="font-family:var(--mono)">origin/main</span>
+      </span>
+      <span class="divider-v"></span>
+      <button class="sb-i conn" id="stConn" title="Live connection to the z-notes backend"><span class="dot"></span><span class="cw">connected</span></button>
+    </footer>
+  </div>
+
+  <!-- ================= CHAT ================= -->
+  <aside class="chat" id="chat">
+    <div class="chat-head">
+      <span class="chat-title">
+        <span class="spark">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5 13.9 8 19.5 9.9 13.9 11.8 12 17.3 10.1 11.8 4.5 9.9 10.1 8z" opacity=".95"/><path d="M18.5 14.5 19.4 17l2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z" opacity=".65"/></svg>
+        </span>
+        Assistant
+      </span>
+      <span class="model-chip"><span class="live"></span><b>gpt-5.6-sol</b> · high</span>
+      <div class="spacer"></div>
+      <button class="iconbtn" data-act="toggle-chat" title="Hide panel">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="chat-sub">
+      <button class="sess-chip" data-act="sess" id="sessChip" aria-haspopup="dialog" aria-expanded="false" title="Session details">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4.2A8 8 0 1 1 21 12z"/></svg>
+        <b id="sessCount">0</b> msgs
+        <span class="tk">· ~<b id="sessTok">0</b> tok</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="spacer"></div>
+      <button class="newsess" data-act="new-session" title="Clear context and start a fresh session">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        New session
+      </button>
+    </div>
+
+    <!-- session details popover -->
+    <div class="pop" id="sessPop" role="dialog" aria-label="Session details">
+      <h4>Session</h4>
+      <div class="kv"><span>Session id</span><b class="mono" id="sessId">sess_4f1c…</b></div>
+      <div class="kv"><span>Messages in context</span><b id="popMsgs">0</b></div>
+      <div class="kv"><span>Estimated tokens</span><b id="popTok">0</b></div>
+      <div class="kv"><span>Model</span><b class="mono">gpt-5.6-sol · high</b></div>
+      <div class="kv"><span>Started</span><b id="popStart">just now</b></div>
+      <div class="ctxbar"><i id="ctxFill" style="width:2%"></i></div>
+      <div class="kv" style="padding-top:0"><span>Context window</span><b class="mono" id="ctxPct">0% of 256k</b></div>
+      <div class="pop-foot">
+        <span class="note">Clearing drops the thread, not your docs.</span>
+        <div class="spacer" style="flex:1 1 auto"></div>
+        <button class="btn sm" data-act="close-sess">Close</button>
+        <button class="btn sm primary" data-act="new-session">New session</button>
+      </div>
+    </div>
+
+    <div class="msgs" id="msgs"></div>
+
+    <!-- LIFO change stack -->
+    <div class="stack" id="stack" hidden>
+      <div class="stack-t">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7.5 12 3l9 4.5-9 4.5z"/><path d="m3 12 9 4.5L21 12M3 16.5 12 21l9-4.5"/></svg>
+        Applied changes <span class="cnt" id="stackCnt">0</span>
+      </div>
+      <div id="stackList"></div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-box">
+        <textarea rows="2" placeholder="Ask about your vault…"></textarea>
+        <div class="composer-foot">
+          <span class="hint">⏎ send · ⇧⏎ newline</span>
+          <button class="send" title="Send">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<!-- ================= SETTINGS MODAL ================= -->
+<div class="veil" id="settingsVeil">
+  <div class="modal" role="dialog" aria-label="Settings">
+    <div class="modal-head">
+      <div style="flex:1">
+        <h2>Settings</h2>
+        <p>Local vault · nothing leaves this machine unless you sync.</p>
+      </div>
+      <button class="iconbtn" data-act="close-settings" title="Close">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <section class="grp">
+        <div class="grp-t">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/></svg>
+          Appearance
+        </div>
+        <div class="field">
+          <div class="lab"><b>Theme</b><span>Follow the OS or pin one look.</span></div>
+          <div class="ctl"><div class="seg" data-seg="theme">
+            <button class="on" data-v="system">System</button><button data-v="dark">Dark</button><button data-v="light">Light</button>
+          </div></div>
+        </div>
+        <div class="field">
+          <div class="lab"><b>Density</b><span>Comfy is the default; Compact tightens every surface further.</span></div>
+          <div class="ctl"><div class="seg" data-seg="density">
+            <button data-v="compact">Compact</button><button class="on acc" data-v="comfy">Comfy</button>
+          </div></div>
+        </div>
+      </section>
+
+      <section class="grp">
+        <div class="grp-t">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          Editing
+        </div>
+        <div class="field">
+          <div class="lab"><b>Autosave interval</b><span>Writes to disk after you stop typing.</span></div>
+          <div class="ctl" style="display:flex;align-items:center;gap:7px">
+            <input class="inp w-sm mono" value="10" aria-label="Autosave seconds">
+            <span style="font-size:12.5px;color:var(--muted)">seconds</span>
+          </div>
+        </div>
+        <div class="field">
+          <div class="lab"><b>Lossless markdown round-trip</b><span>Preserve original formatting on save.</span></div>
+          <div class="ctl"><button class="sw on" data-sw></button></div>
+        </div>
+        <div class="field">
+          <div class="lab"><b>Click preview to edit</b><span>Clicking rendered text jumps to that line in Raw.</span></div>
+          <div class="ctl"><button class="sw on" data-sw></button></div>
+        </div>
+        <div class="field">
+          <div class="lab"><b>Keyboard shortcuts</b><span>⌘E raw · ⌘S save · ⌘K search · Esc dismiss.</span></div>
+          <div class="ctl"><button class="btn" data-act="shortcuts">Show all <kbd>?</kbd></button></div>
+        </div>
+      </section>
+
+      <section class="grp">
+        <div class="grp-t">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M18 9v6M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><path d="M18 9a6 6 0 0 1-6 6"/></svg>
+          Git sync
+        </div>
+        <div class="field">
+          <div class="lab"><b>GitHub token</b><span>Stored in the system keychain.</span></div>
+          <div class="ctl"><input class="inp mono" type="password" value="ghp_9f3kx2Qm7Lp0" aria-label="GitHub token"></div>
+        </div>
+        <div class="field">
+          <div class="lab"><b>Branch</b><span>Commits land here on every sync.</span></div>
+          <div class="ctl"><input class="inp mono" value="main" aria-label="Branch"></div>
+        </div>
+        <div class="field">
+          <div class="lab"><b>Auto-sync</b><span>Push after each autosave, pull on focus.</span></div>
+          <div class="ctl"><button class="sw on" data-sw></button></div>
+        </div>
+        <div class="sync-line">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+          synced 2 min ago · <span class="mono">origin/main</span>
+        </div>
+      </section>
+
+      <section class="grp">
+        <div class="grp-t">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5 13.9 8 19.5 9.9 13.9 11.8 12 17.3 10.1 11.8 4.5 9.9 10.1 8z"/></svg>
+          AI
+        </div>
+        <div class="field">
+          <div class="lab"><b>Base URL</b><span>OpenAI-compatible endpoint.</span></div>
+          <div class="ctl"><input class="inp mono" value="http://127.0.0.1:8317/v1" aria-label="Base URL"></div>
+        </div>
+        <div class="field">
+          <div class="lab"><b>API key</b><span>Masked · click to reveal.</span></div>
+          <div class="ctl"><input class="inp mono" type="password" value="sk-proj-7hQ2vN8xR1" aria-label="API key"></div>
+        </div>
+        <div class="field">
+          <div class="lab"><b>Model</b><span>Used for chat and proposed edits.</span></div>
+          <div class="ctl"><input class="inp mono" value="gpt-5.6-sol" aria-label="Model"></div>
+        </div>
+        <div class="field">
+          <div class="lab"><b>Reasoning effort</b><span>Higher effort, slower and more thorough.</span></div>
+          <div class="ctl"><div class="seg" data-seg="effort">
+            <button data-v="low">Low</button><button data-v="medium">Medium</button><button class="on acc" data-v="high">High</button>
+          </div></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-foot">
+      <span class="note">Changes apply immediately.</span>
+      <div class="spacer"></div>
+      <button class="btn" data-act="close-settings">Close</button>
+      <button class="btn primary" data-act="close-settings">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= PASSPHRASE MODAL ================= -->
+<div class="veil" id="ppVeil">
+  <div class="modal pp" role="dialog" aria-label="Unlock secret block">
+    <div class="modal-head">
+      <div style="width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
+      </div>
+      <div style="flex:1">
+        <h2>Unlock secret block</h2>
+        <p>age identity · <span style="font-family:var(--mono);font-size:11.5px">keys/cloud-keys.md</span></p>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="field" style="flex-direction:column;align-items:stretch;gap:7px">
+        <div class="lab"><b>Passphrase</b></div>
+        <input class="inp mono" id="ppInput" type="password" placeholder="••••••••••••" style="min-width:0;width:100%;height:34px" aria-label="Passphrase">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="note">Decrypted in memory only.</span>
+      <div class="spacer"></div>
+      <button class="btn" data-act="pp-cancel">Cancel</button>
+      <button class="btn primary" data-act="pp-ok">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 7.5-2"/></svg>
+        Unlock
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= ⌘K FUZZY PALETTE ================= -->
+<div class="veil top" id="palVeil">
+  <div class="modal pal" role="dialog" aria-label="Search vault">
+    <div class="pal-in">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+      <input id="palInput" placeholder="Search docs and content…" aria-label="Search docs and content" autocomplete="off" spellcheck="false">
+      <span class="count" id="palCount"></span>
+    </div>
+    <div class="pal-list" id="palList" role="listbox" aria-label="Results"></div>
+    <div class="pal-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+      <span><kbd>⏎</kbd> open</span>
+      <span><kbd>Esc</kbd> close</span>
+      <span class="hide-xs" style="margin-left:auto">fuzzy · names + content</span>
+    </div>
+  </div>
+</div>
+
+<!-- ================= SHORTCUTS OVERLAY ================= -->
+<div class="veil" id="scVeil">
+  <div class="modal sc" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="modal-head">
+      <div style="flex:1">
+        <h2>Keyboard shortcuts</h2>
+        <p>Everything here works from anywhere in the app.</p>
+      </div>
+      <button class="iconbtn" data-act="close-shortcuts" title="Close">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="sc-grid">
+        <div class="sc-row">Search vault<span class="k"><kbd>⌘K</kbd></span></div>
+        <div class="sc-row">Toggle Preview / Raw<span class="k"><kbd>⌘E</kbd></span></div>
+        <div class="sc-row">Save now<span class="k"><kbd>⌘S</kbd></span></div>
+        <div class="sc-row">Dismiss anything<span class="k"><kbd>Esc</kbd></span></div>
+        <div class="sc-row">This overlay<span class="k"><kbd>?</kbd></span></div>
+        <div class="sc-row">Settings<span class="k"><kbd>⌘,</kbd></span></div>
+        <div class="sc-row">Toggle AI panel<span class="k"><kbd>⌘J</kbd></span></div>
+        <div class="sc-row">Toggle sidebar<span class="k"><kbd>⌘B</kbd></span></div>
+        <div class="sc-row">New doc<span class="k"><kbd>⌘N</kbd></span></div>
+        <div class="sc-row">New folder<span class="k"><kbd>⇧⌘N</kbd></span></div>
+        <div class="sc-row">Palette: move<span class="k"><kbd>↑</kbd><kbd>↓</kbd></span></div>
+        <div class="sc-row">Palette: open doc<span class="k"><kbd>⏎</kbd></span></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="note">Click any rendered line in Preview to edit it in Raw.</span>
+      <div class="spacer"></div>
+      <button class="btn primary" data-act="close-shortcuts">Got it</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span class="ok">✓</span><span id="toastTxt">Saved</span></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   ICONS
+   ============================================================ */
+const I = {
+  chev:  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
+  folder:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.4h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg>',
+  file:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+  key:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="8" cy="13" r="4"/><path d="m11 11 8-8M17 5l2 2M15 7l2 2"/></svg>',
+  check: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>',
+  link:  '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9.5 14.5 14.5 9.5"/><path d="M12.5 6.5 14 5a4.2 4.2 0 0 1 6 6l-1.5 1.5M11.5 17.5 10 19a4.2 4.2 0 0 1-6-6l1.5-1.5"/></svg>',
+  lock:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>',
+  unlock:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 7.6-1.8"/></svg>',
+  copy:  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>',
+  note:  '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M8.5 13h7M8.5 16.5h4"/></svg>',
+  search:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>',
+};
+
+/* ============================================================
+   DUMMY VAULT — every doc is just a markdown string.
+   Preview renders it; Raw edits it. One source of truth.
+   ============================================================ */
+const MD_DESIGN =
+'# z-notes design\n' +
+'\n' +
+'Single-user markdown notes app. Bun backend, raw/preview markdown UI, files are the source of truth — see [[event-pipeline]] for how external edits flow in.\n' +
+'\n' +
+'## Decisions\n' +
+'\n' +
+'- [x] Editor: raw markdown + preview modes, lossless by construction\n' +
+'- [x] Secrets: age-encrypted blocks (see [[cloud-keys]])\n' +
+'- [ ] Pick winning UI theme from prototype round 1\n' +
+'- [ ] Write build-ready spec\n' +
+'\n' +
+'## API sketch\n' +
+'\n' +
+'| Endpoint | Method | Purpose |\n' +
+'|---|---|---|\n' +
+'| /api/docs | GET | list vault tree |\n' +
+'| /api/docs/:path | GET/PUT | read / save markdown |\n' +
+'| /events | GET | SSE: files changed on disk |\n' +
+'\n' +
+'```ts\n' +
+'Bun.serve({\n' +
+'  routes: {\n' +
+'    "/api/docs/*": docHandler,\n' +
+'    "/events": sseHandler,\n' +
+'  },\n' +
+'  idleTimeout: 0, // SSE would die at 10s otherwise\n' +
+'});\n' +
+'```\n' +
+'\n' +
+'\n' +
+'> Files are edited outside the app too — the watcher is just a doorbell; reconcile from disk.\n';
+
+const MD_PIPELINE =
+'# Event pipeline\n' +
+'\n' +
+'fs.watch on macOS lies: eventType is always "rename" and atomic saves name only the temp file.\n' +
+'\n' +
+'- [x] Debounce 120ms\n' +
+'- [x] Reconcile: Glob → stat → hash → sqlite\n' +
+'- [ ] Push change to open editors via SSE\n' +
+'\n' +
+'Related: [[z-notes-design]]\n';
+
+const MD_SIDE =
+'# Side projects\n' +
+'\n' +
+'Active: **z-notes** (this app — [[z-notes-design]]), homelab overhaul, a tiny CLI for age-encrypted dotfiles.\n' +
+'\n' +
+'- [ ] z-notes: review prototype round 1\n' +
+'- [ ] homelab: move DNS off the NAS\n';
+
+const MD_KEYS =
+'# Cloud keys\n' +
+'\n' +
+'Personal AWS + Hetzner credentials. Everything below is encrypted at rest and in git.\n' +
+'\n' +
+'```age\n' +
+'-----BEGIN AGE ENCRYPTED FILE-----\n' +
+'YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBxSzl4...\n' +
+'Zt2wPmVFJk3XN8LQvR5tYcAeD7hHnUuBsWgO1iM4E6f9rTKp\n' +
+'-----END AGE ENCRYPTED FILE-----\n' +
+'```\n';
+
+/* the decrypted payload never lives in the file — age produces it at unlock */
+const SECRET_PLAIN =
+'AWS_ACCESS_KEY_ID=AKIA2E4EXAMPLE7XQ\n' +
+'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n' +
+'HETZNER_API_TOKEN=hz-prod-9f3kx…';
+
+const DOCS = {
+  'inbox.md':                       { title:'inbox.md',       path:'inbox.md',                       inert:true, md:'' },
+  'architecture/z-notes-design.md': { title:'z-notes design', path:'architecture/z-notes-design.md', slug:'z-notes-design', md:MD_DESIGN },
+  'architecture/event-pipeline.md': { title:'Event pipeline', path:'architecture/event-pipeline.md', slug:'event-pipeline', md:MD_PIPELINE },
+  'projects/side-projects.md':      { title:'Side projects',  path:'projects/side-projects.md',      slug:'side-projects',  md:MD_SIDE },
+  'projects/homelab.md':            { title:'homelab.md',     path:'projects/homelab.md',            inert:true, md:'' },
+  'keys/cloud-keys.md':             { title:'Cloud keys',     path:'keys/cloud-keys.md',             slug:'cloud-keys',     md:MD_KEYS, secretLocked:true },
+  'journal/2026-07-31.md':          { title:'2026-07-31.md',  path:'journal/2026-07-31.md',          inert:true, md:'' },
+};
+
+const SLUGS = {};
+Object.keys(DOCS).forEach(k => { if (DOCS[k].slug) SLUGS[DOCS[k].slug] = k; });
+
+const TREE = [
+  { type:'file', id:'inbox.md', name:'inbox.md' },
+  { type:'folder', name:'architecture', open:true, children:[
+      { type:'file', id:'architecture/z-notes-design.md', name:'z-notes-design.md' },
+      { type:'file', id:'architecture/event-pipeline.md', name:'event-pipeline.md' },
+  ]},
+  { type:'folder', name:'projects', open:true, children:[
+      { type:'file', id:'projects/side-projects.md', name:'side-projects.md' },
+      { type:'file', id:'projects/homelab.md', name:'homelab.md' },
+  ]},
+  { type:'folder', name:'keys', open:true, children:[
+      { type:'file', id:'keys/cloud-keys.md', name:'cloud-keys.md', key:true },
+  ]},
+  { type:'folder', name:'journal', open:false, children:[
+      { type:'file', id:'journal/2026-07-31.md', name:'2026-07-31.md' },
+  ]},
+];
+
+const state = { active:'architecture/z-notes-design.md', mode:'preview', dirty:false, applied:false };
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+const $  = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll(s));
+const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
+const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+/* inline markdown: `code`, **bold**, *em*, [[wikilink]] */
+function inline(s){
+  let h = esc(s);
+  h = h.replace(/`([^`]+)`/g, (m,c)=>'<code class="ic">'+c+'</code>');
+  h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  h = h.replace(/\[\[([^\]]+)\]\]/g, (m,name)=>
+    '<a class="wl" data-link="'+esc(name)+'" title="Open '+esc(name)+'">'+I.link+esc(name)+'</a>');
+  return h;
+}
+
+/* toy TS highlighter for the one code block */
+function hl(src){
+  let h = esc(src);
+  /* strings first — otherwise the class="…" we inject gets re-matched */
+  h = h.replace(/("[^"]*")/g, '<span class="tk-str">$1</span>');
+  h = h.replace(/(\/\/[^\n]*)/g, '<span class="tk-com">$1</span>');
+  h = h.replace(/\b(const|let|return|await|async)\b/g, '<span class="tk-key">$1</span>');
+  h = h.replace(/\b(Bun)\b/g, '<span class="tk-fn">$1</span>');
+  h = h.replace(/\b(0|10s)\b/g, '<span class="tk-num">$1</span>');
+  return h;
+}
+
+function words(doc){
+  return String(doc.md || '')
+    .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/[#>*`|\[\]]/g, ' ')
+    .split(/\s+/).filter(Boolean).length;
+}
+
+let toastT;
+function toast(msg){
+  $('#toastTxt').textContent = msg;
+  const t = $('#toast'); t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove('show'), 1900);
+}
+
+function copyText(t){
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).catch(()=>{});
+    else {
+      const ta = el('textarea'); ta.value = t; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy'); ta.remove();
+    }
+  } catch(e){}
+  toast('Copied to clipboard');
+}
+
+/* ============================================================
+   SIDEBAR TREE
+   ============================================================ */
+/* creating = { kind:'doc'|'folder', parent:folderNode|null, depth:n } while the
+   inline name input is live in the tree */
+let creating = null;
+
+function renderTree(){
+  const host = $('#tree'); host.innerHTML = '';
+  host.appendChild(el('div','sec-label','Vault'));
+  const slots = new Map();            /* folder node (or null = root) → container, depth */
+  slots.set(null, { box:host, depth:0 });
+
+  function node(n, depth, parent){
+    if (n.type === 'folder'){
+      const row = el('button','row folder' + (n.open ? ' open' : ''));
+      row.style.paddingLeft = (8 + depth*12) + 'px';
+      row.innerHTML = '<span class="ico chev">'+I.chev+'</span><span class="ico">'+I.folder+'</span><span class="lbl">'+esc(n.name)+'</span>';
+      const kids = el('div','children' + (n.open ? '' : ' closed'));
+      slots.set(n, { box:kids, depth:depth+1 });
+      row.addEventListener('click', ()=>{
+        n.open = !n.open;
+        row.classList.toggle('open', n.open);
+        kids.classList.toggle('closed', !n.open);
+      });
+      parent.appendChild(row); parent.appendChild(kids);
+      n.children.forEach(c => node(c, depth+1, kids));
+    } else {
+      const d = DOCS[n.id];
+      const row = el('button','row file' + (d.inert ? ' inert' : '') + (state.active === n.id ? ' active' : ''));
+      row.style.paddingLeft = (14 + depth*12) + 'px';
+      row.dataset.doc = n.id;
+      row.innerHTML = '<span class="ico">'+(n.key ? I.key : I.file)+'</span><span class="lbl">'+esc(n.name)+'</span><span class="dot"></span>';
+      row.addEventListener('click', ()=> openDoc(n.id));
+      parent.appendChild(row);
+    }
+  }
+  TREE.forEach(n => node(n, 0, host));
+
+  if (creating){
+    const slot = slots.get(creating.parent) || slots.get(null);
+    const row = el('div','newrow');
+    row.style.paddingLeft = (10 + slot.depth*12) + 'px';
+    row.innerHTML = '<span class="ico">' + (creating.kind === 'folder' ? I.folder : I.file) + '</span>';
+    const inp = el('input');
+    inp.placeholder = creating.kind === 'folder' ? 'folder name' : 'name.md';
+    inp.setAttribute('aria-label', creating.kind === 'folder' ? 'New folder name' : 'New doc name');
+    inp.spellcheck = false;
+    let settled = false;
+    const cancel = ()=>{ if (settled) return; settled = true; creating = null; renderTree(); };
+    const commit = ()=>{
+      if (settled) return;
+      const v = inp.value.trim();
+      if (!v) return cancel();
+      settled = true;
+      commitCreate(v);
+    };
+    inp.addEventListener('keydown', (e)=>{
+      e.stopPropagation();
+      if (e.key === 'Enter'){ e.preventDefault(); commit(); }
+      else if (e.key === 'Escape'){ e.preventDefault(); cancel(); toast('Cancelled'); }
+    });
+    inp.addEventListener('blur', ()=> setTimeout(cancel, 90));
+    row.appendChild(inp);
+    slot.box.appendChild(row);
+    setTimeout(()=>{ inp.focus(); }, 20);
+  }
+
+  const count = Object.keys(DOCS).length;
+  const sub = $('.vault-sub'); if (sub) sub.textContent = '~/vault · ' + count + ' docs';
+}
+
+function folderOf(id){
+  let found = null;
+  (function walk(nodes, parent){
+    nodes.forEach(n=>{
+      if (n.type === 'folder') walk(n.children, n);
+      else if (n.id === id) found = parent;
+    });
+  })(TREE, null);
+  return found;
+}
+
+function startCreate(kind){
+  /* new docs land next to whatever you're reading; folders at the vault root */
+  const parent = kind === 'doc' ? folderOf(state.active) : null;
+  if (parent) parent.open = true;                  /* reveal where it will land */
+  creating = { kind: kind, parent: parent };
+  if (window.innerWidth < 768) openNav();
+  renderTree();
+}
+
+function commitCreate(name){
+  const parent = creating.parent;
+  const kind = creating.kind;
+  const dir = parent ? parent.name : '';
+  creating = null;
+
+  if (kind === 'folder'){
+    const node = { type:'folder', name:name, open:true, children:[] };
+    (parent ? parent.children : TREE).push(node);
+    renderTree();
+    toast('Folder “' + name + '” created');
+    return;
+  }
+
+  let file = name.replace(/\.md$/i, '') + '.md';
+  const path = (dir ? dir + '/' : '') + file;
+  if (DOCS[path]){ renderTree(); openDoc(path); toast('That doc already exists'); return; }
+  const slug = file.replace(/\.md$/i, '');
+  DOCS[path] = { title:slug, path:path, slug:slug, md:'' };
+  if (!SLUGS[slug]) SLUGS[slug] = path;
+  (parent ? parent.children : TREE).push({ type:'file', id:path, name:file });
+  renderTree();
+  openDoc(path);
+  setMode('raw', { silent:true, caret:0 });      /* a fresh doc opens ready to type */
+  markDirty();
+  toast('Created ' + path);
+}
+
+/* ============================================================
+   MARKDOWN → PREVIEW
+   A small line-based renderer. Task items remember the index of
+   the source line they came from, so ticking a checkbox rewrites
+   that exact line of the markdown string.
+   ============================================================ */
+const RE_FENCE = /^\s*```/;
+const RE_HEAD  = /^(#{1,3})\s+(.+)$/;
+const RE_RULE  = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
+const RE_QUOTE = /^\s*>/;
+const RE_LI    = /^\s*[-*+]\s+/;
+const RE_ROW   = /^\s*\|/;
+const RE_ALIGN = /^\s*\|[\s:|-]+\|\s*$/;
+
+function isBlockStart(l){
+  return RE_FENCE.test(l) || RE_HEAD.test(l) || RE_RULE.test(l) ||
+         RE_QUOTE.test(l) || RE_LI.test(l) || RE_ROW.test(l);
+}
+
+function cells(row){
+  return row.trim().replace(/^\|/,'').replace(/\|$/,'').split('|').map(c=>c.trim());
+}
+
+function tableEl(rows){
+  const w = el('div','tblwrap');
+  const head = cells(rows[0]);
+  let h = '<table><thead><tr>' + head.map(c=>'<th>'+esc(c)+'</th>').join('') + '</tr></thead><tbody>';
+  h += rows.slice(2).map(r=>'<tr>' + cells(r).map(c=>'<td>'+esc(c)+'</td>').join('') + '</tr>').join('');
+  h += '</tbody></table>';
+  w.innerHTML = h;
+  return w;
+}
+
+function codeEl(lang, src){
+  const w = el('div','code');
+  const bar = el('div','code-bar',
+    '<span class="dots"><i></i><i></i><i></i></span><span class="lang">'+esc(lang||'text')+'</span>');
+  const copy = el('button','btn sm', I.copy + ' Copy');
+  copy.style.marginLeft = 'auto';
+  copy.addEventListener('click', ()=> copyText(src));
+  bar.appendChild(copy);
+  const pre = el('pre');
+  pre.innerHTML = '<code>' + (lang === 'ts' ? hl(src) : esc(src)) + '</code>';
+  w.appendChild(bar); w.appendChild(pre);
+  return w;
+}
+
+function listItemEl(doc, raw, lineNo){
+  const t = raw.replace(RE_LI, '');
+  const box = /^\[([ xX])\]\s*/.exec(t);
+  if (box){
+    const done = box[1].toLowerCase() === 'x';
+    const li = el('li','task' + (done ? ' done' : ''));
+    const cb = el('button','cb', I.check);
+    cb.title = 'Toggle task';
+    cb.setAttribute('aria-pressed', done ? 'true' : 'false');
+    cb.addEventListener('click', ()=> toggleTask(doc, lineNo, li));
+    const sp = el('span','tx'); sp.innerHTML = inline(t.slice(box[0].length));
+    li.appendChild(cb); li.appendChild(sp);
+    return li;
+  }
+  const li = el('li','bul');
+  const sp = el('span','tx'); sp.innerHTML = inline(t);
+  li.appendChild(sp);
+  return li;
+}
+
+/* rewrite one source line, then flip the checkbox in place (no scroll jump) */
+function toggleTask(doc, lineNo, li){
+  const lines = doc.md.split('\n');
+  const l = lines[lineNo];
+  if (l == null) return;
+  const wasDone = /^\s*[-*+]\s+\[[xX]\]/.test(l);
+  lines[lineNo] = wasDone ? l.replace(/\[[xX]\]/, '[ ]') : l.replace(/\[ \]/, '[x]');
+  doc.md = lines.join('\n');
+  li.classList.toggle('done', !wasDone);
+  const cb = $('.cb', li);
+  if (cb) cb.setAttribute('aria-pressed', !wasDone ? 'true' : 'false');
+  markDirty();
+  updateMeta();
+}
+
+function renderPreview(doc, host){
+  const md = el('div','md editable');
+  const lines = doc.md.split('\n');
+  let i = 0;
+  let blanks = 0;   /* consecutive blank source lines waiting above the next block */
+
+  /* every top-level block remembers the source line it came from —
+     that mapping is what click-to-edit rides on.
+     Amendment 13: `blanks` is how many blank source lines were skipped just
+     above this block. The first one is the ordinary block separator and is
+     already paid for by the CSS block gap; each one beyond it buys a body
+     line-box of extra space, emitted as a .bgap element so the source's
+     vertical rhythm survives into Preview. Leading blank lines at the top of
+     a doc buy nothing — there is no gap to double. */
+  const put = (node, line)=>{
+    if (md.firstChild && blanks > 1){
+      const sp = el('div','bgap');
+      sp.setAttribute('aria-hidden','true');
+      sp.style.height = 'calc(' + (blanks - 1) + ' * var(--d-font) * var(--d-lh))';
+      md.appendChild(sp);
+    }
+    blanks = 0;
+    node.dataset.line = line;
+    md.appendChild(node);
+    return node;
+  };
+
+  while (i < lines.length){
+    const line = lines[i];
+    if (!line.trim()){ blanks++; i++; continue; }
+    const start = i;
+
+    if (RE_FENCE.test(line)){
+      const lang = line.replace(RE_FENCE, '').trim();
+      const buf = []; i++;
+      while (i < lines.length && !RE_FENCE.test(lines[i])){ buf.push(lines[i]); i++; }
+      i++; /* closing fence */
+      put(lang === 'age' ? secretEl(doc, buf.join('\n')) : codeEl(lang, buf.join('\n')), start);
+      continue;
+    }
+
+    const h = RE_HEAD.exec(line);
+    if (h){
+      const n = el('h' + h[1].length);
+      n.innerHTML = inline(h[2].trim());
+      put(n, start); i++; continue;
+    }
+
+    if (RE_RULE.test(line)){ put(el('div','divider'), start); i++; continue; }
+
+    if (RE_QUOTE.test(line)){
+      const buf = [];
+      while (i < lines.length && RE_QUOTE.test(lines[i])){ buf.push(lines[i].replace(/^\s*>\s?/,'')); i++; }
+      const q = el('blockquote');
+      q.innerHTML = inline(buf.join(' '));
+      put(q, start); continue;
+    }
+
+    if (RE_ROW.test(line) && i+1 < lines.length && RE_ALIGN.test(lines[i+1])){
+      const rows = [];
+      while (i < lines.length && RE_ROW.test(lines[i])){ rows.push(lines[i]); i++; }
+      put(tableEl(rows), start); continue;
+    }
+
+    if (RE_LI.test(line)){
+      const ul = el('ul');
+      while (i < lines.length && RE_LI.test(lines[i])){
+        const li = listItemEl(doc, lines[i], i);
+        li.dataset.line = i;                  /* per-item precision */
+        ul.appendChild(li); i++;
+      }
+      put(ul, start); continue;
+    }
+
+    const buf = [];
+    while (i < lines.length && lines[i].trim() && !isBlockStart(lines[i])){ buf.push(lines[i].trim()); i++; }
+    const p = el('p'); p.innerHTML = inline(buf.join(' '));
+    put(p, start);
+  }
+
+  host.appendChild(md);
+}
+
+/* ---------- click a rendered line → edit that line in Raw ---------- */
+function lineOffset(md, lineNo){
+  const lines = md.split('\n');
+  let off = 0;
+  for (let i = 0; i < lineNo && i < lines.length; i++) off += lines[i].length + 1;
+  return Math.min(off, md.length);
+}
+
+let downPt = null;
+function previewClickToEdit(e){
+  if (state.mode !== 'preview') return;
+  const t = e.target;
+  if (!t || !t.closest) return;
+  /* never hijack: checkboxes, wikilink pills, secret controls, copy buttons,
+     any real control — and never while the user is selecting text */
+  if (t.closest('button, a, input, textarea, select, .secret-bar, .cb, .wl')) return;
+  const sel = window.getSelection && window.getSelection();
+  if (sel && !sel.isCollapsed && String(sel).trim()) return;
+  if (downPt && (Math.abs(e.clientX - downPt.x) > 4 || Math.abs(e.clientY - downPt.y) > 4)) return;
+
+  const block = t.closest('[data-line]');
+  if (!block){
+    /* empty note: clicking the placeholder starts writing */
+    if (!String(DOCS[state.active].md).trim() && t.closest('.empty-doc')){
+      e.zModeSwitch = true;                 /* claimed — see paneClickToPreview */
+      setMode('raw', { caret:0, silent:true });
+    }
+    return;
+  }
+  const lineNo = parseInt(block.dataset.line, 10);
+  if (isNaN(lineNo)) return;
+  /* This click has entered Raw. It still has to bubble up to #scroll, where the
+     click-outside handler lives — and by then state.mode is already 'raw' and
+     the clicked node has been thrown away by the re-render. Claim the event so
+     the two zones can't ping-pong on a single gesture. */
+  e.zModeSwitch = true;
+
+  const sc = $('#scroll');
+  const anchor = block.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+  setMode('raw', { caret: lineOffset(DOCS[state.active].md, lineNo), line: lineNo, anchor: anchor, silent: true });
+}
+
+/* ---------- secret block, rendered from the ```age fence ---------- */
+function secretEl(doc, cipher){
+  const locked = doc.secretLocked !== false;
+  const w = el('div','secret' + (locked ? '' : ' open'));
+  const bar = el('div','secret-bar');
+  bar.innerHTML =
+    '<span class="secret-ico">' + (locked ? I.lock : I.unlock) + '</span>' +
+    '<span style="min-width:0"><span class="secret-t">Secret block</span>' +
+    '<span class="secret-s" style="display:block">age · x25519 · ' + (locked ? 'encrypted' : 'decrypted in memory') + '</span></span>';
+  const badge = el('span','badge ' + (locked ? 'lock' : 'unlock'), locked ? 'Locked' : 'Unlocked');
+  badge.style.marginLeft = 'auto';
+  bar.appendChild(badge);
+
+  if (locked){
+    const btn = el('button','btn sm primary', I.unlock + ' Unlock');
+    btn.style.marginLeft = '8px';
+    btn.addEventListener('click', ()=> askPass(doc));
+    bar.appendChild(btn);
+  } else {
+    const copy = el('button','btn sm', I.copy + ' Copy');
+    copy.style.marginLeft = '8px';
+    copy.addEventListener('click', ()=> copyText(SECRET_PLAIN));
+    const lock = el('button','btn sm', I.lock + ' Lock');
+    lock.addEventListener('click', ()=>{ doc.secretLocked = true; renderDoc(); toast('Secret block re-locked'); });
+    bar.appendChild(copy); bar.appendChild(lock);
+  }
+
+  const body = el('div','secret-body');
+  const pre = el('pre');
+  if (locked) pre.textContent = cipher;
+  else {
+    pre.innerHTML = SECRET_PLAIN.split('\n').map(line=>{
+      const i = line.indexOf('=');
+      return i > 0 ? '<b>'+esc(line.slice(0,i))+'</b>='+esc(line.slice(i+1)) : esc(line);
+    }).join('\n');
+  }
+  body.appendChild(pre);
+  w.appendChild(bar); w.appendChild(body);
+  return w;
+}
+
+/* ============================================================
+   RAW MODE
+   ============================================================ */
+function autoGrow(ta){
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+}
+function renderRaw(doc, host){
+  const ta = el('textarea','raw');
+  ta.id = 'rawArea';
+  ta.spellcheck = false;
+  ta.setAttribute('spellcheck','false');
+  ta.setAttribute('autocorrect','off');
+  ta.setAttribute('autocapitalize','off');
+  ta.value = doc.md;
+  ta.setAttribute('aria-label', 'Markdown source · ' + doc.path);
+  ta.placeholder = '# ' + doc.title + '\n\nThis note is empty — write markdown here.';
+  ta.addEventListener('input', ()=>{
+    doc.md = ta.value;
+    autoGrow(ta);
+    markDirty();
+    updateMeta();
+  });
+  host.appendChild(ta);
+  autoGrow(ta);
+}
+
+/* pull pending textarea edits into the doc before anything re-renders */
+function syncRaw(){
+  if (state.mode !== 'raw') return;
+  const ta = $('#rawArea');
+  if (ta && DOCS[state.active]) DOCS[state.active].md = ta.value;
+}
+
+/* ============================================================
+   EDITOR SHELL
+   ============================================================ */
+function updateMeta(){
+  const doc = DOCS[state.active];
+  const md = String(doc.md || '');
+  const n = md === '' ? 0 : md.replace(/\n$/,'').split('\n').length;
+  $('#stLines').textContent = n + (n === 1 ? ' line' : ' lines');
+  $('#stWords').textContent = words(doc) + ' words';
+  updateSession();
+}
+
+function renderDoc(opts){
+  opts = opts || {};
+  const doc = DOCS[state.active];
+  const host = $('#doc');
+  host.innerHTML = '';
+  host.classList.toggle('raw-mode', state.mode === 'raw');
+
+  const meta = el('div','doc-meta');
+  meta.innerHTML = '<span class="tag">' + esc(doc.path) + '</span><span>Edited 4 min ago</span>' +
+    '<span class="mode-note">' + (state.mode === 'raw' ? 'raw source · click outside to preview' : 'preview · click a line to edit') + '</span>';
+  host.appendChild(meta);
+
+  if (state.mode === 'raw'){
+    renderRaw(doc, host);
+  } else if (!doc.md.trim()){
+    const e = el('div','empty-doc');
+    e.innerHTML = '<div class="ring">' + I.note + '</div><h3>' + esc(doc.title) + '</h3>' +
+      '<p>This note is empty. Switch to <b>Raw</b> (<kbd>⌘E</kbd>) to write markdown.</p>';
+    host.appendChild(e);
+  } else {
+    renderPreview(doc, host);
+  }
+
+  /* the entrance animation belongs to *navigation* (a different doc arrived).
+     A mode switch must not translate or fade the container — amendment 11. */
+  host.classList.remove('fade-in');
+  if (!opts.noFade){ void host.offsetWidth; host.classList.add('fade-in'); }
+
+  $('#crumbs').innerHTML = doc.path.split('/').map((p,i,a)=>
+    i === a.length-1 ? '<b class="chip-mono">'+esc(p)+'</b>' : '<span class="cr-dir">'+esc(p)+'</span>'
+  ).join('<span class="sep cr-dir">/</span>');
+  $('#stPath').textContent = doc.path;
+  updateMeta();
+  $$('.row.file').forEach(r => r.classList.toggle('active', r.dataset.doc === state.active));
+}
+
+function openDoc(id, opts){
+  if (!DOCS[id]) return;
+  syncRaw();
+  state.active = id;
+  renderDoc();
+  $('#scroll').scrollTop = 0;
+  if (window.innerWidth < 768) closeNav();
+  if (opts && opts.flashSave) flashSave();
+}
+
+/* ============================================================
+   PREVIEW ⇄ RAW
+   ============================================================ */
+function syncModeSeg(){
+  $$('#modeSeg button').forEach(btn=>{
+    const on = btn.dataset.v === state.mode;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+}
+
+/* Focus without letting the browser scroll anything for us.
+   (The layout fix means #scroll is the only scroller, but preventScroll +
+   an explicit restore keeps mode switching pixel-stable regardless.) */
+function focusRaw(opts){
+  const ta = $('#rawArea'); if (!ta) return;
+  const sc = $('#scroll');
+  const keep = sc ? sc.scrollTop : 0;
+  try { ta.focus({ preventScroll:true }); } catch(e){ ta.focus(); }
+  const pos = Math.max(0, Math.min(opts.caret || 0, ta.value.length));
+  ta.setSelectionRange(pos, pos);
+  if (!sc) return;
+  if (opts.line != null){
+    /* land the clicked line where the clicked block just was */
+    const cs = getComputedStyle(ta);
+    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
+    const y = ta.offsetTop + parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth) + opts.line * lh;
+    const want = y - (opts.anchor != null ? opts.anchor : 120);
+    sc.scrollTop = Math.max(0, Math.min(want, sc.scrollHeight - sc.clientHeight));
+  } else {
+    sc.scrollTop = keep;
+  }
+}
+
+function setMode(m, opts){
+  opts = opts || {};
+  if (m !== 'raw' && m !== 'preview') return;
+  if (m === state.mode){
+    if (m === 'raw' && opts.caret != null) focusRaw(opts);
+    return;
+  }
+  syncRaw();                    /* raw edits land in the doc before we leave */
+  const sc = $('#scroll');
+  const keep = sc ? sc.scrollTop : 0;
+  state.mode = m;
+  syncModeSeg();
+  renderDoc({ noFade:true });   /* no entrance animation on a mode switch */
+  /* scroll parity: hold the exact offset, clamped to the new content height
+     (raw source and rendered markdown are rarely the same height) */
+  if (sc) sc.scrollTop = Math.max(0, Math.min(keep, sc.scrollHeight - sc.clientHeight));
+  if (m === 'raw'){
+    /* focus the source on desktop, or on mobile only when the user asked for a
+       specific line by tapping it — otherwise the keyboard yanks up unbidden */
+    if (window.innerWidth >= 768 || opts.caret != null) focusRaw(opts);
+  }
+  if (!opts.silent) toast(m === 'raw' ? 'Raw markdown' : 'Rendered preview');
+}
+
+/* ============================================================
+   SAVE
+   ============================================================ */
+let dirtyT, flashT;
+function markDirty(){
+  state.dirty = true;
+  const ind = $('#saveInd');
+  ind.classList.remove('flash'); ind.classList.add('dirty');
+  $('#saveTxt').textContent = 'Unsaved changes';
+  clearTimeout(dirtyT);
+  dirtyT = setTimeout(()=> doSave(true), 2400); // pretend "autosave interval"
+}
+function doSave(auto){
+  syncRaw();
+  state.dirty = false;
+  const ind = $('#saveInd');
+  ind.classList.remove('dirty');
+  $('#saveTxt').textContent = auto ? 'Autosaved · just now' : 'Saved · just now';
+  flashSave();
+  if (!auto) toast('Saved to disk · origin/main');
+}
+function flashSave(){
+  const ind = $('#saveInd');
+  ind.classList.remove('flash'); void ind.offsetWidth; ind.classList.add('flash');
+  clearTimeout(flashT);
+  flashT = setTimeout(()=>{
+    ind.classList.remove('flash');
+    if (!state.dirty) $('#saveTxt').textContent = 'Saved · just now';
+  }, 1700);
+}
+
+/* ============================================================
+   AI CHAT
+   ============================================================ */
+const DIFF_TARGET = 'architecture/z-notes-design.md';
+
+/* the exact markdown Accept #1 appends to the doc string */
+const ROLLUP_MD =
+'\n## Open tasks rollup\n' +
+'\n' +
+'- [ ] Pick winning UI theme ([[z-notes-design]])\n' +
+'- [ ] Write build-ready spec ([[z-notes-design]])\n' +
+'- [ ] SSE push to open editors ([[event-pipeline]])\n';
+const SHIP_LINE = '- [ ] Ship prototype round 2\n';
+
+/* two sequential proposals; each one snapshots the doc before it lands, so a
+   revert restores byte-for-byte. Only the newest applied change is revertible. */
+const PROPOSALS = [
+  {
+    id:1, target:DIFF_TARGET, label:'Open tasks rollup',
+    intro:'Proposed edit — appending a rollup section under <b>Decisions</b>:',
+    stat:{ add:4, del:0 }, note:'1 file · 4 lines',
+    diff:[
+      { m:' ', t:'  - [ ] Write build-ready spec' },
+      { m:'+', t:'## Open tasks rollup' },
+      { m:'+', t:'- [ ] Pick winning UI theme ([[z-notes-design]])' },
+      { m:'+', t:'- [ ] Write build-ready spec ([[z-notes-design]])' },
+      { m:'+', t:'- [ ] SSE push to open editors ([[event-pipeline]])' },
+    ],
+    apply:(md)=> md.replace(/\s*$/, '\n') + ROLLUP_MD,
+  },
+  {
+    id:2, target:DIFF_TARGET, label:'Track round 2 shipping',
+    intro:'One more line, at the end of that rollup:',
+    stat:{ add:1, del:0 }, note:'1 file · 1 line',
+    diff:[
+      { m:' ', t:'  - [ ] SSE push to open editors ([[event-pipeline]])' },
+      { m:'+', t:'- [ ] Ship prototype round 2' },
+    ],
+    apply:(md)=> md.replace(/\s*$/, '\n') + SHIP_LINE,
+  },
+];
+const byId = (id)=> PROPOSALS.filter(p=> p.id === id)[0];
+let changeStack = [];              /* proposal ids, oldest → newest */
+
+/* ---------- session ---------- */
+const BASE_THREAD = [
+  { role:'user', html:'what changed in the vault today?' },
+  { role:'ai',   html:'Three files were touched: <b>event-pipeline.md</b> (debounce notes), <b>side-projects.md</b> (two new tasks) and <b>cloud-keys.md</b> (rotated the Hetzner token). Nothing conflicts with origin/main.' },
+  { role:'user', html:'does the watcher handle atomic saves yet?' },
+  { role:'ai',   html:'Only halfway. <b>fs.watch</b> reports <code class="ic">rename</code> for atomic saves and names the temp file, so you reconcile from disk after a 120ms debounce. Pushing that change out to open editors over SSE is still an open task.' },
+  { role:'user', html:'remind me what the secret block uses' },
+  { role:'ai',   html:'age with an x25519 identity, armored into an <code class="ic">```age</code> fence inside <b>keys/cloud-keys.md</b>. The plaintext never touches disk — it is decrypted in memory when you unlock it.' },
+  { role:'user', html:'summarize open tasks across my vault' },
+  { role:'ai',   html:'You have <b>6 open tasks</b>: 2 in z-notes design (pick winning theme, write spec), 1 in event-pipeline (SSE push), 2 in side-projects, 1 in inbox. Want me to add a rollup section to z-notes-design?' },
+  { role:'user', html:'yes, add it' },
+  { role:'ai',   html:PROPOSALS[0].intro, proposal:1 },
+  { role:'user', html:'good — track shipping round 2 in there too' },
+  { role:'ai',   html:PROPOSALS[1].intro, proposal:2 },
+];
+
+let thread = BASE_THREAD.slice();
+let session = { id:'sess_4f1c9a', started:Date.now() };
+
+function estTokens(){
+  let chars = 0;
+  thread.forEach(m=>{
+    if (m.type === 'divider') return;
+    chars += String(m.html).replace(/<[^>]+>/g,'').length;
+    if (m.proposal){ const p = byId(m.proposal); if (p) chars += p.diff.reduce((a,d)=> a + d.t.length + 2, 0); }
+  });
+  chars += String(DOCS[state.active] ? DOCS[state.active].md : '').length;   /* open doc rides along */
+  return Math.round(chars / 3.6);
+}
+function msgCount(){ return thread.filter(m=> m.type !== 'divider').length; }
+function fmtTok(n){ return n >= 1000 ? (n/1000).toFixed(1) + 'k' : String(n); }
+
+function updateSession(){
+  const n = msgCount(), t = estTokens();
+  $('#sessCount').textContent = n;
+  $('#sessTok').textContent = fmtTok(t);
+  $('#popMsgs').textContent = n + (n === 1 ? ' message' : ' messages');
+  $('#popTok').textContent = '~' + fmtTok(t) + ' tokens';
+  $('#sessId').textContent = session.id;
+  const mins = Math.round((Date.now() - session.started) / 60000);
+  $('#popStart').textContent = mins < 1 ? 'just now' : mins + ' min ago';
+  const pct = Math.min(100, (t / 256000) * 100);
+  $('#ctxFill').style.width = Math.max(1.5, pct).toFixed(1) + '%';
+  $('#ctxPct').textContent = (pct < 0.1 ? '<0.1' : pct.toFixed(1)) + '% of 256k';
+}
+
+function renderChat(){
+  const host = $('#msgs'); host.innerHTML = '';
+  thread.forEach((m, idx)=>{
+    if (m.type === 'divider'){
+      host.appendChild(el('div','ctx-div', esc(m.html)));
+      return;
+    }
+    const wrap = el('div','msg ' + m.role);
+    wrap.style.animationDelay = Math.min(idx * 22, 220) + 'ms';
+    wrap.appendChild(el('div','who', m.role === 'user' ? 'You' : 'gpt-5.6-sol'));
+    wrap.appendChild(el('div','bubble', m.html));
+    if (m.proposal && !m.dismissed) wrap.appendChild(diffCard(byId(m.proposal)));
+    else if (m.proposal && m.dismissed) wrap.appendChild(dismissedCard(byId(m.proposal)));
+    host.appendChild(wrap);
+  });
+  host.scrollTop = host.scrollHeight;
+  renderStack();
+  updateSession();
+}
+
+function newSession(){
+  thread = [
+    { type:'divider', html:'context cleared' },
+    { role:'ai', html:'Fresh session — the previous thread is out of context. Your vault and any applied changes are untouched. What should we look at?' },
+  ];
+  session = { id:'sess_' + Math.random().toString(16).slice(2,8), started:Date.now() };
+  closeSess();
+  renderChat();
+  toast('Context cleared · new session');
+}
+
+/* ---------- diff cards ---------- */
+function diffCard(p){
+  const card = el('div','diffcard');
+  card.dataset.prop = p.id;
+  if (p.applied) card.classList.add('applied');
+  const head = el('div','diff-head');
+  head.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>' +
+    '<span class="f">' + esc(p.target) + '</span>' +
+    '<span class="diff-stat"><span class="p">+' + p.stat.add + '</span><span class="m">−' + p.stat.del + '</span></span>';
+  const body = el('div','diff-body');
+  p.diff.forEach(d=>{
+    const line = el('div','dl ' + (d.m === '+' ? 'add' : d.m === '-' ? 'del' : 'ctx'));
+    line.innerHTML = '<span class="g">' + (d.m === ' ' ? '' : d.m) + '</span><span class="t">' + esc(d.t) + '</span>';
+    body.appendChild(line);
+  });
+  const foot = el('div','diff-foot');
+  card.appendChild(head); card.appendChild(body); card.appendChild(foot);
+  fillFoot(p, foot);
+  return card;
+}
+
+function dismissedCard(p){
+  const d = el('div','dismissed',
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Suggestion dismissed');
+  const undo = el('button','btn sm','Bring it back');
+  undo.style.marginLeft = 'auto';
+  undo.addEventListener('click', ()=>{
+    thread.forEach(m=>{ if (m.proposal === p.id) m.dismissed = false; });
+    renderChat();
+  });
+  d.appendChild(undo);
+  return d;
+}
+
+function stackTop(){ return changeStack.length ? changeStack[changeStack.length-1] : null; }
+function stackIndexOf(p){ return changeStack.indexOf(p.id) + 1; }   /* 1-based "#N" */
+
+function fillFoot(p, foot){
+  foot.innerHTML = '';
+  if (!p.applied){
+    const acc = el('button','btn primary sm',
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg> Accept');
+    acc.addEventListener('click', ()=> acceptProposal(p));
+    const rej = el('button','btn sm','Reject');
+    rej.addEventListener('click', ()=> rejectProposal(p));
+    const note = el('span','note'); note.style.cssText = 'margin-left:auto;font-size:11px;color:var(--muted)';
+    note.textContent = p.note;
+    foot.appendChild(acc); foot.appendChild(rej); foot.appendChild(note);
+  } else {
+    const n = stackIndexOf(p);
+    const ok = el('span','applied-note',
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg> Applied #' + n);
+    const isTop = stackTop() === p.id;
+    const rev = el('button','btn sm',
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h11a5 5 0 0 1 0 10h-4"/><path d="m7 6-4 4 4 4"/></svg> Revert');
+    rev.style.marginLeft = 'auto';
+    if (isTop){
+      rev.addEventListener('click', ()=> revertProposal(p));
+      rev.title = 'Undo this change';
+    } else {
+      rev.disabled = true;
+      rev.title = 'revert #' + changeStack.length + ' first';
+      const hint = el('span','stack-hint','revert #' + changeStack.length + ' first');
+      hint.style.marginLeft = 'auto';
+      foot.appendChild(ok); foot.appendChild(hint); foot.appendChild(rev);
+      rev.style.marginLeft = '0';
+      return;
+    }
+    foot.appendChild(ok); foot.appendChild(rev);
+  }
+}
+
+function refreshCards(){
+  $$('.diffcard').forEach(card=>{
+    const p = byId(parseInt(card.dataset.prop, 10));
+    if (!p) return;
+    card.classList.toggle('applied', !!p.applied);
+    const foot = $('.diff-foot', card);
+    if (foot) fillFoot(p, foot);
+  });
+}
+
+function renderStack(){
+  const box = $('#stack'), list = $('#stackList');
+  const msgs = $('#msgs');
+  /* the strip appearing steals height from the thread — stay pinned if we were */
+  const pinned = msgs && (msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight) < 40;
+  list.innerHTML = '';
+  $('#stackCnt').textContent = changeStack.length;
+  box.hidden = changeStack.length === 0;
+  /* newest first — the top of the stack is the only revertible one */
+  changeStack.slice().reverse().forEach((id, i)=>{
+    const p = byId(id);
+    const isTop = i === 0;
+    const row = el('div','stack-row' + (isTop ? ' top' : ''));
+    row.innerHTML = '<span class="n">#' + (changeStack.length - i) + '</span>' +
+                    '<span class="lbl">' + esc(p.label) + '</span>';
+    const rev = el('button','btn sm','Revert');
+    if (isTop){
+      rev.addEventListener('click', ()=> revertProposal(p));
+      rev.title = 'Undo change #' + changeStack.length;
+    } else {
+      rev.disabled = true;
+      rev.title = 'revert #' + changeStack.length + ' first';
+      rev.textContent = 'Revert';
+    }
+    row.appendChild(rev);
+    list.appendChild(row);
+  });
+  if (pinned && msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+function acceptProposal(p){
+  if (p.applied) return;
+  syncRaw();
+  const doc = DOCS[p.target];
+  p.before = doc.md;                       /* exact snapshot for the revert */
+  doc.md = p.apply(doc.md);
+  p.applied = true;
+  changeStack.push(p.id);
+  if (state.active !== p.target) openDoc(p.target); else renderDoc();
+  refreshCards(); renderStack(); updateSession();
+  markDirty();
+  toast('Applied #' + changeStack.length + ' · ' + p.label);
+  const sc = $('#scroll'); if (sc) sc.scrollTop = sc.scrollHeight;
+}
+
+function revertProposal(p){
+  if (!p.applied) return;
+  if (stackTop() !== p.id){
+    toast('Revert #' + changeStack.length + ' first');
+    return;
+  }
+  syncRaw();
+  const n = changeStack.length;
+  const doc = DOCS[p.target];
+  if (p.before != null) doc.md = p.before;  /* byte-for-byte restore */
+  p.before = null;
+  p.applied = false;
+  changeStack.pop();
+  if (state.active === p.target) renderDoc(); else openDoc(p.target);
+  refreshCards(); renderStack(); updateSession();
+  markDirty();
+  toast('Reverted #' + n + ' · ' + p.label);
+}
+
+function rejectProposal(p){
+  if (p.applied && stackTop() !== p.id){ toast('Revert #' + changeStack.length + ' first'); return; }
+  const card = $('.diffcard[data-prop="' + p.id + '"]');
+  if (p.applied) revertProposal(p);
+  thread.forEach(m=>{ if (m.proposal === p.id) m.dismissed = true; });
+  if (!card){ renderChat(); return; }
+  card.style.opacity = '0';
+  card.style.transform = 'translateY(-4px)';
+  setTimeout(()=>{ card.replaceWith(dismissedCard(p)); }, 200);
+}
+
+/* ============================================================
+   SECRET PASSPHRASE FLOW
+   ============================================================ */
+let pendingDoc = null;
+function askPass(doc){
+  pendingDoc = doc;
+  $('#ppInput').value = '';
+  $('#ppVeil').classList.add('show');
+  setTimeout(()=> $('#ppInput').focus(), 120);
+}
+function doUnlock(){
+  if (pendingDoc){ pendingDoc.secretLocked = false; pendingDoc = null; renderDoc(); toast('Secret block decrypted'); }
+  $('#ppVeil').classList.remove('show');
+}
+
+/* ============================================================
+   ⌘K FUZZY PALETTE — subsequence match over names *and* content
+   ============================================================ */
+function fuzzy(q, hay){
+  if (!q) return { score:0, idx:[] };
+  const n = q.toLowerCase(), h = hay.toLowerCase();
+  const idx = []; let from = 0, score = 0, prev = -2;
+  for (let i = 0; i < n.length; i++){
+    const c = n[i];
+    if (c === ' '){ prev = -2; continue; }        /* spaces just separate runs */
+    const at = h.indexOf(c, from);
+    if (at < 0) return null;
+    idx.push(at);
+    if (at === prev + 1) score += 7;              /* contiguous run */
+    else score += 1;
+    if (at === 0 || /[\s\/\-_.,:|[\]()]/.test(h.charAt(at-1))) score += 5;  /* word start */
+    prev = at; from = at + 1;
+  }
+  if (h.indexOf(n.replace(/\s+/g,'')) >= 0) score += 22;   /* exact run beats scatter */
+  score -= idx[0] * 0.08;                          /* earlier is better */
+  score -= Math.max(0, hay.length - 60) * 0.01;    /* shorter is better */
+  return { score:score, idx:idx };
+}
+
+function markUp(text, idx, window_){
+  let start = 0, str = text;
+  if (window_ && text.length > window_ && idx.length){
+    start = Math.max(0, idx[0] - 18);
+    str = text.slice(start, start + window_);
+  }
+  const set = {}; idx.forEach(i=> set[i - start] = true);
+  let out = '';
+  for (let i = 0; i < str.length; i++){
+    const ch = esc(str[i]);
+    out += set[i] ? '<mark>' + ch + '</mark>' : ch;
+  }
+  return (start > 0 ? '…' : '') + out + (start + str.length < text.length ? '…' : '');
+}
+
+let palResults = [], palSel = 0;
+
+function palSearch(q){
+  const out = [];
+  Object.keys(DOCS).forEach(path=>{
+    const doc = DOCS[path];
+    const name = path.split('/').pop();
+    /* 1 — file name / path */
+    const nm = fuzzy(q, path);
+    if (nm) out.push({ kind:'doc', path:path, name:name, score:nm.score + 12, idx:nm.idx, hay:path });
+    /* 2 — content lines (best two per doc) */
+    if (q){
+      const lines = String(doc.md || '').split('\n');
+      const hits = [];
+      for (let i = 0; i < lines.length; i++){
+        const raw = lines[i].trim();
+        if (!raw || raw.length < 2) continue;
+        const r = fuzzy(q, raw);
+        if (r) hits.push({ kind:'line', path:path, name:name, score:r.score, idx:r.idx, hay:raw, line:i });
+      }
+      hits.sort((a,b)=> b.score - a.score);
+      hits.slice(0,2).forEach(h=> out.push(h));
+    }
+  });
+  out.sort((a,b)=> b.score - a.score || a.path.localeCompare(b.path));
+  return out.slice(0, 24);
+}
+
+function renderPal(){
+  const list = $('#palList'); list.innerHTML = '';
+  $('#palCount').textContent = palResults.length ? palResults.length + ' result' + (palResults.length>1?'s':'') : '';
+  if (!palResults.length){
+    list.appendChild(el('div','pal-empty','No docs or lines match that.'));
+    return;
+  }
+  palResults.forEach((r, i)=>{
+    const b = el('button','pal-item' + (i === palSel ? ' sel' : ''));
+    b.setAttribute('role','option');
+    b.setAttribute('aria-selected', i === palSel ? 'true' : 'false');
+    const ico = r.kind === 'doc' ? I.file : I.search;
+    const nameHtml = r.kind === 'doc'
+      ? markUp(r.path, r.idx, 0)
+      : esc(r.path);
+    let html = '<span class="pico">' + ico + '</span><span class="col">' +
+      '<span class="nm">' + esc(r.name) + '<span class="pth">' + nameHtml + '</span></span>';
+    if (r.kind === 'line') html += '<span class="sn">' + markUp(r.hay, r.idx, 96) + '</span>';
+    html += '</span>';
+    if (r.kind === 'line') html += '<span class="ln">L' + (r.line + 1) + '</span>';
+    b.innerHTML = html;
+    b.addEventListener('click', ()=> palOpen(i));
+    b.addEventListener('mousemove', ()=>{
+      if (palSel === i) return;
+      palSel = i; $$('.pal-item', list).forEach((x,j)=> x.classList.toggle('sel', j === i));
+    });
+    list.appendChild(b);
+  });
+}
+
+function palMove(d){
+  if (!palResults.length) return;
+  palSel = (palSel + d + palResults.length) % palResults.length;
+  renderPal();
+  const sel = $('.pal-item.sel');
+  if (sel && sel.scrollIntoView) sel.scrollIntoView({ block:'nearest' });
+}
+
+function palOpen(i){
+  const r = palResults[i == null ? palSel : i];
+  if (!r) return;
+  closePal();
+  openDoc(r.path);
+  if (r.kind === 'line') revealLine(r.line);
+}
+
+/* scroll a preview block into view and flash it (or drop the caret in Raw) */
+function revealLine(lineNo){
+  if (state.mode === 'raw'){
+    focusRaw({ caret: lineOffset(DOCS[state.active].md, lineNo), line: lineNo, anchor: 140 });
+    return;
+  }
+  const blocks = $$('#doc [data-line]');
+  let best = null;
+  blocks.forEach(b=>{
+    const l = parseInt(b.dataset.line, 10);
+    if (l <= lineNo && (!best || l >= parseInt(best.dataset.line, 10))) best = b;
+  });
+  if (!best) return;
+  const sc = $('#scroll');
+  sc.scrollTop = Math.max(0, best.offsetTop - 110);
+  best.classList.remove('flash-line'); void best.offsetWidth; best.classList.add('flash-line');
+  setTimeout(()=> best.classList.remove('flash-line'), 1300);
+}
+
+function openPal(){
+  if (isOpen('#palVeil')) return;
+  $('#palVeil').classList.add('show');
+  const inp = $('#palInput');
+  inp.value = '';
+  palResults = palSearch(''); palSel = 0; renderPal();
+  setTimeout(()=> inp.focus(), 40);
+}
+function closePal(){
+  $('#palVeil').classList.remove('show');
+  /* drop focus, or the input keeps swallowing the next Esc */
+  const inp = $('#palInput');
+  if (inp && document.activeElement === inp) inp.blur();
+}
+
+/* ============================================================
+   OVERLAY / ESC STACK — Esc always dismisses the topmost thing
+   ============================================================ */
+function isOpen(sel){ const n = $(sel); return !!n && n.classList.contains('show'); }
+function openSess(){
+  $('#sessPop').classList.add('show');
+  $('#sessChip').setAttribute('aria-expanded','true');
+  updateSession();
+}
+function closeSess(){
+  $('#sessPop').classList.remove('show');
+  $('#sessChip').setAttribute('aria-expanded','false');
+}
+
+function dismissTop(){
+  if (isOpen('#palVeil')){ closePal(); return true; }
+  if (isOpen('#scVeil')){ $('#scVeil').classList.remove('show'); return true; }
+  if (isOpen('#ppVeil')){ $('#ppVeil').classList.remove('show'); pendingDoc = null; return true; }
+  if (isOpen('#settingsVeil')){ $('#settingsVeil').classList.remove('show'); return true; }
+  if ($('#sessPop').classList.contains('show')){ closeSess(); return true; }
+  if (creating){ creating = null; renderTree(); return true; }
+  const ta = $('#rawArea');
+  if (ta && document.activeElement === ta){ ta.blur(); return true; }
+  if (window.innerWidth < 768){
+    if (app.classList.contains('nav-open')){ closeNav(); return true; }
+    if (app.classList.contains('chat-open')){ toggleChat(); return true; }
+  }
+  return false;
+}
+
+/* ============================================================
+   PANELS / MOBILE
+   ============================================================ */
+const app = $('#app');
+function openNav(){ app.classList.add('nav-open'); $('#scrim').classList.add('show'); }
+function closeNav(){ app.classList.remove('nav-open'); syncScrim(); }
+function toggleChat(){
+  app.classList.toggle('chat-open');
+  $('#chatBtn').classList.toggle('on', app.classList.contains('chat-open'));
+  syncScrim();
+}
+function syncScrim(){
+  const mobile = window.innerWidth < 768;
+  const need = mobile && (app.classList.contains('nav-open') || app.classList.contains('chat-open'));
+  $('#scrim').classList.toggle('show', need);
+}
+
+/* ============================================================
+   EVENTS
+   ============================================================ */
+document.addEventListener('click', (e)=>{
+  const link = e.target.closest ? e.target.closest('.wl') : null;
+  if (link){
+    e.preventDefault();
+    const target = SLUGS[link.dataset.link];
+    if (target) openDoc(target); else toast('No doc named “' + link.dataset.link + '”');
+    return;
+  }
+
+  const act = e.target.closest ? e.target.closest('[data-act]') : null;
+  if (act){
+    const a = act.dataset.act;
+    if (a === 'save') doSave(false);
+    if (a === 'settings') $('#settingsVeil').classList.add('show');
+    if (a === 'close-settings') $('#settingsVeil').classList.remove('show');
+    if (a === 'toggle-chat') toggleChat();
+    if (a === 'toggle-sidebar'){ app.classList.toggle('sidebar-collapsed'); }
+    if (a === 'nav-open') openNav();
+    if (a === 'nav-close') closeNav();
+    if (a === 'pp-cancel'){ $('#ppVeil').classList.remove('show'); pendingDoc = null; }
+    if (a === 'pp-ok') doUnlock();
+    if (a === 'palette') openPal();
+    if (a === 'shortcuts'){ $('#scVeil').classList.add('show'); }
+    if (a === 'close-shortcuts') $('#scVeil').classList.remove('show');
+    if (a === 'new-doc') startCreate('doc');
+    if (a === 'new-folder') startCreate('folder');
+    if (a === 'sess'){ $('#sessPop').classList.contains('show') ? closeSess() : openSess(); }
+    if (a === 'close-sess') closeSess();
+    if (a === 'new-session') newSession();
+    return;
+  }
+
+  /* click anywhere else closes the session popover */
+  if ($('#sessPop').classList.contains('show') && !e.target.closest('#sessPop')) closeSess();
+});
+
+/* ------------------------------------------------------------------
+   Editor pane click zones (amendments 2 + 12) — two unambiguous zones:
+
+     doc content  →  Preview enters Raw at that line   (previewClickToEdit)
+     pane gutter  →  Raw returns to Preview            (paneClickToPreview)
+
+   Both are click (not mousedown) handlers on disjoint targets, so they can
+   never both fire for one gesture and can never double-toggle. Pointer
+   tracking is shared: where the gesture *started* decides whether it was a
+   selection drag, which neither zone may hijack. ------------------------- */
+let downInRaw = false;
+$('#scroll').addEventListener('pointerdown', (e)=>{
+  downPt = { x:e.clientX, y:e.clientY };
+  downInRaw = !!(e.target && e.target.closest && e.target.closest('.raw'));
+});
+$('#doc').addEventListener('click', previewClickToEdit);
+
+/* any layer that owns the Esc key also owns the click — never flip under it */
+function overlayOpen(){
+  return isOpen('#palVeil') || isOpen('#scVeil') || isOpen('#ppVeil') ||
+         isOpen('#settingsVeil') || $('#sessPop').classList.contains('show') || !!creating;
+}
+
+function paneClickToPreview(e){
+  if (state.mode !== 'raw') return;
+  if (e.zModeSwitch) return;                        /* click-to-edit already owns it */
+  if (overlayOpen()) return;
+  const t = e.target;
+  if (!t || !t.closest) return;
+  if (!t.isConnected) return;                       /* target re-rendered out from under us */
+  if (t.closest('.raw')) return;                    /* inside the source surface */
+  if (t.closest('button, a, input, textarea, select, label, kbd, .secret-bar')) return;
+  if (t.closest('.topbar, .statusbar, .sidebar, .chat, .modal, .veil, .pop')) return;
+  /* a selection drag that began in the source and ended out here is a
+     selection, not a dismissal — and never steal a live selection */
+  if (downInRaw) return;
+  const sel = window.getSelection && window.getSelection();
+  if (sel && !sel.isCollapsed && String(sel).trim()) return;
+  if (downPt && (Math.abs(e.clientX - downPt.x) > 4 || Math.abs(e.clientY - downPt.y) > 4)) return;
+  setMode('preview', { silent:true });
+}
+/* bound to the scroller, so topbar / statusbar / sidebar / chat clicks never
+   reach it at all; blur is deliberately not wired — focus moves must not flip */
+$('#scroll').addEventListener('click', paneClickToPreview);
+
+/* veil backdrop click */
+$$('.veil').forEach(v=> v.addEventListener('mousedown', (e)=>{ if (e.target === v){ v.classList.remove('show'); pendingDoc = null; } }));
+$('#scrim').addEventListener('click', ()=>{
+  closeNav();
+  if (window.innerWidth < 768 && app.classList.contains('chat-open')) toggleChat();
+});
+$('#ppInput').addEventListener('keydown', (e)=>{ if (e.key === 'Enter'){ e.preventDefault(); doUnlock(); } });
+
+/* segmented controls — editor mode + settings (density genuinely works) */
+$$('.seg').forEach(seg=>{
+  seg.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if (!btn) return;
+    if (seg.dataset.seg === 'mode'){ setMode(btn.dataset.v); return; }
+    $$('button', seg).forEach(x=> x.classList.remove('on','acc'));
+    btn.classList.add('on');
+    if (seg.dataset.seg !== 'theme') btn.classList.add('acc');
+    if (seg.dataset.seg === 'density'){
+      document.documentElement.setAttribute('data-density', btn.dataset.v);
+      const ta = $('#rawArea'); if (ta) autoGrow(ta);
+      toast('Density: ' + btn.dataset.v);
+    }
+  });
+});
+$$('[data-sw]').forEach(sw=> sw.addEventListener('click', ()=> sw.classList.toggle('on')));
+$$('input[type=password]').forEach(inp=>{
+  if (inp.id === 'ppInput') return;           // passphrase stays masked
+  inp.addEventListener('focus', ()=> inp.type = 'text');
+  inp.addEventListener('blur',  ()=> inp.type = 'password');
+});
+
+/* palette input */
+$('#palInput').addEventListener('input', (e)=>{
+  palResults = palSearch(e.target.value.trim());
+  palSel = 0;
+  renderPal();
+  $('#palList').scrollTop = 0;
+});
+$('#palInput').addEventListener('keydown', (e)=>{
+  if (e.key === 'ArrowDown'){ e.preventDefault(); palMove(1); }
+  else if (e.key === 'ArrowUp'){ e.preventDefault(); palMove(-1); }
+  else if (e.key === 'Enter'){ e.preventDefault(); palOpen(); }
+  else if (e.key === 'Escape'){
+    if (!isOpen('#palVeil')) return;          /* already closed — let Esc bubble on */
+    e.preventDefault(); e.stopPropagation(); closePal();
+  }
+  else if (e.key === 'Tab'){ e.preventDefault(); palMove(e.shiftKey ? -1 : 1); }
+});
+
+/* keyboard */
+function typing(){
+  const a = document.activeElement;
+  if (!a) return false;
+  return a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable;
+}
+
+document.addEventListener('keydown', (e)=>{
+  const mod = e.metaKey || e.ctrlKey;
+
+  if (e.key === 'Escape'){ if (dismissTop()) e.preventDefault(); return; }
+
+  if (mod && (e.key === 'k' || e.key === 'K' || e.key === 'p' || e.key === 'P')){
+    if (e.key.toLowerCase() === 'p' && e.shiftKey) return;
+    e.preventDefault(); openPal(); return;
+  }
+  if (mod && (e.key === 's' || e.key === 'S')){ e.preventDefault(); doSave(false); return; }
+  if (mod && (e.key === 'e' || e.key === 'E')){
+    e.preventDefault();
+    setMode(state.mode === 'raw' ? 'preview' : 'raw');
+    return;
+  }
+  if (mod && e.key === ','){ e.preventDefault(); $('#settingsVeil').classList.add('show'); return; }
+  if (mod && (e.key === 'j' || e.key === 'J')){ e.preventDefault(); toggleChat(); return; }
+  if (mod && (e.key === 'b' || e.key === 'B')){ e.preventDefault(); app.classList.toggle('sidebar-collapsed'); return; }
+  if (mod && (e.key === 'n' || e.key === 'N')){ e.preventDefault(); startCreate(e.shiftKey ? 'folder' : 'doc'); return; }
+
+  if (e.key === '?' && !typing() && !mod){ e.preventDefault(); $('#scVeil').classList.add('show'); return; }
+});
+
+window.addEventListener('resize', ()=>{
+  if (window.innerWidth >= 768){ app.classList.remove('nav-open'); }
+  syncScrim();
+  const ta = $('#rawArea'); if (ta) autoGrow(ta);
+});
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+renderTree();
+syncModeSeg();
+renderDoc();
+renderChat();
+if (window.innerWidth < 768) { app.classList.remove('chat-open'); $('#chatBtn').classList.remove('on'); }
+syncScrim();
+
+/* fake websocket heartbeat — the connection indicator blips every few seconds */
+const connEl = $('#stConn');
+setInterval(()=>{
+  if (connEl.classList.contains('down')) return;
+  connEl.classList.add('blip');
+  setTimeout(()=> connEl.classList.remove('blip'), 900);
+}, 7000);
+connEl.addEventListener('click', ()=>{
+  if (connEl.classList.contains('down')) return;
+  connEl.classList.add('down');
+  $('.cw', connEl).textContent = 'reconnecting…';
+  setTimeout(()=>{
+    connEl.classList.remove('down');
+    $('.cw', connEl).textContent = 'connected';
+    toast('Reconnected to backend');
+  }, 1400);
+});
+
+})();
+</script>
+</body>
+</html>

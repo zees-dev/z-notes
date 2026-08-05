@@ -1,0 +1,104 @@
+# =============================================================================
+# Ingress — k3s's bundled Traefik terminates TLS here.
+#
+# Plain networking.k8s.io/v1 Ingress rather than Traefik's IngressRoute CRD, so
+# the manifest survives someone running `--disable=traefik` and installing
+# ingress-nginx instead. The Traefik-specific bits are annotations, which a
+# different controller ignores harmlessly. deploy/k3s/alt-ingressroute.yaml has
+# the CRD form if you prefer it.
+#
+# TWO Ingresses on purpose:
+#   znotes         — websecure (:443), the real one, TLS from the cert-manager
+#                    secret, backed by the Service.
+#   znotes-http    — web (:80), nothing but a 308 to https. Without it, typing
+#                    the bare hostname lands on a dead port and looks like the
+#                    app is down. It also means nobody can accidentally use the
+#                    app over an insecure origin and wonder why the secrets
+#                    features are switched off (SPEC §6 degradation).
+#
+# >>> The three `znotes.home.arpa` occurrences must match 40-certificates.yaml
+# and what you type in the browser. Add a second `rules[]` host block (and a
+# second `tls[].hosts` entry) for the *.ts.net name if you want to reach it by
+# MagicDNS as well as by LAN name.
+# =============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: znotes
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - znotes.home.arpa
+        # - znotes.<tailnet>.ts.net
+      secretName: znotes-tls
+  rules:
+    - host: znotes.home.arpa
+      http:
+        paths:
+          # One prefix rule for everything. The app is a single origin: the
+          # static frontend, /api/*, /events (SSE) and /healthz all live on the
+          # same server, and splitting them across routers would only create
+          # opportunities for /events to pick up a buffering middleware.
+          #
+          # SSE NOTE: Traefik streams responses and does not buffer them, so
+          # /events works through this with no special configuration. Its
+          # default respondingTimeouts.idleTimeout is 180s and the server's
+          # heartbeat is every 20s (research §1), so the stream is never idle
+          # long enough to be reaped. Do NOT attach a compress or buffering
+          # middleware to this router — either one will make live updates stop
+          # arriving while every request still returns 200.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: znotes
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: znotes-http
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: znotes-redirect-https@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: znotes.home.arpa
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: znotes
+                port:
+                  name: http
+---
+# The middleware referenced above. `permanent: true` makes it a 308, which
+# browsers cache — the redirect is paid once per browser, not per visit.
+# The @kubernetescrd suffix in the annotation is Traefik's provider namespace
+# for CRD-sourced middlewares; the name is <namespace>-<name>.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true

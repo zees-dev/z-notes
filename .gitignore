@@ -1,0 +1,14 @@
+# sqlite index is a rebuildable cache — never committed (SPEC §5/§7)
+*.db
+*.db-wal
+*.db-shm
+.znotes/index.db*
+
+node_modules/
+dist/
+.DS_Store
+
+# agent scratch — measurement harnesses and one-off probes. This repo's first
+# commit is still pending, so an unignored scratch directory rides along into
+# the initial commit and stays in the history after it is deleted.
+.scratch/

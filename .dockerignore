@@ -1,0 +1,35 @@
+# Build context hygiene for deploy/Dockerfile.
+#
+# This file must live at the CONTEXT root (the repo root), not next to the
+# Dockerfile — that is where every docker/buildkit/podman version looks for it.
+#
+# The Dockerfile also COPYs an explicit file list rather than `COPY . .`, so
+# this is defence in depth: it keeps secrets and bulk out of the tarball that
+# is uploaded to the daemon in the first place.
+
+.git
+.gitignore
+
+# THE VAULT: real notes, .znotes/settings.toml, the passphrase-wrapped
+# identity, and the sqlite index that holds the GitHub token and AI key.
+# Nothing here may ever enter an image layer.
+vault/
+**/.znotes/
+*.db
+*.db-wal
+*.db-shm
+
+node_modules/
+dist/
+
+tests/
+prototypes/
+wayfinder/
+.scratch/
+SPEC.md
+# safe to exclude: the file named by `-f` and this file are always sent to the
+# builder regardless of the ignore list
+deploy/
+
+.DS_Store
+*.log

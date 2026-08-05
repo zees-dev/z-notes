@@ -1,0 +1,73 @@
+# =============================================================================
+# ALTERNATIVE to 50-ingress.yaml — Traefik's native IngressRoute CRD.
+#
+# NOT applied by kustomization.yaml. Use EITHER this file OR 50-ingress.yaml,
+# never both: two routers matching the same Host rule at the same priority is
+# undefined behaviour.
+#
+#   kubectl delete -f deploy/k3s/50-ingress.yaml
+#   kubectl apply  -f deploy/k3s/alt-ingressroute.yaml
+#
+# Worth switching to when you want Traefik-only features that an Ingress cannot
+# express — richer match expressions, per-route middleware chains, explicit
+# TLS options (min version, cipher suites) via a TLSOption.
+#
+# API GROUP: `traefik.io/v1alpha1` is Traefik v3, which is what current k3s
+# bundles. Older k3s (Traefik v2) used `traefik.containo.us/v1alpha1` — check
+# with `kubectl get crd | grep -i traefik` before applying.
+# =============================================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: znotes
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    # Add `|| Host(\`znotes.<tailnet>.ts.net\`)` for the MagicDNS name, and add
+    # that name to 40-certificates.yaml's dnsNames as well.
+    - match: Host(`znotes.home.arpa`)
+      kind: Rule
+      services:
+        - name: znotes
+          port: 80
+          # Traefik does not buffer responses, so /events (SSE) streams through
+          # untouched. Do not add a `compress` or `buffering` middleware to this
+          # route — either will silently break live updates.
+  tls:
+    secretName: znotes-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: znotes-http
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`znotes.home.arpa`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+      services:
+        - name: znotes
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true

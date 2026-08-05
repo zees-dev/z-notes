@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: znotes
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+spec:
+  # ClusterIP, not LoadBalancer/NodePort. The only way in is through Traefik,
+  # which is where TLS terminates — and TLS is not cosmetic here: without a
+  # secure context the browser has no window.crypto.subtle, and SPEC §6
+  # degrades every secrets feature off (blocks stay armored, badge explains
+  # why). Exposing this Service directly would hand out a plaintext HTTP origin
+  # that quietly disables half the app.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: z-notes
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  # /events is a long-lived SSE stream (idleTimeout:0 + a 20s heartbeat,
+  # research §1). With one replica there is nothing to balance, but this makes
+  # a client's reconnect land on the same endpoint deterministically.
+  sessionAffinity: ClientIP

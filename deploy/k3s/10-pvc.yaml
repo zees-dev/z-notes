@@ -1,0 +1,58 @@
+# =============================================================================
+# The vault volume — the ONLY durable state in the system.
+#
+# WHY A PVC AND NOT AN emptyDir (this is the important comment in this file):
+#
+#   1. emptyDir dies with the pod. The vault is not a cache — it is the notes.
+#      SPEC §1 makes files on disk the source of truth; the app is a view over
+#      them. A view whose backing store evaporates on a node reboot is not a
+#      notes app.
+#
+#   2. sqlite + WAL is a THREE-FILE, SAME-DIRECTORY contract. The index lives at
+#      <vault>/.znotes/index.db with index.db-wal and index.db-shm beside it
+#      (research §2: journal_mode=WAL, synchronous=NORMAL, busy_timeout=5000).
+#      The -shm file is mmap'd shared memory; WAL requires that all three sit on
+#      one POSIX filesystem with working advisory locks. That rules out
+#      splitting them across volumes, and it rules out NFS-backed storage.
+#      k3s's default local-path provisioner is a plain host directory, which is
+#      exactly right: real POSIX locks, real mmap, no network filesystem.
+#
+#   3. WAL is also the crash story. A SIGKILL or an OOMKill mid-write leaves a
+#      WAL that the next open replays — the index recovers itself. But that only
+#      helps if the WAL still EXISTS after the restart, which again means a PVC.
+#      (And even total loss is survivable: SPEC §5 makes the index rebuildable
+#      from the markdown. The parts that are NOT rebuildable — the GitHub token,
+#      the AI key, AI chat history and proposal pre-images — live only in this
+#      sqlite file. Losing the volume loses those. Back it up.)
+#
+#   4. The vault is also a git working tree (SPEC §7), including .git/ and the
+#      0700 GIT_ASKPASS helper that git.ts writes to <vault>/.znotes/tmp and
+#      then EXECUTES. The volume therefore must not be mounted noexec. The
+#      local-path provisioner does not set noexec; a hand-rolled hostPath PV
+#      with mount options might.
+#
+# accessModes is ReadWriteOnce, which matches the single-replica Deployment.
+# Do not "fix" this to ReadWriteMany to enable scaling — see 20-deployment.yaml.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: znotes-vault
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+    app.kubernetes.io/component: vault
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # k3s ships local-path as the default StorageClass. Named explicitly so the
+  # manifest does not silently bind to whatever a future default becomes.
+  storageClassName: local-path
+  resources:
+    requests:
+      # A personal markdown vault is single-digit MB of text. The headroom is
+      # for the sqlite index (FTS5 roughly doubles the corpus), git objects and
+      # history, and years of growth. local-path does not actually enforce a
+      # quota, so this number is documentation more than a limit — but it is the
+      # number a real StorageClass would honour.
+      storage: 5Gi
