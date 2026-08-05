@@ -1,0 +1,2201 @@
+<!DOCTYPE html>
+<html lang="en" data-density="comfy">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>z-notes · TUI</title>
+<style>
+/* ─────────────────────────────────────────────────────────────────────────────
+   z-notes — theme 04: Terminal / TUI
+   monospace everything · box-drawing chrome · phosphor palette · keybind hints
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root{
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Mono",
+          Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+
+  /* phosphor palette */
+  --bg:        #0a0d0c;
+  --bg-deep:   #070909;
+  --panel:     #0e1211;
+  --panel-2:   #121716;
+  --raise:     #161d1b;
+  --line:      #1e2725;
+  --line-soft: #172020;
+  --fg:        #c8d3cb;
+  --fg-bright: #e9f2ea;
+  --dim:       #6a7a72;
+  --dimmer:    #445049;
+
+  --green:   #6fd18b;
+  --green-d: #2f6b45;
+  --amber:   #e8b14b;
+  --cyan:    #63c9d6;
+  --magenta: #d38ac2;
+  --red:     #ef6f61;
+  --blue:    #7aa2f7;
+
+  --sel:     rgba(111,209,139,.13);
+  --sel-2:   rgba(111,209,139,.07);
+  --glow:    0 0 8px rgba(111,209,139,.35);
+
+  /* density-driven — COMFY is the default baseline (r2: the old "compact" set) */
+  --fs:        12.7px;
+  --lh:        1.56;
+  --block-pad: 2px;
+  --block-gap: 4px;
+  --row-h:     21px;
+  --pane-pad:  15px;
+  --chrome-pad: 6px;
+  --gap-sm:    7px;
+}
+html[data-density="comfy"]{
+  --fs:        12.7px;
+  --lh:        1.56;
+  --block-pad: 2px;
+  --block-gap: 4px;
+  --row-h:     21px;
+  --pane-pad:  15px;
+  --chrome-pad: 6px;
+  --gap-sm:    7px;
+}
+/* r2: a genuinely tighter compact — smaller type, near-zero block gaps, short rows */
+html[data-density="compact"]{
+  --fs:        11.6px;
+  --lh:        1.32;
+  --block-pad: 0px;
+  --block-gap: 1px;
+  --row-h:     17px;
+  --pane-pad:  9px;
+  --chrome-pad: 3px;
+  --gap-sm:    4px;
+}
+
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  background:var(--bg-deep);
+  color:var(--fg);
+  font-family:var(--mono);
+  font-size:var(--fs);
+  line-height:var(--lh);
+  font-variant-ligatures:none;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+/* faint CRT grain + vignette, deliberately subtle so prose stays crisp */
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:9999;
+  background:
+    repeating-linear-gradient(to bottom, rgba(255,255,255,.014) 0 1px, transparent 1px 3px),
+    radial-gradient(120% 100% at 50% 0%, transparent 55%, rgba(0,0,0,.45) 100%);
+  mix-blend-mode:screen; opacity:.55;
+}
+button,input,select{ font:inherit; color:inherit; }
+button{ background:none; border:none; cursor:pointer; padding:0; }
+::selection{ background:rgba(111,209,139,.28); color:var(--fg-bright); }
+
+/* scrollbars: chunky TUI rails */
+*::-webkit-scrollbar{ width:10px; height:10px; }
+*::-webkit-scrollbar-track{ background:var(--bg-deep); border-left:1px solid var(--line); }
+*::-webkit-scrollbar-thumb{ background:#20302b; border:2px solid var(--bg-deep); }
+*::-webkit-scrollbar-thumb:hover{ background:#2e4a3f; }
+*::-webkit-scrollbar-corner{ background:var(--bg-deep); }
+*{ scrollbar-width:thin; scrollbar-color:#20302b var(--bg-deep); }
+
+/* focus ring: TUI bracket-style */
+:focus-visible{ outline:1px solid var(--green); outline-offset:2px; }
+
+/* ── frame ─────────────────────────────────────────────────────────────────── */
+#app{
+  height:100dvh; display:grid;
+  grid-template-rows:auto 1fr auto;
+  grid-template-columns:minmax(0,1fr);  /* clamp: nowrap TUI chrome must clip, never widen the page */
+  background:var(--bg);
+  border:1px solid var(--line);
+}
+
+/* ── titlebar ──────────────────────────────────────────────────────────────── */
+.titlebar{
+  display:flex; align-items:center; gap:12px;
+  padding:0 10px; height:calc(var(--row-h) + 12px);
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));
+  border-bottom:1px solid var(--line);
+  white-space:nowrap; overflow:hidden;
+}
+.tb-lamps{ display:flex; gap:6px; align-items:center; letter-spacing:1px; }
+.lamp{ font-size:9px; line-height:1; }
+.l-r{ color:#5c2b28 } .l-y{ color:#5c4a24 } .l-g{ color:#28513a }
+.titlebar:hover .l-r{ color:var(--red) } .titlebar:hover .l-y{ color:var(--amber) } .titlebar:hover .l-g{ color:var(--green) }
+.tb-title{ color:var(--dim); letter-spacing:.02em; }
+.tb-title b{ color:var(--fg-bright); font-weight:700; }
+.tb-title .v{ color:var(--green-d); }
+.tb-path{ color:var(--dimmer); }
+.tb-spacer{ flex:1 }
+.tb-tools{ display:flex; align-items:center; gap:4px; }
+.tb-btn{
+  color:var(--dim); padding:2px 7px; border:1px solid transparent; border-radius:1px;
+  transition:background .12s, color .12s, border-color .12s;
+}
+.tb-btn:hover{ color:var(--green); background:var(--sel); border-color:var(--green-d); }
+.tb-btn.on{ color:var(--green); border-color:var(--green-d); background:var(--sel-2); }
+.hamburger,.chat-fab{ display:none; }
+
+/* ── body grid ─────────────────────────────────────────────────────────────── */
+.main{
+  display:grid; grid-template-columns:var(--sw,270px) minmax(0,1fr) var(--cw,352px);
+  min-height:0; min-width:0; overflow:hidden;
+}
+body.no-sidebar .main{ grid-template-columns:0 1fr var(--cw,352px); }
+body.no-chat .main{ grid-template-columns:var(--sw,270px) 1fr 0; }
+body.no-sidebar.no-chat .main{ grid-template-columns:0 1fr 0; }
+
+.pane{ min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--panel); overflow:hidden; }
+.pane.editor{ background:var(--bg); }
+.pane.sidebar{ border-right:1px solid var(--line); }
+.pane.chat{ border-left:1px solid var(--line); }
+body.no-sidebar .pane.sidebar, body.no-chat .pane.chat{ opacity:0; pointer-events:none; }
+
+/* pane header: ┤ label ├ */
+.pane-head{
+  display:flex; align-items:center; gap:8px; height:calc(var(--row-h) + 6px);
+  padding:0 10px; border-bottom:1px solid var(--line);
+  background:var(--panel-2); color:var(--dim); font-size:.92em;
+  letter-spacing:.08em; text-transform:uppercase; white-space:nowrap;
+}
+.pane.editor .pane-head{ background:linear-gradient(180deg,var(--panel-2),rgba(14,18,17,.6)); }
+.pane-head .tick{ color:var(--dimmer); }
+.pane-head .lbl{ color:var(--fg); }
+.pane-head .lbl b{ color:var(--green); font-weight:700; }
+.pane-head .rest{ flex:1; overflow:hidden; color:var(--dimmer); text-overflow:clip; text-transform:none; letter-spacing:0; }
+.pane-head .key{ color:var(--dimmer); text-transform:none; letter-spacing:0; }
+.head-btn{ color:var(--dim); padding:0 5px; border:1px solid transparent; }
+.head-btn:hover{ color:var(--green); border-color:var(--green-d); background:var(--sel); }
+
+/* ── sidebar ───────────────────────────────────────────────────────────────── */
+.side-scroll{ flex:1; overflow-y:auto; padding:var(--chrome-pad) 0 14px; }
+.tree{ font-size:.98em; }
+.tree-row{
+  display:flex; align-items:center; height:var(--row-h); padding-right:8px;
+  white-space:pre; cursor:pointer; position:relative; color:var(--fg);
+  transition:background .1s ease, color .1s ease;
+}
+.tree-row .guide{ color:var(--dimmer); }
+.tree-row .mark{ width:10px; color:transparent; flex:none; }
+.tree-row .ico{ color:var(--dim); }
+.tree-row.dir > .name{ color:var(--cyan); }
+.tree-row.dir .ico{ color:var(--cyan); opacity:.75 }
+.tree-row.file .name{ color:var(--fg); }
+.tree-row.file.inert .name{ color:var(--dim); }
+.tree-row.file.inert .ico{ color:var(--dimmer); }
+.tree-row .badge{ margin-left:8px; color:var(--dimmer); font-size:.85em; }
+.tree-row:hover{ background:var(--sel-2); }
+.tree-row:hover .name{ color:var(--fg-bright); }
+.tree-row.active{ background:var(--sel); }
+.tree-row.active .mark{ color:var(--green); text-shadow:var(--glow); }
+.tree-row.active .name{ color:var(--green); font-weight:700; text-shadow:0 0 6px rgba(111,209,139,.25); }
+.tree-row:focus-visible{ outline:1px solid var(--green); outline-offset:-1px; }
+.tree-root{ padding:0 10px 4px; color:var(--amber); white-space:pre; }
+.tree-root .cnt{ color:var(--dimmer); }
+.side-foot{
+  border-top:1px solid var(--line); padding:var(--chrome-pad) 10px;
+  display:flex; flex-direction:column; gap:3px; background:var(--panel-2);
+}
+.side-act{ color:var(--dim); text-align:left; padding:2px 4px; border:1px solid transparent; }
+.side-act:hover{ color:var(--green); background:var(--sel); border-color:var(--green-d); }
+.side-act .k{ color:var(--dimmer); float:right; }
+
+/* ── editor ────────────────────────────────────────────────────────────────── */
+.editor-body{ flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
+/* r3 · amendment 11 — ONE scroll container, ONE doc box, both modes.
+   #docScroll is literally the same element in preview and raw; .doc and #raw
+   share a single rule block, so the column, chrome and metrics cannot drift.
+   switching modes only swaps the text inside that box.                        */
+.doc-scroll{ flex:1; overflow-y:auto; overflow-x:hidden; scroll-behavior:smooth; }
+.doc, #raw{
+  display:block; width:100%; max-width:min(74ch, 100%); margin:0 auto;
+  padding:calc(var(--pane-pad) + 4px) var(--pane-pad) 45vh var(--pane-pad);
+  background:transparent; border:0; border-radius:0; box-shadow:none;
+  font-family:var(--mono); font-size:var(--fs); line-height:var(--lh); color:var(--fg);
+}
+.doc > *{ padding:var(--block-pad) 0; margin:0 0 var(--block-gap); }
+.doc > *:last-child{ margin-bottom:0; }
+.doc > .codewrap, .doc > .tblwrap, .doc > .secret, .doc > .rule{ padding:0; }  /* bordered blocks own their box */
+.doc > .h1{ margin-bottom:0; }                                                 /* the ── rule hugs its heading */
+/* r4 · amendment 13: the blank-line spacer contributes only its own height —
+   no padding, no margin — so the gap is exactly the standard --block-gap plus
+   (n-1) body line-heights, in either density. */
+.doc > .vgap{ padding:0; margin:0; }
+.doc > .flash-new{ animation:flashin 1.5s ease; }
+@keyframes flashin{
+  0%{ background:rgba(111,209,139,.22); box-shadow:-10px 0 0 rgba(111,209,139,.22),10px 0 0 rgba(111,209,139,.22); }
+  100%{ background:transparent; box-shadow:none; }
+}
+
+/* mode: preview | raw ------------------------------------------------------- */
+.modeseg{ display:flex; border:1px solid var(--line); border-radius:1px; flex:none; }
+.modeseg button{ padding:0 9px; color:var(--dim); border-right:1px solid var(--line); letter-spacing:.09em; font-size:.92em; transition:background .12s, color .12s; }
+.modeseg button:last-child{ border-right:none; }
+.modeseg button:hover{ color:var(--fg-bright); background:var(--raise); }
+.modeseg button.on{ background:var(--green); color:#06120b; font-weight:700; }
+
+/* the raw surface is chromeless inside that shared box: no border, no inset, no
+   background of its own, no scroller of its own — #docScroll scrolls both. its
+   height is grown to fit the source (autosizeRaw) so the outer scroll math and
+   the scrollbar rail are identical to preview.                                */
+#raw{
+  resize:none; overflow:hidden; min-width:0; min-height:0; tab-size:2;
+  outline:none; caret-color:var(--green);
+  white-space:pre-wrap; overflow-wrap:break-word;
+  -webkit-appearance:none; appearance:none;
+}
+#raw:focus{ outline:none; }
+body.mode-raw .doc{ display:none; }
+body:not(.mode-raw) #raw{ display:none; }
+
+.mk{ color:var(--dimmer); user-select:none; }         /* visible markdown syntax */
+.h1,.h2,.h3{ color:var(--fg-bright); font-weight:700; letter-spacing:-.01em; }
+.h1{ font-size:1.62em; line-height:1.35; margin-top:.1em; }
+.h1 .mk{ color:var(--green); opacity:.55 }
+.h2{ font-size:1.22em; line-height:1.45; margin-top:.55em; color:var(--green); }
+.h2 .mk{ color:var(--green-d); }
+.h3{ font-size:1.05em; color:var(--cyan); margin-top:.4em; }
+.h3 .mk{ color:var(--dimmer); }
+.h1 + .rule{ margin-top:-2px; }
+.rule{ color:var(--line); overflow:hidden; white-space:nowrap; user-select:none; height:1.2em; }
+.p{ color:var(--fg); }
+.bul{ display:flex; gap:.6ch; }
+.bul .mk{ flex:none; }
+.li-text{ flex:1; min-width:0; }
+.task{ display:flex; gap:.6ch; align-items:flex-start; }
+.cb{ flex:none; color:var(--dim); cursor:pointer; user-select:none; transition:color .12s, text-shadow .12s; }
+.cb:hover{ color:var(--green); }
+.task.done .cb{ color:var(--green); text-shadow:var(--glow); }
+.task.done .li-text{ color:var(--dim); text-decoration:line-through; text-decoration-color:var(--dimmer); }
+.quote{ display:flex; gap:1ch; color:var(--dim); font-style:italic; }
+.quote .bar{ flex:none; color:var(--amber); opacity:.7; user-select:none; }
+.quote .li-text{ font-style:italic; }
+
+code.inl{
+  background:var(--raise); color:var(--amber); padding:.05em .45em;
+  border:1px solid var(--line); border-radius:1px; font-size:.94em;
+}
+b.strong{ color:var(--fg-bright); font-weight:700; }
+
+/* doc link pills */
+.wlink{
+  color:var(--cyan); text-decoration:none; cursor:pointer; white-space:nowrap;
+  border-bottom:1px dotted rgba(99,201,214,.5); padding:0 1px;
+  transition:background .12s, color .12s, text-shadow .12s;
+}
+.wlink .br{ color:var(--dimmer); }
+.wlink:hover{ background:rgba(99,201,214,.14); color:#a5e6f0; text-shadow:0 0 7px rgba(99,201,214,.5); border-bottom-color:transparent; }
+.wlink:hover .br{ color:var(--cyan); }
+
+/* code block */
+.codewrap{ position:relative; margin:.4em 0 .2em; border:1px solid var(--line); background:var(--bg-deep); }
+.codewrap .cbar{
+  display:flex; align-items:center; gap:8px; padding:2px 8px;
+  border-bottom:1px solid var(--line); background:var(--panel-2); color:var(--dimmer); font-size:.86em;
+}
+.codewrap .cbar .lang{ color:var(--amber); }
+.codewrap .cbar .grow{ flex:1 }
+.codewrap .cbar .copy{ color:var(--dim); }
+.codewrap .cbar .copy:hover{ color:var(--green); }
+.codewrap pre{ margin:0; padding:8px 0; overflow-x:auto; font-size:.94em; line-height:1.6; }
+.cline{ display:flex; white-space:pre; }
+.cline:hover{ background:rgba(111,209,139,.05); }
+.cline .ln{ flex:none; width:4ch; text-align:right; padding-right:1.4ch; color:var(--dimmer); user-select:none; }
+.c-key{ color:var(--magenta); font-style:normal; }
+.c-str{ color:var(--green); font-style:normal; }
+.c-com{ color:var(--dimmer); font-style:italic; }
+.c-num{ color:var(--amber); font-style:normal; }
+.c-prop{ color:var(--cyan); font-style:normal; }
+
+/* table with box-drawing feel */
+.tblwrap{ overflow-x:auto; margin:.3em 0; border:1px solid var(--line); }
+table{ border-collapse:collapse; width:100%; font-size:.95em; }
+th,td{ padding:calc(var(--block-pad) + 2px) 10px; text-align:left; border-right:1px solid var(--line-soft); white-space:nowrap; }
+th:last-child,td:last-child{ border-right:none; }
+thead th{ color:var(--amber); background:var(--panel-2); border-bottom:1px solid var(--line); font-weight:700; letter-spacing:.04em; }
+tbody tr{ border-bottom:1px solid var(--line-soft); }
+tbody tr:last-child{ border-bottom:none; }
+tbody tr:hover{ background:var(--sel-2); }
+tbody td:first-child{ color:var(--cyan); }
+tbody td:nth-child(2){ color:var(--magenta); }
+tbody td:last-child{ color:var(--dim); }
+
+/* ── secret block ──────────────────────────────────────────────────────────── */
+.secret{ border:1px solid var(--green-d); background:linear-gradient(180deg,rgba(47,107,69,.10),rgba(47,107,69,.02)); margin:.35em 0; }
+.secret .shead{
+  display:flex; align-items:center; gap:8px; padding:4px 9px;
+  border-bottom:1px solid rgba(47,107,69,.55); background:rgba(47,107,69,.16); color:var(--green);
+  font-size:.9em; letter-spacing:.06em;
+}
+.secret .shead .grow{ flex:1 }
+.secret.open{ border-color:var(--amber); background:linear-gradient(180deg,rgba(232,177,75,.08),transparent); }
+.secret.open .shead{ background:rgba(232,177,75,.15); border-bottom-color:rgba(232,177,75,.45); color:var(--amber); }
+.sbtn{
+  color:var(--green); border:1px solid var(--green-d); padding:0 8px; border-radius:1px;
+  transition:background .12s, box-shadow .12s, color .12s;
+}
+.sbtn:hover{ background:rgba(111,209,139,.16); box-shadow:var(--glow); }
+.secret.open .sbtn{ color:var(--amber); border-color:rgba(232,177,75,.5); }
+.secret.open .sbtn:hover{ background:rgba(232,177,75,.16); box-shadow:0 0 8px rgba(232,177,75,.3); }
+.pad{ filter:grayscale(1) brightness(1.75) contrast(1.1); font-size:.95em; }
+.armor{ padding:8px 10px; color:var(--green-d); white-space:pre; overflow-x:auto; font-size:.92em; line-height:1.5; filter:blur(.2px); }
+.armor .hdr{ color:var(--green); opacity:.75 }
+.plain{ padding:8px 10px; white-space:pre; overflow-x:auto; font-size:.94em; line-height:1.65; }
+.plain .k{ color:var(--cyan); } .plain .eq{ color:var(--dimmer); } .plain .v{ color:var(--amber); }
+.secret .warn{ padding:0 10px 7px; color:var(--dimmer); font-size:.85em; }
+
+/* ── chat ──────────────────────────────────────────────────────────────────── */
+.chat-scroll{ flex:1; overflow-y:auto; padding:var(--chrome-pad) 12px 12px; display:flex; flex-direction:column; gap:calc(var(--block-gap) + 5px); }
+.msg{ display:flex; gap:8px; }
+.msg .who{ flex:none; width:5ch; text-align:right; user-select:none; }
+.msg.user .who{ color:var(--cyan); }
+.msg.ai .who{ color:var(--magenta); }
+.msg .bubble{ flex:1; min-width:0; color:var(--fg); border-left:1px solid var(--line); padding-left:9px; }
+.msg.user .bubble{ color:var(--fg-bright); border-left-color:rgba(99,201,214,.35); }
+.msg.ai .bubble{ border-left-color:rgba(211,138,194,.3); }
+.msg .meta{ color:var(--dimmer); font-size:.82em; letter-spacing:.04em; }
+
+.diffcard{ border:1px solid var(--line); background:var(--bg-deep); margin-top:2px; }
+.diffcard .dhead{
+  display:flex; align-items:center; gap:6px; padding:3px 8px; font-size:.86em;
+  background:var(--panel-2); border-bottom:1px solid var(--line); color:var(--dim); white-space:nowrap;
+}
+.diffcard .dhead .file{ color:var(--amber); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.diffcard .dhead .grow{ flex:1 }
+.diffbody{ padding:5px 0; overflow-x:auto; font-size:.9em; line-height:1.55; }
+.dl{ display:flex; white-space:pre-wrap; padding:0 8px; }
+.dl > span:last-child{ flex:1; min-width:0; overflow-wrap:anywhere; }
+.dl .sgn{ flex:none; width:2ch; user-select:none; }
+.dl.hunk{ color:var(--blue); background:rgba(122,162,247,.07); }
+.dl.ctx{ color:var(--dimmer); }
+.dl.add{ color:#9ce6b0; background:rgba(111,209,139,.09); }
+.dl.add .sgn{ color:var(--green); }
+.dl.del{ color:#f0a49b; background:rgba(239,111,97,.10); }
+.dl.del .sgn{ color:var(--red); }
+.dfoot{ display:flex; align-items:center; gap:6px; padding:5px 8px; border-top:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
+.dfoot .grow{ flex:1 0 16ch; color:var(--dimmer); font-size:.84em; }   /* wraps to its own row instead of column-ising */
+.btn{
+  border:1px solid var(--line); color:var(--dim); padding:1px 9px; border-radius:1px;
+  transition:all .13s ease; white-space:nowrap;
+}
+.btn:hover{ color:var(--fg-bright); border-color:var(--dim); background:var(--raise); }
+.btn.ok{ color:var(--green); border-color:var(--green-d); }
+.btn.ok:hover{ background:rgba(111,209,139,.16); box-shadow:var(--glow); color:#b6f2c6; }
+.btn.no{ color:var(--red); border-color:rgba(239,111,97,.4); }
+.btn.no:hover{ background:rgba(239,111,97,.14); box-shadow:0 0 8px rgba(239,111,97,.25); }
+.btn.warn{ color:var(--amber); border-color:rgba(232,177,75,.45); }
+.btn.warn:hover{ background:rgba(232,177,75,.15); }
+.applied{ color:var(--green); }
+.rejected{ color:var(--dimmer); text-decoration:line-through; }
+
+.chat-input{ border-top:1px solid var(--line); background:var(--panel-2); padding:var(--chrome-pad) 10px; }
+.prompt-row{ display:flex; align-items:center; gap:6px; }
+.prompt-row .sig{ color:var(--green); }
+.prompt-row input{
+  flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--fg-bright);
+}
+.prompt-row input::placeholder{ color:var(--dimmer); }
+.chat-hint{ color:var(--dimmer); font-size:.82em; margin-top:2px; display:flex; gap:10px; flex-wrap:wrap; }
+
+/* ── statusbar ─────────────────────────────────────────────────────────────── */
+.statusbar{
+  border-top:1px solid var(--line); background:var(--panel-2);
+  display:flex; flex-direction:column; min-width:0;
+}
+.srow{ display:flex; align-items:center; height:calc(var(--row-h) + 3px); white-space:nowrap; overflow:hidden; min-width:0; }
+.seg{ padding:0 10px; color:var(--dim); display:flex; align-items:center; gap:6px; height:100%; }
+.seg.mode{ background:var(--green); color:#06120b; font-weight:700; letter-spacing:.14em; }
+.seg.file{ color:var(--fg); background:var(--raise); }
+.seg.file .dir{ color:var(--dim); }
+.seg.grow{ flex:1; min-width:0; overflow:hidden; }
+.seg.save{ color:var(--dim); gap:5px; }
+.seg.save .dot{ color:var(--green-d); }
+.seg.save.dirty{ color:var(--amber); }
+.seg.save.dirty .dot{ color:var(--amber); }
+.seg.save.flash{ color:#06120b; background:var(--green); }
+.seg.save.flash .dot{ color:#06120b; }
+.savebtn{ color:var(--dim); border:1px solid var(--line); padding:0 8px; margin-right:8px; }
+.savebtn:hover{ color:var(--green); border-color:var(--green-d); background:var(--sel); }
+.keyrow{ border-top:1px solid var(--line); background:var(--panel); padding:2px 10px; display:flex; gap:14px; overflow-x:auto; }
+.keyrow::-webkit-scrollbar{ height:0 }
+.kb{ color:var(--dimmer); font-size:.86em; white-space:nowrap; }
+.kb b{ color:var(--green); font-weight:700; }
+.kb:hover{ color:var(--fg); }
+.blink{ animation:blink 1.15s steps(1) infinite; color:var(--green); }
+@keyframes blink{ 50%{ opacity:0 } }
+
+/* ── popups / modals ───────────────────────────────────────────────────────── */
+.scrim{ position:fixed; inset:0; background:rgba(3,6,5,.72); z-index:60; display:none; }
+.scrim.on{ display:block; }
+.win{
+  position:fixed; z-index:70; background:var(--panel); border:1px solid var(--green-d);
+  box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 18px 60px rgba(0,0,0,.75), 0 0 26px rgba(111,209,139,.09);
+}
+.win.hidden{ display:none !important; }   /* beats #settings{display:flex} */
+.win-head{
+  display:flex; align-items:center; gap:8px; padding:3px 9px; background:rgba(47,107,69,.18);
+  border-bottom:1px solid var(--green-d); color:var(--green); letter-spacing:.08em; font-size:.9em;
+}
+.win-head .grow{ flex:1 }
+.win-head .x{ color:var(--dim); }
+.win-head .x:hover{ color:var(--red); }
+
+/* settings */
+#settings{ top:50%; left:50%; transform:translate(-50%,-50%); width:min(720px, calc(100vw - 24px)); max-height:min(86vh, 760px); display:flex; flex-direction:column; }
+#settings .sbody{ overflow-y:auto; padding:12px 16px 16px; }
+.sect{ margin-bottom:16px; }
+.sect > .st{ color:var(--amber); letter-spacing:.1em; white-space:nowrap; overflow:hidden; margin-bottom:5px; }
+.frow{ display:flex; align-items:center; gap:10px; padding:3px 0 3px 3ch; flex-wrap:wrap; }
+.frow .lb{ color:var(--dim); width:19ch; flex:none; }
+.frow .note{ color:var(--dimmer); font-size:.85em; }
+.segbtns{ display:flex; border:1px solid var(--line); }
+.segbtns button{ padding:1px 11px; color:var(--dim); border-right:1px solid var(--line); transition:all .12s; }
+.segbtns button:last-child{ border-right:none; }
+.segbtns button:hover{ color:var(--fg-bright); background:var(--raise); }
+.segbtns button.on{ background:var(--green); color:#06120b; font-weight:700; }
+.tin{
+  background:var(--bg-deep); border:1px solid var(--line); padding:2px 8px; min-width:0;
+  color:var(--fg); border-radius:1px; transition:border-color .12s, box-shadow .12s;
+}
+.tin:focus{ outline:none; border-color:var(--green-d); box-shadow:0 0 0 1px rgba(111,209,139,.18); }
+.tin.wide{ flex:1; min-width:14ch; }
+.chk{ color:var(--dim); }
+.chk.on{ color:var(--green); }
+.chk:hover{ color:var(--fg-bright); }
+.status-ok{ color:var(--green); }
+.sfoot{ border-top:1px solid var(--line); padding:6px 12px; display:flex; gap:8px; align-items:center; background:var(--panel-2); flex-wrap:wrap; }
+.sfoot .grow{ flex:1 0 18ch; color:var(--dimmer); font-size:.85em; }
+
+/* passphrase prompt */
+#pass{ top:26vh; left:50%; transform:translateX(-50%); width:min(430px, calc(100vw - 24px)); border-color:rgba(232,177,75,.5); }
+#pass .win-head{ background:rgba(232,177,75,.14); border-bottom-color:rgba(232,177,75,.45); color:var(--amber); }
+#pass .pbody{ padding:11px 12px; }
+#pass .lead{ color:var(--dim); margin-bottom:8px; }
+#pass .lead b{ color:var(--fg-bright); font-weight:400 }
+#pass .prow{ display:flex; align-items:center; gap:7px; border:1px solid var(--line); background:var(--bg-deep); padding:3px 8px; }
+#pass .prow:focus-within{ border-color:var(--amber); box-shadow:0 0 0 1px rgba(232,177,75,.2); }
+#pass .prow .sig{ color:var(--amber); }
+#pass input{ flex:1; background:transparent; border:none; outline:none; color:var(--fg-bright); letter-spacing:.25em; }
+#pass .pfoot{ display:flex; gap:8px; margin-top:10px; align-items:center; }
+#pass .pfoot .grow{ flex:1; color:var(--dimmer); font-size:.84em; }
+
+/* toast */
+#toast{
+  position:fixed; z-index:90; bottom:calc(var(--row-h)*2 + 22px); left:50%; transform:translateX(-50%) translateY(8px);
+  background:var(--panel); border:1px solid var(--green-d); color:var(--green);
+  padding:3px 14px; opacity:0; pointer-events:none; transition:opacity .18s, transform .18s;
+  white-space:nowrap; max-width:calc(100vw - 24px); overflow:hidden; text-overflow:ellipsis;
+  box-shadow:0 8px 30px rgba(0,0,0,.6);
+}
+#toast.on{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* ── r2: click-to-edit affordance ──────────────────────────────────────────── */
+.doc{ cursor:text; }
+.doc > [data-line]{ position:relative; }
+.doc > [data-line]::before{
+  content:""; position:absolute; left:calc(var(--pane-pad) * -1 + 2px); top:0; bottom:0; width:2px;
+  background:var(--green); opacity:0; transition:opacity .12s;
+}
+.doc > [data-line]:hover::before{ opacity:.45; }
+.doc > .vgap::before{ display:none; }                 /* pure whitespace shows no edit bar */
+.cb, .wlink, .sbtn, .copy{ cursor:pointer; }
+
+/* ── r2: sidebar inline create ─────────────────────────────────────────────── */
+.newrow{ display:flex; align-items:center; gap:6px; border:1px solid var(--green-d); background:var(--bg-deep); padding:1px 6px; margin-bottom:3px; }
+.newrow .sig{ color:var(--green); flex:none; }
+.newrow input{ flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--fg-bright); }
+.newrow input::placeholder{ color:var(--dimmer); }
+.newhint{ color:var(--dimmer); font-size:.82em; margin-bottom:4px; padding-left:2px; }
+.newrow[hidden], .newhint[hidden]{ display:none; }
+
+/* ── r2: chat session chrome ───────────────────────────────────────────────── */
+.sessbar{   /* block, not flex: flex would eat the spaces between the fields */
+  display:block; padding:1px 10px; border-bottom:1px solid var(--line);
+  background:var(--panel); color:var(--dim); font-size:.86em; white-space:nowrap; overflow:hidden;
+}
+.sessbar b{ color:var(--green); font-weight:700; }
+.sessbar .mdl{ color:var(--magenta); }
+.ctx-div{ display:flex; align-items:center; gap:8px; color:var(--dimmer); font-size:.85em; white-space:nowrap; overflow:hidden; }
+.ctx-div .ln2{ flex:1; overflow:hidden; color:var(--line); }
+.ctx-empty{ color:var(--dimmer); padding:6px 0; }
+.ctx-empty b{ color:var(--green); font-weight:700; }
+
+.stackbar{
+  border-top:1px solid var(--line); background:var(--panel);
+  padding:3px 10px; display:flex; align-items:center; gap:8px; overflow-x:auto; white-space:nowrap;
+}
+.stackbar[hidden]{ display:none; }
+.stackbar .lbl{ color:var(--dimmer); font-size:.85em; flex:none; }
+.stackbar .chips{ display:flex; gap:6px; }
+.chip{
+  border:1px solid var(--line); color:var(--dim); padding:0 7px; border-radius:1px; font-size:.86em;
+  white-space:nowrap; transition:all .12s;
+}
+.chip.top{ color:var(--green); border-color:var(--green-d); background:var(--sel-2); }
+.chip.top:hover{ background:rgba(111,209,139,.16); box-shadow:var(--glow); }
+.chip.locked{ opacity:.45; }
+.chip.locked:hover{ border-color:rgba(239,111,97,.45); color:var(--red); opacity:.7; }
+.btn.dis{ opacity:.4; }
+.btn.dis:hover{ color:var(--red); border-color:rgba(239,111,97,.4); background:rgba(239,111,97,.08); box-shadow:none; }
+.pill-n{ color:var(--dimmer); }
+
+/* ── r2: fuzzy palette (fzf-flavoured) ─────────────────────────────────────── */
+#palette{
+  z-index:76; top:7vh; left:50%; transform:translateX(-50%);
+  width:min(780px, calc(100vw - 16px)); max-height:min(74vh, 640px);
+  display:flex; flex-direction:column;
+}
+#palette .pq{ display:flex; align-items:center; gap:8px; padding:3px 10px; border-bottom:1px solid var(--line); background:var(--bg-deep); }
+#palette .pq .sig{ color:var(--green); flex:none; }
+#palette input{ flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--fg-bright); }
+#palette input::placeholder{ color:var(--dimmer); }
+#palette .cnt{ color:var(--dimmer); font-size:.85em; flex:none; }
+#plist{ overflow-y:auto; overflow-x:hidden; padding:2px 0; flex:1; min-height:0; }
+.pitem{
+  display:flex; align-items:baseline; gap:0; padding:0 9px; cursor:pointer;
+  white-space:nowrap; height:calc(var(--row-h) + 1px); line-height:calc(var(--row-h) + 1px);
+}
+.pitem .mk2{ width:1.6ch; color:transparent; flex:none; }
+.pitem .ppath{ color:var(--cyan); flex:none; }
+.pitem .lno{ color:var(--dimmer); flex:none; margin-right:1.2ch; }
+.pitem .psnip{ color:var(--dim); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.pitem .kind{ color:var(--dimmer); font-size:.82em; flex:none; margin-left:8px; }
+.pitem:hover{ background:var(--sel-2); }
+.pitem.sel{ background:var(--sel); }
+.pitem.sel .mk2{ color:var(--green); text-shadow:var(--glow); }
+.pitem.sel .psnip{ color:var(--fg); }
+.hit{ color:var(--amber); font-weight:700; }
+.pitem.sel .hit{ color:#ffd479; text-shadow:0 0 7px rgba(232,177,75,.45); }
+.pfoot2{ border-top:1px solid var(--line); background:var(--panel-2); padding:2px 10px; display:flex; gap:14px; overflow:hidden; white-space:nowrap; }
+.pempty{ padding:10px; color:var(--dimmer); }
+
+/* ── r2: help / shortcuts overlay ──────────────────────────────────────────── */
+#help{ z-index:74; top:50%; left:50%; transform:translate(-50%,-50%); width:min(640px, calc(100vw - 16px)); max-height:min(84vh,660px); display:flex; flex-direction:column; }
+#help .hbody{ overflow-y:auto; padding:10px 14px 14px; }
+.kgrid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:0 22px; }
+.kgroup{ margin-bottom:10px; }
+.kgroup .gt{ color:var(--amber); letter-spacing:.1em; white-space:nowrap; overflow:hidden; margin-bottom:3px; }
+.krow{ display:flex; gap:10px; align-items:baseline; padding:1px 0 1px 2ch; }
+.krow .kk{ color:var(--green); font-weight:700; width:9ch; flex:none; }
+.krow .kd{ color:var(--dim); flex:1; min-width:0; }
+
+/* ── r2: chat session details ──────────────────────────────────────────────── */
+#chatinfo{ z-index:72; top:50%; left:50%; transform:translate(-50%,-50%); width:min(520px, calc(100vw - 16px)); max-height:88vh; display:flex; flex-direction:column; }
+#chatinfo .cbody{ padding:10px 13px; overflow-y:auto; }
+.irow{ display:flex; gap:10px; padding:1px 0; align-items:baseline; flex-wrap:wrap; }
+.irow .il{ color:var(--dim); width:13ch; flex:none; }
+.irow .iv{ color:var(--fg); flex:1; min-width:0; overflow-wrap:anywhere; }
+.irow .iv b{ color:var(--green); font-weight:700; }
+.meter{ margin-top:6px; color:var(--dimmer); white-space:pre; overflow:hidden; }
+.meter .fill{ color:var(--green); }
+
+/* ── r2: statusbar additions ───────────────────────────────────────────────── */
+.seg.sync .ok{ color:var(--green); }
+.seg.conn{ gap:5px; }
+.seg.conn .dot{ color:var(--green); text-shadow:var(--glow); }
+.seg.conn.off .dot{ color:var(--amber); text-shadow:none; animation:blink 1s steps(1) infinite; }
+.seg.conn.off .txt{ color:var(--amber); }
+
+/* ── responsive ────────────────────────────────────────────────────────────── */
+@media (max-width: 1180px){
+  .main{ --sw:236px; --cw:308px; }
+}
+@media (max-width: 980px){
+  .main{ --sw:206px; --cw:276px; }
+  :root{ --pane-pad:16px; }
+}
+@media (max-width: 768px){
+  .hamburger{ display:block; }
+  .chat-fab{ display:block; }
+  .tb-path, .tb-only-lg{ display:none; }
+  /* r2: keep every tool button on-screen once ⌕ and ? joined the titlebar */
+  .titlebar{ gap:7px; padding:0 6px; }
+  .tb-lamps, .tb-title .v{ display:none; }
+  .tb-btn{ padding:2px 4px; }
+  .tb-tools{ gap:2px; }
+  .main, body.no-sidebar .main, body.no-chat .main, body:not(.no-chat) .main{ grid-template-columns:1fr; }
+  /* titlebar floats above the scrim so ≡ / [ ai ] stay tappable with a drawer open */
+  .titlebar{ position:relative; z-index:66; }
+  .pane.sidebar{
+    position:fixed; top:calc(var(--row-h) + 12px); bottom:0; left:0; width:min(310px,86vw); z-index:65;
+    transform:translateX(-102%); transition:transform .22s cubic-bezier(.3,.8,.3,1);
+    box-shadow:14px 0 40px rgba(0,0,0,.6); opacity:1 !important; pointer-events:auto !important;
+  }
+  body.m-side .pane.sidebar{ transform:none; }
+  body:not(.m-side) .pane.sidebar{ pointer-events:none !important; }
+  .pane.chat{
+    position:fixed; left:0; right:0; bottom:0; top:auto; height:min(74dvh, 620px); z-index:65;
+    border-left:none; border-top:1px solid var(--green-d);
+    transform:translateY(103%); transition:transform .24s cubic-bezier(.3,.8,.3,1);
+    box-shadow:0 -14px 40px rgba(0,0,0,.65); opacity:1 !important; pointer-events:auto !important;
+  }
+  body.m-chat .pane.chat{ transform:none; }
+  body:not(.m-chat) .pane.chat{ pointer-events:none !important; }
+  .pane.editor{ grid-column:1; }
+  .doc, #raw{ padding-left:var(--pane-pad); padding-right:var(--pane-pad); }
+  .keyrow .kb.kb-lg{ display:none; }
+  .sm-hide, .lg-only{ display:none !important; }
+  .seg.file{ flex:1 1 auto; min-width:2ch; overflow:hidden; text-overflow:ellipsis; }
+  .seg.file .dir{ display:none; }
+  .seg.mode{ padding:0 8px; letter-spacing:.08em; }
+  .savebtn{ margin-right:6px; }
+  .seg.save{ padding:0 8px; }
+  #settings{ width:calc(100vw - 12px); max-height:88dvh; }
+  /* r2: overlays go near-fullbleed on phones */
+  #palette{ top:0; left:0; right:0; transform:none; width:100vw; max-height:100dvh; height:100dvh; border:none; border-bottom:1px solid var(--green-d); }
+  #palette .pitem{ height:calc(var(--row-h) + 8px); line-height:calc(var(--row-h) + 8px); }
+  #palette .pitem .ppath{ max-width:46vw; overflow:hidden; text-overflow:ellipsis; }
+  #help, #chatinfo{ width:calc(100vw - 12px); max-height:86dvh; }
+  .pfoot2 .pf-lg{ display:none; }
+  .sessbar{ font-size:.82em; padding:1px 8px; }
+  .stackbar{ padding:3px 8px; }
+}
+@media (max-width: 360px){
+  /* smallest phones: ? drops out of the titlebar (still in settings → shortcuts) */
+  #btnHelp{ display:none; }
+}
+@media (max-width: 420px){
+  .seg.file{ display:block; line-height:calc(var(--row-h) + 3px); }
+  .seg.mode{ padding:0 5px; }
+  /* keep the connection lamp on screen on the narrowest phones */
+  .seg.save{ max-width:15ch; overflow:hidden; text-overflow:ellipsis; padding:0 6px; }
+  .savebtn{ padding:0 5px; margin-right:4px; }
+  .seg.conn{ padding:0 6px; }
+}
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:.001ms !important; transition-duration:.001ms !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── titlebar ──────────────────────────────────────────────────────────── -->
+  <header class="titlebar">
+    <button class="tb-btn hamburger" id="btnHam" title="Toggle sidebar (^B)" aria-label="Toggle sidebar">≡</button>
+    <span class="tb-lamps" aria-hidden="true"><span class="lamp l-r">●</span><span class="lamp l-y">●</span><span class="lamp l-g">●</span></span>
+    <span class="tb-title">┤ <b>z-notes</b> <span class="v">v0.1.0</span> ├<span class="tb-path" id="tbPath"> ── vault: ~/vault/z-notes ── 7 docs</span></span>
+    <span class="tb-spacer"></span>
+    <span class="tb-tools">
+      <button class="tb-btn tb-only-lg on" id="btnSide" title="Toggle sidebar  ^B">[ ^B tree ]</button>
+      <button class="tb-btn tb-only-lg on" id="btnChat" title="Toggle AI panel  ^G">[ ^G ai ]</button>
+      <button class="tb-btn chat-fab" id="btnChatM" title="AI panel">[ ai ]</button>
+      <button class="tb-btn" id="btnFind" title="Search vault  ⌘K">[ ⌕ ]</button>
+      <button class="tb-btn" id="btnHelp" title="Keyboard shortcuts  ?">[ ? ]</button>
+      <button class="tb-btn" id="btnGear" title="Settings  ⌘,">[ ⚙ ]</button>
+    </span>
+  </header>
+
+  <!-- ── main ──────────────────────────────────────────────────────────────── -->
+  <div class="main">
+
+    <!-- sidebar -->
+    <aside class="pane sidebar" id="sidebar">
+      <div class="pane-head">
+        <span class="tick">┤</span><span class="lbl"><b>1</b> vault</span><span class="tick">├</span>
+        <span class="rest" aria-hidden="true">────────────────────────────────</span>
+        <span class="key">^B</span>
+      </div>
+      <div class="side-scroll">
+        <div class="tree-root">z-notes/ <span class="cnt" id="treeCount">── 7 docs</span></div>
+        <div class="tree" id="tree" role="tree" aria-label="Vault tree"></div>
+      </div>
+      <div class="side-foot">
+        <div class="newrow" id="newRow" hidden>
+          <span class="sig" id="newSig">❯</span>
+          <input id="newInput" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="New item name">
+          <span class="blink">▌</span>
+        </div>
+        <div class="newhint" id="newHint" hidden>⏎ create · ⎋ cancel</div>
+        <button class="side-act" id="btnNewDoc" title="Create a doc  ^N">+ new doc<span class="k">^N</span></button>
+        <button class="side-act" id="btnNewFolder" title="Create a folder  ^⇧N">+ new folder<span class="k">^⇧N</span></button>
+      </div>
+    </aside>
+
+    <!-- editor -->
+    <main class="pane editor">
+      <div class="pane-head">
+        <span class="tick">┤</span><span class="lbl"><b>2</b> editor</span><span class="tick">├</span>
+        <span class="rest" id="crumb"></span>
+        <div class="modeseg" id="modeCtl" role="group" aria-label="Editor mode">
+          <button data-mode="preview" class="on" aria-pressed="true" title="Rendered markdown  ⌘E">preview</button><button data-mode="raw" aria-pressed="false" title="Markdown source  ⌘E">raw</button>
+        </div>
+        <span class="key sm-hide">⌘E</span>
+      </div>
+      <div class="editor-body">
+        <!-- r3: preview and raw live in the same scroll container, in the same
+             column box — clicking the gutter around them returns to preview. -->
+        <div class="doc-scroll" id="docScroll">
+          <div class="doc" id="doc"></div>
+          <textarea id="raw" class="doc-raw" spellcheck="false" autocapitalize="off" autocorrect="off"
+                    aria-label="Markdown source"></textarea>
+        </div>
+      </div>
+    </main>
+
+    <!-- chat -->
+    <aside class="pane chat" id="chat">
+      <div class="pane-head">
+        <span class="tick">┤</span><span class="lbl"><b>3</b> ai</span><span class="tick">├</span>
+        <span class="rest" aria-hidden="true">────────────</span>
+        <button class="head-btn" id="btnSessInfo" title="Session details — messages, tokens, change stack">[ ctx ]</button>
+        <button class="head-btn" id="btnNewSess" title="New session — clears context  ⌘⇧K">[ + ]</button>
+        <button class="head-btn" id="btnChatX" title="Close panel  ^G">[ × ]</button>
+      </div>
+      <div class="sessbar" id="sessInfo" title="context in this session"></div>
+      <div class="chat-scroll" id="chatScroll"></div>
+      <div class="stackbar" id="stackbar" hidden>
+        <span class="lbl">┤ stack ├</span>
+        <div class="chips" id="stackChips"></div>
+      </div>
+      <div class="chat-input">
+        <div class="prompt-row">
+          <span class="sig">❯</span>
+          <input id="chatInput" placeholder="ask about the vault…" aria-label="Message the assistant">
+          <span class="blink">▌</span>
+        </div>
+        <div class="chat-hint"><span>⏎ send</span><span>^G close</span><span>@ mention doc</span><span class="lg-only">⌘K search</span></div>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- ── statusbar ─────────────────────────────────────────────────────────── -->
+  <footer class="statusbar">
+    <div class="srow">
+      <span class="seg mode" id="stMode">PREVIEW</span>
+      <span class="seg file" id="stFile">architecture/<b>z-notes-design.md</b></span>
+      <span class="seg grow sm-hide" id="stInfo">28 lines · 348 words</span>
+      <span class="seg sync sm-hide" id="stSync" title="git sync"><span class="ok">✓</span> synced 2 min ago · origin/main</span>
+      <button class="savebtn" id="btnSave" title="Save now (⌘S)">[ save<span class="lg-only"> ⌘S</span> ]</button>
+      <span class="seg save" id="stSave"><span class="dot">◉</span><span id="stSaveTxt">Saved · just now</span></span>
+      <span class="seg sm-hide" style="background:var(--raise)">utf-8 · lf</span>
+      <span class="seg sm-hide" style="background:var(--green-d);color:#eafaf0" id="stCur">1:1</span>
+      <span class="seg conn" id="stConn" title="backend socket: ws://127.0.0.1:8080/events"><span class="dot">●</span><span class="txt sm-hide">connected</span></span>
+    </div>
+    <div class="keyrow">
+      <span class="kb"><b>⌘K</b> search</span>
+      <span class="kb"><b>⌘E</b> preview/raw</span>
+      <span class="kb"><b>⌘S</b> save</span>
+      <span class="kb"><b>^B</b> tree</span>
+      <span class="kb"><b>^G</b> ai</span>
+      <span class="kb"><b>?</b> help</span>
+      <span class="kb kb-lg"><b>⎋</b> dismiss</span>
+      <span class="kb kb-lg"><b>⌘,</b> settings</span>
+      <span class="kb kb-lg"><b>^N</b> new doc</span>
+      <span class="kb kb-lg"><b>⏎</b> accept edit</span>
+      <span class="kb kb-lg"><b>⌘L</b> lock secret</span>
+      <span class="kb kb-lg">autosave <b>10s</b></span>
+    </div>
+  </footer>
+</div>
+
+<!-- ── overlays ────────────────────────────────────────────────────────────── -->
+<div class="scrim" id="scrim"></div>
+
+<!-- settings -->
+<div class="win hidden" id="settings" role="dialog" aria-label="Settings">
+  <div class="win-head"><span>┤ settings ├</span><span class="grow"></span><button class="x" id="btnSettingsX" aria-label="Close">[ × ⎋ ]</button></div>
+  <div class="sbody">
+
+    <div class="sect">
+      <div class="st">── APPEARANCE ──────────────────────────────────────────────────────────</div>
+      <div class="frow">
+        <span class="lb">theme</span>
+        <div class="segbtns" data-group="theme">
+          <button>System</button><button class="on">Dark</button><button>Light</button>
+        </div>
+        <span class="note">terminal theme ships dark-first</span>
+      </div>
+      <div class="frow">
+        <span class="lb">density</span>
+        <div class="segbtns" id="densityCtl">
+          <button data-d="compact">Compact</button><button data-d="comfy" class="on">Comfy</button>
+        </div>
+        <span class="note">live — rewrites spacing vars app-wide</span>
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="st">── EDITING ─────────────────────────────────────────────────────────────</div>
+      <div class="frow">
+        <span class="lb">autosave interval</span>
+        <input class="tin" style="width:8ch" value="10s">
+        <span class="note">debounced after last keystroke</span>
+      </div>
+      <div class="frow">
+        <span class="lb">show markdown marks</span>
+        <button class="chk on" data-toggle>[x] visible</button>
+      </div>
+      <div class="frow">
+        <span class="lb">click preview to edit</span>
+        <button class="chk on" data-toggle>[x] jump to line in raw</button>
+      </div>
+      <div class="frow">
+        <span class="lb">shortcuts</span>
+        <button class="btn" id="btnHelpFromSettings">[ open reference · ? ]</button>
+        <span class="note">⌘E raw/preview · ⌘S save · ⌘K search · ⎋ dismiss</span>
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="st">── GIT SYNC ────────────────────────────────────────────────────────────</div>
+      <div class="frow"><span class="lb">github token</span><input class="tin wide" type="password" value="ghp_0000000000000000" style="max-width:32ch"></div>
+      <div class="frow"><span class="lb">branch</span><input class="tin" style="width:14ch" value="main"></div>
+      <div class="frow"><span class="lb">auto-sync</span><button class="chk on" data-toggle>[x] on commit + 5m</button></div>
+      <div class="frow"><span class="lb">status</span><span class="status-ok">✓ synced 2 min ago · origin/main</span></div>
+    </div>
+
+    <div class="sect">
+      <div class="st">── AI ──────────────────────────────────────────────────────────────────</div>
+      <div class="frow"><span class="lb">base url</span><input class="tin wide" value="http://127.0.0.1:8080/v1" style="max-width:32ch"></div>
+      <div class="frow"><span class="lb">api key</span><input class="tin wide" type="password" value="sk-000000000000000000" style="max-width:32ch"></div>
+      <div class="frow"><span class="lb">model</span><input class="tin" style="width:20ch" value="gpt-5"></div>
+      <div class="frow">
+        <span class="lb">reasoning effort</span>
+        <div class="segbtns" data-group="effort"><button>low</button><button>medium</button><button class="on">high</button></div>
+      </div>
+    </div>
+
+  </div>
+  <div class="sfoot">
+    <span class="grow">config → ~/.config/z-notes/config.toml</span>
+    <button class="btn" id="btnSettingsClose2">[ close ⎋ ]</button>
+    <button class="btn ok" id="btnSettingsDone">[ done ⏎ ]</button>
+  </div>
+</div>
+
+<!-- passphrase prompt -->
+<div class="win hidden" id="pass" role="dialog" aria-label="Unlock secret block">
+  <div class="win-head"><span>┤ age · unlock ├</span><span class="grow"></span><span class="x">⎋</span></div>
+  <div class="pbody">
+    <div class="lead">identity: <b>~/.age/keys.txt</b> · recipient <b>age1qk9x…4e6f</b><br>enter passphrase to decrypt block:</div>
+    <div class="prow"><span class="sig">❯</span><input id="passInput" type="password" placeholder="••••••••" aria-label="Passphrase"><span class="blink">▌</span></div>
+    <div class="pfoot">
+      <span class="grow">any input accepted in this mockup</span>
+      <button class="btn" id="btnPassCancel">[ cancel ⎋ ]</button>
+      <button class="btn ok" id="btnPassOk">[ unlock ⏎ ]</button>
+    </div>
+  </div>
+</div>
+
+<!-- fuzzy palette -->
+<div class="win hidden" id="palette" role="dialog" aria-label="Search vault">
+  <div class="pq">
+    <span class="sig">❯</span>
+    <input id="palInput" placeholder="fuzzy find across 7 docs — names + content…" spellcheck="false"
+           autocapitalize="off" autocorrect="off" aria-label="Search query" aria-controls="plist">
+    <span class="cnt" id="palCount">0/0</span>
+  </div>
+  <div id="plist" role="listbox" aria-label="Search results"></div>
+  <div class="pfoot2">
+    <span class="kb"><b>↑↓</b> move</span>
+    <span class="kb"><b>⏎</b> open</span>
+    <span class="kb pf-lg"><b>⌘K/⌘P</b> toggle</span>
+    <span class="kb"><b>⎋</b> close</span>
+    <span class="kb pf-lg">subsequence match · names + lines</span>
+  </div>
+</div>
+
+<!-- shortcuts reference -->
+<div class="win hidden" id="help" role="dialog" aria-label="Keyboard shortcuts">
+  <div class="win-head"><span>┤ keys ├</span><span class="grow"></span><button class="x" id="btnHelpX" aria-label="Close">[ × ⎋ ]</button></div>
+  <div class="hbody">
+    <div class="kgrid">
+      <div class="kgroup">
+        <div class="gt">── EDITOR ──────────────────────</div>
+        <div class="krow"><span class="kk">⌘E</span><span class="kd">toggle preview / raw</span></div>
+        <div class="krow"><span class="kk">click</span><span class="kd">edit at that line (preview → raw)</span></div>
+        <div class="krow"><span class="kk">click</span><span class="kd">margin beside the doc (raw → preview)</span></div>
+        <div class="krow"><span class="kk">⌘S</span><span class="kd">save now</span></div>
+        <div class="krow"><span class="kk">⌘L</span><span class="kd">re-lock secret block</span></div>
+      </div>
+      <div class="kgroup">
+        <div class="gt">── NAVIGATE ────────────────────</div>
+        <div class="krow"><span class="kk">⌘K / ⌘P</span><span class="kd">fuzzy search all docs</span></div>
+        <div class="krow"><span class="kk">^B</span><span class="kd">toggle vault tree</span></div>
+        <div class="krow"><span class="kk">^G</span><span class="kd">toggle ai panel</span></div>
+        <div class="krow"><span class="kk">↑↓ ⏎</span><span class="kd">move / open in tree + palette</span></div>
+      </div>
+      <div class="kgroup">
+        <div class="gt">── VAULT ───────────────────────</div>
+        <div class="krow"><span class="kk">^N</span><span class="kd">new doc (inline name input)</span></div>
+        <div class="krow"><span class="kk">^⇧N</span><span class="kd">new folder</span></div>
+        <div class="krow"><span class="kk">⎋</span><span class="kd">cancel the name input</span></div>
+      </div>
+      <div class="kgroup">
+        <div class="gt">── AI / CHANGES ────────────────</div>
+        <div class="krow"><span class="kk">⏎</span><span class="kd">accept the oldest pending edit</span></div>
+        <div class="krow"><span class="kk">⌘⇧Z</span><span class="kd">revert top of the change stack</span></div>
+        <div class="krow"><span class="kk">⌘⇧K</span><span class="kd">new chat session (clear context)</span></div>
+        <div class="krow"><span class="kk">^G</span><span class="kd">show / hide the ai panel</span></div>
+      </div>
+      <div class="kgroup">
+        <div class="gt">── GLOBAL ──────────────────────</div>
+        <div class="krow"><span class="kk">?</span><span class="kd">this reference</span></div>
+        <div class="krow"><span class="kk">⌘,</span><span class="kd">settings</span></div>
+        <div class="krow"><span class="kk">⎋</span><span class="kd">dismiss the topmost overlay</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="sfoot"><span class="grow">⌘ = ctrl on linux/windows · ^ = ctrl</span><button class="btn ok" id="btnHelpClose">[ close ⎋ ]</button></div>
+</div>
+
+<!-- chat session details -->
+<div class="win hidden" id="chatinfo" role="dialog" aria-label="Session details">
+  <div class="win-head"><span>┤ session ├</span><span class="grow"></span><button class="x" id="btnSessX" aria-label="Close">[ × ⎋ ]</button></div>
+  <div class="cbody">
+    <div class="irow"><span class="il">id</span><span class="iv">s_01k9xq7f · started 18:02</span></div>
+    <div class="irow"><span class="il">messages</span><span class="iv" id="ciMsgs">–</span></div>
+    <div class="irow"><span class="il">tokens</span><span class="iv" id="ciTok">–</span></div>
+    <div class="irow"><span class="il">model</span><span class="iv"><b>gpt-5</b> · effort high</span></div>
+    <div class="irow"><span class="il">tools</span><span class="iv">read_doc, write_doc, search_vault</span></div>
+    <div class="irow"><span class="il">attached</span><span class="iv" id="ciDoc">–</span></div>
+    <div class="irow"><span class="il">change stack</span><span class="iv" id="ciStack">empty</span></div>
+    <div class="meter" id="ciMeter"></div>
+  </div>
+  <div class="sfoot">
+    <span class="grow">context is trimmed oldest-first at 128k</span>
+    <button class="btn" id="btnRestoreDemo">[ restore demo ]</button>
+    <button class="btn warn" id="btnNewSess2">[ new session ]</button>
+    <button class="btn ok" id="btnSessClose">[ close ⎋ ]</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══ helpers ══════════════════════════════════════════════════════════════ */
+const $  = (s,r)=> (r||document).querySelector(s);
+const $$ = (s,r)=> Array.from((r||document).querySelectorAll(s));
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+/* ── overlay stack ────────────────────────────────────────────────────────────
+   every modal/palette registers here in open order, so ⎋ always closes the
+   topmost one and the scrim is pure derived state.                            */
+const OV = [];                                     // ids, oldest → newest
+const WINS = ["#settings","#pass","#palette","#help","#chatinfo"];
+function isOpen(sel){ return !$(sel).classList.contains("hidden"); }
+function openWin(sel){
+  $(sel).classList.remove("hidden");
+  const i = OV.indexOf(sel); if(i >= 0) OV.splice(i,1);
+  OV.push(sel); syncScrim();
+}
+function closeWin(sel){
+  $(sel).classList.add("hidden");
+  const i = OV.indexOf(sel); if(i >= 0) OV.splice(i,1);
+  syncScrim();
+}
+function closeAllWins(){ WINS.forEach(w=> $(w).classList.add("hidden")); OV.length = 0; }
+function syncScrim(){
+  const open = document.body.classList.contains("m-side")
+            || document.body.classList.contains("m-chat")
+            || WINS.some(isOpen);
+  $("#scrim").classList.toggle("on", open);
+}
+
+/* inline markdown: [[wikilinks]], **bold**, `code` */
+function inline(t){
+  let s = esc(t);
+  s = s.replace(/\[\[([^\]]+)\]\]/g, (m,name)=>
+    `<a class="wlink" data-link="${name}" tabindex="0" title="→ ${name}.md"><span class="br">[[</span>${name}<span class="br">]]</span></a>`);
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<b class="strong">$1</b>');
+  s = s.replace(/`([^`]+)`/g, '<code class="inl">$1</code>');
+  return s;
+}
+
+/* ═══ vault ════════════════════════════════════════════════════════════════
+   each doc is just a markdown string — the file on disk. preview renders it,
+   raw edits it. no intermediate block model, nothing to round-trip.          */
+const FENCE = "```";
+
+const docs = {
+  "z-notes-design":{
+    path:"architecture/z-notes-design.md", mtime:"2026-07-31 18:04", size:"1.2 kB",
+    md:
+`# z-notes design
+
+Single-user markdown notes app. Bun backend, raw/preview markdown UI, files are the source of truth — see [[event-pipeline]] for how external edits flow in.
+
+## Decisions
+
+- [x] Editor: raw markdown + preview modes, lossless by construction
+- [x] Secrets: age-encrypted blocks (see [[cloud-keys]])
+- [ ] Pick winning UI theme from prototype round 1
+- [ ] Write build-ready spec
+
+## API sketch
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| /api/docs | GET | list vault tree |
+| /api/docs/:path | GET/PUT | read / save markdown |
+| /events | GET | SSE: files changed on disk |
+
+${FENCE}ts
+Bun.serve({
+  routes: {
+    "/api/docs/*": docHandler,
+    "/events": sseHandler,
+  },
+  idleTimeout: 0, // SSE would die at 10s otherwise
+});
+${FENCE}
+
+
+> Files are edited outside the app too — the watcher is just a doorbell; reconcile from disk.`
+  },
+  "event-pipeline":{
+    path:"architecture/event-pipeline.md", mtime:"2026-07-31 16:52", size:"0.4 kB",
+    md:
+`# Event pipeline
+
+fs.watch on macOS lies: eventType is always \`rename\` and atomic saves name only the temp file.
+
+- [x] Debounce 120ms
+- [x] Reconcile: Glob → stat → hash → sqlite
+- [ ] Push change to open editors via SSE
+
+Related: [[z-notes-design]]`
+  },
+  "side-projects":{
+    path:"projects/side-projects.md", mtime:"2026-07-30 21:15", size:"0.3 kB",
+    md:
+`# Side projects
+
+Active: **z-notes** (this app — [[z-notes-design]]), homelab overhaul, a tiny CLI for age-encrypted dotfiles.
+
+- [ ] z-notes: review prototype round 1
+- [ ] homelab: move DNS off the NAS`
+  },
+  "cloud-keys":{
+    path:"keys/cloud-keys.md", mtime:"2026-07-29 09:41", size:"0.6 kB",
+    md:
+`# Cloud keys
+
+Personal AWS + Hetzner credentials. Everything below is encrypted at rest and in git.
+
+${FENCE}age
+-----BEGIN AGE ENCRYPTED FILE-----
+YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBxSzl4...
+Zt2wPmVFJk3XN8LQvR5tYcAeD7hHnUuBsWgO1iM4E6f9rTKp
+-----END AGE ENCRYPTED FILE-----
+${FENCE}`
+  },
+  /* ○ inert docs — reachable, intentionally stubbed */
+  "inbox":{ path:"inbox.md", mtime:"2026-07-31 08:12", size:"0.1 kB", inert:true, md:
+`# Inbox
+
+- [ ] triage: 1 open capture (stub doc — not part of the shared prototype content set)`
+  },
+  "homelab":{ path:"projects/homelab.md", mtime:"2026-07-22 19:30", size:"0.1 kB", inert:true, md:
+`# Homelab
+
+\`○ stub\` — inert in this prototype; the tree navigation is real, the content is not.`
+  },
+  "2026-07-31":{ path:"journal/2026-07-31.md", mtime:"2026-07-31 07:05", size:"0.1 kB", inert:true, md:
+`# 2026-07-31
+
+\`○ stub\` — inert in this prototype; the tree navigation is real, the content is not.`
+  }
+};
+
+const tree = [
+  {k:"file", id:"inbox", name:"inbox.md"},
+  {k:"dir", name:"architecture", open:true, kids:[
+    {k:"file", id:"z-notes-design", name:"z-notes-design.md"},
+    {k:"file", id:"event-pipeline", name:"event-pipeline.md"}
+  ]},
+  {k:"dir", name:"projects", open:true, kids:[
+    {k:"file", id:"side-projects", name:"side-projects.md"},
+    {k:"file", id:"homelab", name:"homelab.md"}
+  ]},
+  {k:"dir", name:"keys", open:true, kids:[
+    {k:"file", id:"cloud-keys", name:"cloud-keys.md"}
+  ]},
+  {k:"dir", name:"journal", open:true, kids:[
+    {k:"file", id:"2026-07-31", name:"2026-07-31.md"}
+  ]}
+];
+
+/* ═══ state ════════════════════════════════════════════════════════════════ */
+const S = {
+  current:"z-notes-design",
+  mode:"preview",           // preview | raw
+  unlocked:false,
+  flashFrom:-1,             // first source line to flash after an applied edit
+  dirty:false,
+  autosaveMs:10000,
+  creating:null,            // null | "doc" | "folder"  (sidebar inline input)
+  palSel:0,
+  palRes:[]
+};
+let autosaveTimer = null;
+
+/* ═══ sidebar tree ═════════════════════════════════════════════════════════ */
+function renderTree(){
+  const out = [];
+  (function walk(nodes, prefix){
+    nodes.forEach((n,i)=>{
+      const last = i === nodes.length-1;
+      const guide = prefix + (last ? "└─ " : "├─ ");
+      if(n.k === "dir"){
+        out.push(
+          `<div class="tree-row dir" data-dir="${n.name}" role="treeitem" tabindex="0" aria-expanded="${n.open}">`+
+            `<span class="mark">▌</span><span class="guide">${guide}</span>`+
+            `<span class="ico">${n.open ? "▾ " : "▸ "}</span><span class="name">${n.name}/</span>`+
+          `</div>`);
+        if(n.open) walk(n.kids, prefix + (last ? "   " : "│  "));
+      } else {
+        const d = docs[n.id];
+        const act = S.current === n.id;
+        out.push(
+          `<div class="tree-row file${d.inert?" inert":""}${act?" active":""}" data-doc="${n.id}" role="treeitem" tabindex="0" aria-selected="${act}">`+
+            `<span class="mark">▌</span><span class="guide">${guide}</span>`+
+            `<span class="ico">${d.inert ? "○ " : "● "}</span><span class="name">${n.name}</span>`+
+            `<span class="badge">${d.size}</span>`+
+          `</div>`);
+      }
+    });
+  })(tree, "");
+  $("#tree").innerHTML = out.join("");
+  const n = Object.keys(docs).length;
+  $("#treeCount").textContent = `── ${n} docs`;
+  $("#tbPath").textContent = ` ── vault: ~/vault/z-notes ── ${n} docs`;
+  const pal = $("#palInput"); if(pal) pal.placeholder = `fuzzy find across ${n} docs — names + content…`;
+}
+
+$("#tree").addEventListener("click", e=>{
+  const row = e.target.closest(".tree-row"); if(!row) return;
+  if(row.dataset.dir){ toggleDir(row.dataset.dir); }
+  else openDoc(row.dataset.doc);
+});
+$("#tree").addEventListener("keydown", e=>{
+  const row = e.target.closest(".tree-row"); if(!row) return;
+  if(e.key === "Enter" || e.key === " "){ e.preventDefault(); row.click(); }
+  if(e.key === "ArrowDown" || e.key === "ArrowUp"){
+    e.preventDefault();
+    const rows = $$(".tree-row"); const i = rows.indexOf(row);
+    const nx = rows[i + (e.key === "ArrowDown" ? 1 : -1)]; if(nx) nx.focus();
+  }
+});
+function toggleDir(name){
+  (function walk(ns){ ns.forEach(n=>{ if(n.k==="dir"){ if(n.name===name) n.open=!n.open; walk(n.kids); } }); })(tree);
+  renderTree();
+}
+
+/* ── r2: inline create (doc / folder) ─────────────────────────────────────────
+   new docs land in the folder of the doc you're looking at; folders at root.  */
+function folderOfCurrent(){
+  for(const n of tree)
+    if(n.k === "dir" && n.kids.some(k=> k.id === S.current)) return {kids:n.kids, prefix:n.name + "/", node:n};
+  return {kids:tree, prefix:"", node:null};
+}
+function startCreate(kind){
+  if(window.innerWidth <= 768 && !document.body.classList.contains("m-side")){
+    document.body.classList.add("m-side"); document.body.classList.remove("m-chat"); syncScrim();
+  }
+  S.creating = kind;
+  const row = $("#newRow"), inp = $("#newInput");
+  row.hidden = false; $("#newHint").hidden = false;
+  const dest = folderOfCurrent();
+  $("#newSig").textContent = kind === "doc" ? "❯" : "▸";
+  inp.placeholder = kind === "doc" ? (dest.prefix + "untitled.md") : "new-folder";
+  inp.value = ""; inp.focus();
+}
+function cancelCreate(){
+  S.creating = null;
+  $("#newRow").hidden = true; $("#newHint").hidden = true; $("#newInput").blur();
+}
+function commitCreate(){
+  const kind = S.creating, name = $("#newInput").value.trim();
+  if(!kind) return;
+  if(!name){ cancelCreate(); toast("✗ cancelled — empty name"); return; }
+  if(kind === "folder"){
+    if(tree.some(n=> n.k === "dir" && n.name === name)){ toast("✗ folder exists: " + name); return; }
+    tree.push({k:"dir", name, open:true, kids:[]});
+    cancelCreate(); renderTree(); toast("✓ mkdir " + name + "/");
+    return;
+  }
+  let file = /\.md$/i.test(name) ? name : name + ".md";
+  file = file.replace(/^\/+/, "");
+  const id = file.replace(/\.md$/i, "");
+  if(docs[id]){ toast("✗ doc exists: " + file); return; }
+  const dest = folderOfCurrent();
+  docs[id] = {path:dest.prefix + file, mtime:"just now", size:"0.0 kB", md:""};
+  dest.kids.push({k:"file", id, name:file});
+  cancelCreate();
+  openDoc(id, {silent:true});
+  setMode("raw", {silent:true, force:true});
+  const r = $("#raw"); r.focus({preventScroll:true}); r.setSelectionRange(0,0);
+  markDirty();
+  toast("✓ created " + docs[id].path + " · raw mode");
+}
+$("#btnNewDoc").addEventListener("click", ()=> startCreate("doc"));
+$("#btnNewFolder").addEventListener("click", ()=> startCreate("folder"));
+$("#newInput").addEventListener("keydown", e=>{
+  if(e.key === "Enter" || e.key === "Escape") e.stopPropagation();
+  if(e.key === "Enter"){ e.preventDefault(); commitCreate(); }
+  if(e.key === "Escape"){ e.preventDefault(); cancelCreate(); toast("⎋ cancelled"); }
+});
+
+/* ═══ code highlight (single pass, no re-entrancy) ═════════════════════════ */
+const KEYWORDS = /^(Bun|const|let|return|await|async|function|export|import|true|false|null)$/;
+function hl(src){
+  const safe = esc(src);
+  return safe.replace(
+    /(\/\/[^\n]*)|("(?:[^"\\]|\\.)*")|\b(\d+)\b|([A-Za-z_$][\w$]*)(?=\s*:)|\b([A-Za-z_$][\w$]*)\b/g,
+    (m, com, str, num, prop, word)=>{
+      if(com)  return `<i class="c-com">${com}</i>`;
+      if(str)  return `<i class="c-str">${str}</i>`;
+      if(num)  return `<i class="c-num">${num}</i>`;
+      if(prop) return `<i class="c-prop">${prop}</i>`;
+      if(word && KEYWORDS.test(word)) return `<i class="c-key">${word}</i>`;
+      return m;
+    });
+}
+
+/* ═══ markdown → preview HTML ══════════════════════════════════════════════
+   line-oriented renderer. every emitted element carries data-line = its first
+   line in the source, so preview clicks can edit the markdown string itself. */
+const RULE_SOLID = "─".repeat(200), RULE_DASHED = "┄".repeat(200);
+const isFence = t=>/^```/.test(t), isRule = t=>/^(-{3,}|\*{3,}|_{3,})$/.test(t);
+const isQuote = t=>/^>\s?/.test(t), isRow = t=>/^\|/.test(t);
+const isBreak = l=>{ const t=l.trim();
+  return !t||isFence(t)||isRule(t)||isQuote(t)||isRow(t)||/^#{1,3}\s+/.test(t)||/^\s*[-*]\s+/.test(l); };
+const cells = r=> r.trim().replace(/^\|/,"").replace(/\|$/,"").split("|").map(c=>c.trim());
+
+function codeHTML(lang, src, line){
+  const body = src.split("\n").map((l,i)=>`<div class="cline"><span class="ln">${i+1}</span><span>${hl(l)}</span></div>`).join("");
+  return `<div class="codewrap" data-line="${line}"><div class="cbar"><span>┤</span><span class="lang">${esc(lang)}</span><span>├</span>`+
+    `<span class="grow"></span><button class="copy" data-copy="${esc(src).replace(/"/g,"&quot;")}">[ copy ]</button></div><pre>${body}</pre></div>`;
+}
+function tableHTML(head, rows, line){
+  return `<div class="tblwrap" data-line="${line}"><table><thead><tr>${head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead>`+
+    `<tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+/* r4 · amendment 13: blank-line multiplicity survives into preview.
+   one blank line between blocks (or none, where markdown allows it) is the
+   standard --block-gap; every ADDITIONAL blank line emits one body line-height
+   of real space, so the preview's vertical rhythm tracks the source the way raw
+   shows it. the spacer is a normal block carrying data-line of the first blank
+   line, so a click in that whitespace maps to the blank line, not the wrong
+   block. height is expressed in the doc's own em/--lh, so density scales it. */
+const gapHTML = (n, line)=>
+  `<div class="vgap" data-line="${line}" aria-hidden="true" style="height:calc(1em * var(--lh) * ${n})"></div>`;
+
+function mdToHTML(src){
+  const L = src.split("\n"), out = [];
+  let i = 0, m, start, buf;
+  let blanks = 0, blankAt = 0;                          // run of blank source lines
+  while(i < L.length){
+    const raw = L[i], t = raw.trim();
+    if(!t){ if(!blanks) blankAt = i; blanks++; i++; continue; }
+    /* a run of n blanks before this block → n-1 extra line-heights of space.
+       leading blanks at the top of the doc push nothing — there is no gap yet. */
+    if(blanks > 1 && out.length) out.push(gapHTML(blanks - 1, blankAt));
+    blanks = 0;
+
+    if(isFence(t)){                                     // ``` fenced block / age secret
+      const lang = t.slice(3).trim() || "text"; start = i; buf = []; i++;
+      while(i < L.length && !isFence(L[i].trim())) buf.push(L[i++]);
+      if(i < L.length) i++;                               // closing fence
+      out.push(lang === "age" ? secretHTML(start) : codeHTML(lang, buf.join("\n"), start));
+    }
+    else if((m = t.match(/^(#{1,3})\s+(.+)$/))){          // # heading
+      out.push(`<div class="h${m[1].length}" data-line="${i}"><span class="mk">${m[1]}</span> ${inline(m[2])}</div>`);
+      if(m[1].length === 1) out.push(`<div class="rule" data-line="${i}">${RULE_SOLID}</div>`);
+      i++;
+    }
+    else if(isRule(t)){ out.push(`<div class="rule" data-line="${i}">${RULE_DASHED}</div>`); i++; }
+    else if(isRow(t) && i+1 < L.length && /^\|?[\s:|-]+$/.test(L[i+1].trim())){   // | table |
+      start = i; const head = cells(L[i]); i += 2; buf = [];
+      while(i < L.length && isRow(L[i].trim())) buf.push(cells(L[i++]));
+      out.push(tableHTML(head, buf, start));
+    }
+    else if(isQuote(t)){                                  // > quote (run of lines)
+      start = i; buf = [];
+      while(i < L.length && isQuote(L[i].trim())) buf.push(L[i++].trim().replace(/^>\s?/,""));
+      out.push(`<div class="quote" data-line="${start}"><span class="bar">│ &gt;</span><span class="li-text">${inline(buf.join(" "))}</span></div>`);
+    }
+    else if((m = raw.match(/^\s*[-*]\s+\[([ xX])\]\s*(.*)$/))){   // - [ ] task
+      const done = m[1].toLowerCase() === "x";
+      out.push(`<div class="task${done?" done":""}" data-line="${i}"><span class="cb" data-cb role="checkbox" tabindex="0"`+
+        ` aria-checked="${done}" title="toggle">[${done?"x":" "}]</span><span class="li-text">${inline(m[2])}</span></div>`);
+      i++;
+    }
+    else if((m = raw.match(/^\s*[-*]\s+(.*)$/))){         // - bullet
+      out.push(`<div class="bul" data-line="${i}"><span class="mk">•</span><span class="li-text">${inline(m[1])}</span></div>`);
+      i++;
+    }
+    else {                                                // paragraph (run of lines)
+      start = i; buf = [];
+      while(i < L.length && !isBreak(L[i])) buf.push(L[i++].trim());
+      out.push(`<div class="p" data-line="${start}">${inline(buf.join(" "))}</div>`);
+    }
+  }
+  return out.join("");
+}
+
+function secretHTML(line){
+  if(!S.unlocked){
+    return `<div class="secret" data-line="${line}">
+      <div class="shead"><span><span class="pad">🔒</span> SECRET · age · locked</span><span class="grow"></span><span style="color:var(--dimmer)">1 recipient</span>
+        <button class="sbtn" data-unlock>[ Unlock ⏎ ]</button></div>
+      <div class="armor"><span class="hdr">-----BEGIN AGE ENCRYPTED FILE-----</span>
+YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBxSzl4...
+Zt2wPmVFJk3XN8LQvR5tYcAeD7hHnUuBsWgO1iM4E6f9rTKp
+<span class="hdr">-----END AGE ENCRYPTED FILE-----</span></div>
+      <div class="warn">block stays encrypted on disk and in git · decrypted in memory only · shown as plain armor in raw</div>
+    </div>`;
+  }
+  const kv = [
+    ["AWS_ACCESS_KEY_ID","AKIA2E4EXAMPLE7XQ"],
+    ["AWS_SECRET_ACCESS_KEY","wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"],
+    ["HETZNER_API_TOKEN","hz-prod-9f3kx…"]
+  ].map(([k,v])=>`<span class="k">${k}</span><span class="eq">=</span><span class="v">${esc(v)}</span>`).join("\n");
+  return `<div class="secret open" data-line="${line}">
+    <div class="shead"><span><span class="pad">🔓</span> SECRET · decrypted</span><span class="grow"></span><span style="color:var(--dimmer)">in memory</span>
+      <button class="sbtn" data-copysecret>[ copy ]</button>
+      <button class="sbtn" data-lock>[ Lock ⌘L ]</button></div>
+    <div class="plain">${kv}</div>
+    <div class="warn">re-locks automatically on doc change · never written in plaintext</div>
+  </div>`;
+}
+
+/* ═══ editor: render + modes ═══════════════════════════════════════════════ */
+function updateStatus(){
+  const d = docs[S.current], parts = d.path.split("/"), file = parts.pop();
+  $("#stInfo").textContent = `${d.md.split("\n").length} lines · ${d.md.split(/\s+/).filter(Boolean).length} words`;
+  $("#stFile").innerHTML = (parts.length ? `<span class="dir">${parts.join("/")}/</span>` : "") + `<b>${file}</b>`;
+  $("#crumb").textContent = `── ~/vault/z-notes/${d.path} ── mtime ${d.mtime} ${"─".repeat(60)}`;
+  $("#stMode").textContent = S.mode.toUpperCase();
+  updateSess();                     // token estimate includes the attached doc
+}
+
+/* ── r3: the shared scroll container ───────────────────────────────────────────
+   #docScroll scrolls both modes, so scroll position survives a mode switch for
+   free. the raw textarea never scrolls itself — it is grown to fit its text. */
+function setDocScroll(v){
+  const ds = $("#docScroll"), prev = ds.style.scrollBehavior;
+  ds.style.scrollBehavior = "auto";                    // never animate a restore
+  ds.scrollTop = Math.max(0, Math.min(v, ds.scrollHeight - ds.clientHeight));
+  ds.style.scrollBehavior = prev;
+}
+function autosizeRaw(){
+  const r = $("#raw");
+  if(r.offsetParent === null && getComputedStyle(r).display === "none") return;  // hidden: nothing to measure
+  const ds = $("#docScroll"), keep = ds.scrollTop;
+  r.style.height = "auto";
+  r.style.height = r.scrollHeight + "px";
+  if(ds.scrollTop !== keep) setDocScroll(keep);        // the auto/measure flicker never moves the reader
+}
+function setRawValue(v){ $("#raw").value = v; if(S.mode === "raw") autosizeRaw(); }
+
+/* render preview from the markdown string; keep the raw buffer in sync */
+function renderDoc(){
+  const d = docs[S.current];
+  $("#doc").innerHTML = mdToHTML(d.md);
+  if(document.activeElement !== $("#raw")) setRawValue(d.md);
+  if(S.flashFrom >= 0){
+    $$("#doc > [data-line]:not(.vgap)").forEach(el=>{ if(+el.dataset.line >= S.flashFrom) el.classList.add("flash-new"); });
+    S.flashFrom = -1;
+  }
+  updateStatus();
+}
+
+function setMode(mode, opts){
+  opts = opts || {};
+  if(mode === S.mode && !opts.force) return;
+  if(S.mode === "raw") docs[S.current].md = $("#raw").value;      // commit the buffer
+  const keepScroll = $("#docScroll").scrollTop;                   // r3: same scroller both ways
+  S.mode = mode;
+  document.body.classList.toggle("mode-raw", mode === "raw");
+  $$("#modeCtl button").forEach(b=>{ const on = b.dataset.mode === mode;
+    b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  if(mode === "preview"){ renderDoc(); if(document.activeElement === $("#raw")) $("#raw").blur(); }
+  else {
+    const r = $("#raw");
+    r.value = docs[S.current].md;
+    autosizeRaw();
+    /* focus never scrolls the shell: the app grid is fixed-height, and
+       preventScroll keeps the browser from nudging any ancestor. */
+    if(!opts.noFocus && window.innerWidth > 768){
+      r.focus({preventScroll:true}); r.setSelectionRange(0,0);
+    }
+  }
+  /* r3 · amendment 11: hold the reader's place across the swap — content
+     heights differ (rendered vs source), so clamp rather than jump to top. */
+  if(!opts.resetScroll) setDocScroll(keepScroll);
+  updateStatus();
+  if(!opts.silent) toast(mode === "raw" ? "▸ raw · markdown source" : "▸ preview · rendered");
+}
+function toggleMode(){ setMode(S.mode === "raw" ? "preview" : "raw"); }
+
+$("#modeCtl").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-mode]"); if(!b) return;
+  setMode(b.dataset.mode);
+});
+
+/* raw edits go straight into the doc's markdown string */
+$("#raw").addEventListener("input", ()=>{
+  docs[S.current].md = $("#raw").value;
+  autosizeRaw();                                   // the box grows; #docScroll scrolls
+  scrollRawToCaret($("#raw").selectionStart, {ifNeeded:true});
+  updateStatus(); updateCursor();
+  markDirty();
+});
+["click","keyup","select","focus"].forEach(ev=> $("#raw").addEventListener(ev, updateCursor));
+/* the buffer has no scrollbar of its own, so caret moves scroll the shared rail */
+$("#raw").addEventListener("keyup", e=>{
+  if(/^(Arrow|Page|Home|End)/.test(e.key)) scrollRawToCaret($("#raw").selectionStart, {ifNeeded:true});
+});
+
+function openDoc(id, opts){
+  if(!docs[id]) { toast(`✗ no such doc: ${id}`); return; }
+  if(S.mode === "raw") docs[S.current].md = $("#raw").value;
+  if(id !== S.current) S.unlocked = false;   // secrets re-lock on navigation
+  S.current = id;
+  renderTree();
+  setRawValue(docs[id].md);
+  renderDoc();
+  setDocScroll(0);
+  if(window.innerWidth <= 768){ document.body.classList.remove("m-side"); syncScrim(); }
+  if(!opts || !opts.silent) toast(`▸ opened ${docs[id].path}`);
+}
+
+/* ═══ preview interactions ═════════════════════════════════════════════════ */
+/* toggling a checkbox rewrites the source line — raw shows it immediately */
+function toggleTask(line){
+  const d = docs[S.current], L = d.md.split("\n");
+  if(line >= L.length) return;
+  L[line] = /\[[xX]\]/.test(L[line]) ? L[line].replace(/\[[xX]\]/, "[ ]") : L[line].replace(/\[\s\]/, "[x]");
+  d.md = L.join("\n");
+  setRawValue(d.md);
+  renderDoc(); markDirty();
+}
+
+/* ── r2: click preview → edit that line in raw ────────────────────────────────
+   the renderer stamps data-line on every block, so the click target maps back
+   to an offset in the markdown string. interactive bits opt out first.        */
+function lineStartIndex(md, line){
+  const L = md.split("\n"); let idx = 0;
+  for(let i = 0; i < Math.min(line, L.length); i++) idx += L[i].length + 1;
+  return idx;
+}
+let mirror = null;                                   // hidden text mirror → caret y
+/* caret offset measured in #docScroll's scroll coordinates (r3: the buffer no
+   longer scrolls itself, so caret tracking drives the shared container).      */
+function caretOffset(idx){
+  const r = $("#raw"), ds = $("#docScroll"), cs = getComputedStyle(r);
+  if(!mirror){
+    mirror = document.createElement("div");
+    mirror.setAttribute("aria-hidden","true");
+    mirror.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;left:-9999px;top:0;white-space:pre-wrap;overflow-wrap:break-word;";
+    document.body.appendChild(mirror);
+  }
+  ["fontFamily","fontSize","lineHeight","letterSpacing","paddingLeft","paddingRight","textIndent","tabSize","wordSpacing"]
+    .forEach(p=> mirror.style[p] = cs[p]);
+  mirror.style.width = r.clientWidth + "px";
+  mirror.textContent = r.value.slice(0, idx) + "\u200b";
+  const rawTop = r.getBoundingClientRect().top - ds.getBoundingClientRect().top + ds.scrollTop;
+  return rawTop + parseFloat(cs.paddingTop) + mirror.scrollHeight;
+}
+function scrollRawToCaret(idx, opts){
+  if(S.mode !== "raw") return;
+  const ds = $("#docScroll"), y = caretOffset(idx);
+  if(opts && opts.ifNeeded){
+    const top = ds.scrollTop;
+    if(y >= top + 8 && y <= top + ds.clientHeight - 24) return;   // caret already on screen
+  }
+  setDocScroll(y - ds.clientHeight * 0.38);
+}
+function updateCursor(){
+  const r = $("#raw");
+  if(S.mode !== "raw"){ $("#stCur").textContent = "1:1"; return; }
+  const upto = r.value.slice(0, r.selectionStart).split("\n");
+  $("#stCur").textContent = upto.length + ":" + (upto[upto.length-1].length + 1);
+}
+function enterRawAtLine(line){
+  const md = docs[S.current].md;
+  const idx = lineStartIndex(md, Math.max(0, line));
+  setMode("raw", {silent:true, noFocus:true});
+  const r = $("#raw");
+  r.focus({preventScroll:true});
+  r.setSelectionRange(idx, idx);
+  scrollRawToCaret(idx);
+  updateCursor();
+  toast("▸ raw · line " + (line + 1));
+}
+
+$("#doc").addEventListener("click", e=>{
+  /* --- exceptions: these never enter raw --- */
+  const link = e.target.closest(".wlink");
+  if(link){ e.preventDefault(); openDoc(link.dataset.link); return; }
+  const cb = e.target.closest("[data-cb]");
+  if(cb){ toggleTask(+cb.closest("[data-line]").dataset.line); return; }
+  if(e.target.closest("[data-unlock]")){ openPass(); return; }
+  if(e.target.closest("[data-lock]")){ S.unlocked = false; renderDoc(); toast("[lock] secret re-locked"); return; }
+  if(e.target.closest("[data-copysecret]")){ copy("AWS_ACCESS_KEY_ID=AKIA2E4EXAMPLE7XQ\nAWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\nHETZNER_API_TOKEN=hz-prod-9f3kx…"); return; }
+  const cp = e.target.closest("[data-copy]");
+  if(cp){ copy(cp.dataset.copy); return; }
+  /* a drag that selected text is a read gesture, not an edit gesture */
+  const sel = window.getSelection();
+  if(sel && !sel.isCollapsed && String(sel).trim()) return;
+  /* --- everything else: jump into the source at this line --- */
+  const block = e.target.closest("#doc > [data-line], [data-line]");
+  const total = docs[S.current].md.split("\n").length;
+  enterRawAtLine(block ? +block.dataset.line : Math.max(0, total - 1));
+});
+/* keyboard: links + checkboxes are focusable, ⏎/space activate them */
+$("#doc").addEventListener("keydown", e=>{
+  if((e.key === "Enter" || e.key === " ") && e.target.closest(".wlink,[data-cb]")){
+    e.preventDefault(); e.target.click();
+  }
+});
+
+/* ── r3 · amendment 12: click the gutter → back to preview ────────────────────
+   the exact complement of click-to-edit. the two zones can't overlap: the doc
+   column is the edit zone, the whitespace around it is the read zone, and the
+   only element that can be the target out there is #docScroll itself. every
+   control, the topbar, statusbar, sidebar and chat live outside this listener,
+   so they are excluded by construction; selection drags and open modals are
+   filtered explicitly. blur is never consulted — focus moves don't flip modes. */
+let padDown = null;
+$("#docScroll").addEventListener("mousedown", e=>{
+  padDown = (e.button === 0 && e.target === e.currentTarget && S.mode === "raw")
+    ? {x:e.clientX, y:e.clientY} : null;
+});
+$("#docScroll").addEventListener("mouseup", e=>{
+  const d = padDown; padDown = null;
+  if(!d || S.mode !== "raw") return;
+  if(e.target !== e.currentTarget) return;              // released on the buffer, not the gutter
+  if(Math.abs(e.clientX - d.x) > 4 || Math.abs(e.clientY - d.y) > 4) return;   // a drag, not a click
+  if(OV.length || S.creating) return;                   // a modal/palette/input owns this click
+  const sel = window.getSelection();
+  if(sel && !sel.isCollapsed && String(sel).trim()) return;
+  setMode("preview", {silent:true});
+  toast("▸ preview · rendered");
+});
+
+/* ═══ secret unlock ════════════════════════════════════════════════════════ */
+function openPass(){
+  openWin("#pass");
+  const i = $("#passInput"); i.value = ""; setTimeout(()=>i.focus(), 10);
+}
+function closePass(){ closeWin("#pass"); }
+function doUnlock(){
+  closePass(); S.unlocked = true; renderDoc();
+  const el = $(".secret"); if(el) el.scrollIntoView({block:"center", behavior:"smooth"});
+  toast("[open] decrypted · 3 keys in memory");
+}
+$("#btnPassOk").addEventListener("click", doUnlock);
+$("#btnPassCancel").addEventListener("click", closePass);
+$("#pass .x").addEventListener("click", closePass);
+$("#passInput").addEventListener("keydown", e=>{
+  if(e.key === "Enter" || e.key === "Escape") e.stopPropagation();
+  if(e.key === "Enter"){ e.preventDefault(); doUnlock(); }
+  if(e.key === "Escape"){ e.preventDefault(); closePass(); }
+});
+
+/* ═══ AI: proposals + LIFO change stack ════════════════════════════════════
+   two sequential proposals. accepting pushes {before} onto STACK; only the
+   top of the stack may be reverted, and reverting restores the exact string
+   captured before that edit.                                                */
+const ROLLUP_MD =
+`
+
+## Open tasks rollup
+
+- [ ] Pick winning UI theme ([[z-notes-design]])
+- [ ] Write build-ready spec ([[z-notes-design]])
+- [ ] SSE push to open editors ([[event-pipeline]])`;
+
+const SHIP_MD = `
+- [ ] Ship prototype round 2`;
+
+const PROPOSALS = {
+  1:{ n:1, doc:"z-notes-design", label:"tasks rollup", add:ROLLUP_MD, adds:6, stat:"+6 −0",
+      summary:"6 lines → end of doc",
+      diff:[
+        ["hunk","@@","-12,4 +12,8 @@ ## API sketch"],
+        ["ctx"," ","&gt; Files are edited outside the app too —"],
+        ["ctx"," ","&gt; reconcile from disk."],
+        ["add","+",""],
+        ["add","+","## Open tasks rollup"],
+        ["add","+",""],
+        ["add","+","- [ ] Pick winning UI theme ([[z-notes-design]])"],
+        ["add","+","- [ ] Write build-ready spec ([[z-notes-design]])"],
+        ["add","+","- [ ] SSE push to open editors ([[event-pipeline]])"]
+      ]},
+  2:{ n:2, doc:"z-notes-design", label:"ship line", add:SHIP_MD, adds:1, stat:"+1 −0", requires:1,
+      summary:"1 line → end of rollup",
+      diff:[
+        ["hunk","@@","-20,3 +20,4 @@ ## Open tasks rollup"],
+        ["ctx"," ","- [ ] Write build-ready spec ([[z-notes-design]])"],
+        ["ctx"," ","- [ ] SSE push to open editors ([[event-pipeline]])"],
+        ["add","+","- [ ] Ship prototype round 2"]
+      ]}
+};
+const PSTATE = {1:"pending", 2:"pending"};    // pending | applied | rejected
+const STACK  = [];                            // [{n, doc, before}] — LIFO
+
+const topOfStack = ()=> STACK.length ? STACK[STACK.length-1] : null;
+function firstAcceptable(){
+  for(const n of [1,2]){
+    const p = PROPOSALS[n];
+    if(PSTATE[n] === "pending" && !(p.requires && PSTATE[p.requires] !== "applied")) return n;
+  }
+  return null;
+}
+
+function propFoot(n){
+  const p = PROPOSALS[n], st = PSTATE[n], top = topOfStack();
+  if(st === "applied"){
+    const isTop = !!top && top.n === n;
+    return `<span class="applied">Applied ✓ <span class="pill-n">#${n}</span></span>`+
+      `<button class="btn warn${isTop?"":" dis"}" data-act="revert" data-n="${n}"`+
+      `${isTop?"":` aria-disabled="true" title="revert #${top.n} first"`}>[ Revert${isTop?"":" ⊘"} ]</button>`+
+      `<span class="grow">${isTop ? `top of stack · ${p.adds} line${p.adds>1?"s":""} · unsaved`
+                                   : `locked — revert #${top.n} first`}</span>`;
+  }
+  if(st === "rejected"){
+    return `<span class="rejected">edit rejected</span>`+
+      `<button class="btn" data-act="unreject" data-n="${n}">[ undo ]</button><span class="grow">nothing written</span>`;
+  }
+  const blocked = p.requires && PSTATE[p.requires] !== "applied";
+  const hint = firstAcceptable() === n ? " ⏎" : "";
+  return `<button class="btn ok${blocked?" dis":""}" data-act="accept" data-n="${n}"`+
+    `${blocked?` aria-disabled="true" title="accept #${p.requires} first"`:""}>[ Accept${hint} ]</button>`+
+    `<button class="btn no" data-act="reject" data-n="${n}">[ Reject ]</button>`+
+    `<span class="grow">${blocked ? `waiting on #${p.requires}` : p.summary}</span>`;
+}
+function propCard(n){
+  const p = PROPOSALS[n];
+  const body = p.diff.map(([k,s,t])=> `<div class="dl ${k}"><span class="sgn">${s}</span><span>${t}</span></div>`).join("");
+  return `<div class="diffcard" data-prop="${n}">`+
+    `<div class="dhead"><span>┤ diff #${n} ├</span><span class="file">${docs[p.doc].path}</span>`+
+      `<span class="grow"></span><span>${p.stat}</span></div>`+
+    `<div class="diffbody">${body}</div>`+
+    `<div class="dfoot" data-foot="${n}">${propFoot(n)}</div></div>`;
+}
+function refreshProps(){
+  [1,2].forEach(n=>{
+    const f = $(`[data-foot="${n}"]`); if(f) f.innerHTML = propFoot(n);
+    const c = $(`[data-prop="${n}"]`);
+    if(c){
+      c.style.opacity = PSTATE[n] === "rejected" ? ".5" : "";
+      c.style.borderColor = PSTATE[n] === "applied" ? "var(--green-d)" : "";
+    }
+  });
+  renderStack();
+}
+function renderStack(){
+  const bar = $("#stackbar");
+  bar.hidden = STACK.length === 0;
+  $("#stackChips").innerHTML = STACK.map((it,i)=>{
+    const isTop = i === STACK.length - 1;
+    return `<button class="chip ${isTop?"top":"locked"}" data-act="revert" data-n="${it.n}"`+
+      `${isTop?` title="revert this change"`:` title="revert #${topOfStack().n} first"`}>`+
+      `${isTop?"↩ ":""}#${it.n} ${PROPOSALS[it.n].label}${isTop?"":" ⊘"}</button>`;
+  }).join("");
+  const ci = $("#ciStack");
+  if(ci) ci.textContent = STACK.length ? STACK.map(s=>"#"+s.n).join(" → ") + "  (top: #" + topOfStack().n + ")" : "empty";
+}
+
+function acceptProposal(n){
+  const p = PROPOSALS[n];
+  if(PSTATE[n] === "applied") return;
+  if(p.requires && PSTATE[p.requires] !== "applied"){ toast(`✗ accept #${p.requires} first`); return; }
+  if(S.current !== p.doc) openDoc(p.doc, {silent:true});
+  const d = docs[p.doc];
+  const before = S.mode === "raw" ? $("#raw").value : d.md;
+  d.md = before;
+  S.flashFrom = d.md.split("\n").length;          // first appended source line
+  d.md = d.md + p.add;
+  PSTATE[n] = "applied";
+  STACK.push({n, doc:p.doc, before});
+  setRawValue(d.md);
+  renderDoc();
+  if(S.mode === "raw"){
+    autosizeRaw();
+    scrollRawToCaret(d.md.length);                 // land on the appended source
+  } else {
+    const first = $$("#doc > .flash-new")[0] || $$("#doc > *").pop();
+    if(first) first.scrollIntoView({block:"center", behavior:"smooth"});
+  }
+  refreshProps(); markDirty();
+  toast(`✓ #${n} applied to ${docs[p.doc].path}`);
+}
+function revertProposal(n){
+  const top = topOfStack();
+  if(!top){ return; }
+  if(top.n !== n){ toast(`✗ revert #${top.n} first`); return; }
+  STACK.pop();
+  const d = docs[top.doc];
+  d.md = top.before;                               // exact prior content
+  PSTATE[n] = "pending";
+  if(S.current === top.doc){ setRawValue(d.md); renderDoc(); }
+  refreshProps(); markDirty();
+  toast(`↩ reverted #${n}`);
+}
+function rejectProposal(n){
+  if(PSTATE[n] !== "pending") return;
+  PSTATE[n] = "rejected"; refreshProps(); toast(`✗ #${n} rejected`);
+}
+function unrejectProposal(n){ PSTATE[n] = "pending"; refreshProps(); }
+
+/* ═══ chat: session, history, reset ════════════════════════════════════════ */
+const DEMO = [
+  {r:"u", t:"index the vault, then tell me what changed today"},
+  {r:"a", t:"Indexed 7 docs (3.2 kB, 41 ms). Changed today: [[z-notes-design]] 18:04, [[event-pipeline]] 16:52, inbox.md 08:12, journal/2026-07-31.md 07:05.", meta:"gpt-5 · high · 0.8s · 1 tool call (search_vault)"},
+  {r:"u", t:"anything sensitive in keys/?"},
+  {r:"a", t:"[[cloud-keys]] holds one `age` block, 1 recipient. I can't read it — it stays armored until you unlock it in the editor, and it is never sent upstream.", meta:"gpt-5 · high · 0.6s · 312 tok"},
+  {r:"u", t:"does the watcher survive atomic saves?"},
+  {r:"a", t:"Per [[event-pipeline]]: fs.watch reports `rename` for everything and only names the temp file, so the reconcile pass (Glob → stat → hash → sqlite) is what actually decides. The watcher is a doorbell.", meta:"gpt-5 · high · 1.1s · 498 tok"},
+  {r:"u", t:"summarize open tasks across my vault"},
+  {r:"a", t:"You have **6 open tasks**: 2 in z-notes design (pick winning theme, write spec), 1 in event-pipeline (SSE push), 2 in side-projects, 1 in inbox. Want me to add a rollup section to z-notes-design?", meta:"gpt-5 · high · 1.9s · 412 tok"},
+  {r:"u", t:"yes, add it"},
+  {r:"a", t:"Proposed edit — appending a rollup section:", prop:1, meta:"gpt-5 · high · 3.4s · 1 tool call (write_doc)"},
+  {r:"u", t:"good. also add a line for shipping round 2"},
+  {r:"a", t:"Stacked on top of the rollup — apply #1 first so the line lands under it:", prop:2, meta:"gpt-5 · high · 1.2s · 1 tool call (write_doc)"}
+];
+let MSGS = DEMO.slice();
+let sessN = 1;
+
+const RULE_CHAT = "─".repeat(80);
+function estTokens(){
+  let chars = 0;
+  MSGS.forEach(m=>{ chars += (m.t || "").length + (m.prop ? 300 : 0); });
+  return Math.round(640 + chars / 3.7 + docs[S.current].md.length / 4);
+}
+const fmtTok = n => n >= 1000 ? (n/1000).toFixed(1) + "k" : String(n);
+
+function renderChat(keepScroll){
+  const s = $("#chatScroll");
+  const prev = s.scrollTop, atEnd = s.scrollTop + s.clientHeight >= s.scrollHeight - 30;
+  let html = "";
+  if(!MSGS.length){
+    html += `<div class="ctx-div"><span>── context cleared</span><span class="ln2">${RULE_CHAT}</span><span>session ${sessN} ──</span></div>`+
+      `<div class="ctx-empty">fresh session · <b>0 messages</b> in context<br>`+
+      `the vault index is still attached — ask anything, or press <b>⌘K</b> to find a doc.</div>`;
+  }
+  MSGS.forEach(m=>{
+    if(m.div){
+      html += `<div class="ctx-div"><span>── context cleared</span><span class="ln2">${RULE_CHAT}</span><span>session ${m.sess} ──</span></div>`;
+      return;
+    }
+    const who = m.r === "u" ? "you ▸" : "ai ▸";
+    html += `<div class="msg ${m.r === "u" ? "user" : "ai"}"><span class="who">${who}</span><div class="bubble">`+
+      inline(m.t) +
+      (m.prop ? propCard(m.prop) : "") +
+      (m.meta ? `<div class="meta">${esc(m.meta)}</div>` : "") +
+      `</div></div>`;
+  });
+  s.innerHTML = html;
+  if(keepScroll && !atEnd) s.scrollTop = prev; else s.scrollTop = s.scrollHeight;
+  renderStack(); updateSess();
+}
+function updateSess(){
+  const n = MSGS.filter(m=> !m.div).length;
+  const tok = estTokens();
+  $("#sessInfo").innerHTML =
+    `s${sessN} · <b>${n}</b> msg in ctx · ~<b>${fmtTok(tok)}</b> tok · <span class="mdl">gpt-5</span>·high`;
+  const im = $("#ciMsgs");
+  if(im){
+    const u = MSGS.filter(m=> m.r === "u").length, a = MSGS.filter(m=> m.r === "a").length;
+    im.textContent = `${n} in context (${u} you / ${a} ai)`;
+    $("#ciTok").innerHTML = `~<b>${fmtTok(tok)}</b> / 128k window`;
+    $("#ciDoc").textContent = docs[S.current].path;
+    const pct = Math.min(1, tok / 128000), w = 34, on = Math.max(1, Math.round(pct * w));
+    $("#ciMeter").innerHTML = `[<span class="fill">${"█".repeat(on)}</span>${"·".repeat(w - on)}] ${(pct*100).toFixed(1)}% of window`;
+  }
+}
+function newSession(){
+  sessN++;
+  MSGS = [];
+  [1,2].forEach(n=>{ if(PSTATE[n] === "rejected") PSTATE[n] = "pending"; });
+  renderChat();
+  closeWin("#chatinfo");
+  toast("⌁ context cleared · session " + sessN);
+}
+function restoreDemo(){
+  MSGS = DEMO.slice();
+  renderChat();
+  closeWin("#chatinfo");
+  toast("↺ demo thread restored");
+}
+
+/* delegated: proposal + stack buttons, doc links inside chat */
+function actClick(e){
+  const link = e.target.closest(".wlink");
+  if(link){ e.preventDefault(); openDoc(link.dataset.link); return; }
+  const b = e.target.closest("[data-act]"); if(!b) return;
+  const n = +b.dataset.n;
+  if(b.dataset.act === "accept")   acceptProposal(n);
+  if(b.dataset.act === "reject")   rejectProposal(n);
+  if(b.dataset.act === "unreject") unrejectProposal(n);
+  if(b.dataset.act === "revert")   revertProposal(n);
+}
+$("#chatScroll").addEventListener("click", actClick);
+$("#stackbar").addEventListener("click", actClick);
+
+$("#btnNewSess").addEventListener("click", newSession);
+$("#btnNewSess2").addEventListener("click", newSession);
+$("#btnRestoreDemo").addEventListener("click", restoreDemo);
+$("#btnSessInfo").addEventListener("click", ()=>{ updateSess(); openWin("#chatinfo"); });
+$("#btnSessX").addEventListener("click", ()=> closeWin("#chatinfo"));
+$("#btnSessClose").addEventListener("click", ()=> closeWin("#chatinfo"));
+
+const CANNED = [
+  "Scanned the vault — nothing else matches that. Want me to draft it into [[z-notes-design]]?",
+  "Reading [[event-pipeline]]… the reconcile pass already covers that case; no edit needed.",
+  "I can turn that into a task list and append it — say the word and I'll propose a diff."
+];
+let cannedI = 0;
+$("#chatInput").addEventListener("keydown", e=>{
+  if(e.key === "Enter" || e.key === "Escape") e.stopPropagation();   // chords stay global
+  if(e.key === "Escape"){ e.target.blur(); return; }
+  if(e.key === "Enter" && e.target.value.trim()){
+    const v = e.target.value.trim(); e.target.value = "";
+    MSGS.push({r:"u", t:v});
+    MSGS.push({r:"a", t:"thinking…", meta:"gpt-5 · high"});
+    renderChat();
+    const idx = MSGS.length - 1;
+    setTimeout(()=>{
+      if(MSGS[idx] && MSGS[idx].t === "thinking…"){
+        MSGS[idx].t = CANNED[cannedI++ % CANNED.length];
+        MSGS[idx].meta = "gpt-5 · high · 1.4s · " + (280 + ((cannedI * 97) % 400)) + " tok";
+        renderChat();
+      }
+    }, 900);
+  }
+});
+
+/* ═══ save ═════════════════════════════════════════════════════════════════ */
+function markDirty(){
+  S.dirty = true;
+  const el = $("#stSave"); el.classList.add("dirty"); el.classList.remove("flash");
+  $("#stSaveTxt").textContent = "unsaved changes";
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(()=> doSave(true), S.autosaveMs);
+}
+function doSave(auto){
+  clearTimeout(autosaveTimer);
+  const el = $("#stSave");
+  el.classList.remove("dirty"); el.classList.add("flash");
+  $("#stSaveTxt").textContent = auto ? "◉ autosaved…" : "◉ writing…";
+  setTimeout(()=>{
+    $("#stSaveTxt").textContent = "Saved · just now";
+    setTimeout(()=> el.classList.remove("flash"), 520);
+  }, 260);
+  S.dirty = false;
+  if(!auto) toast("✓ wrote " + docs[S.current].path);
+}
+$("#btnSave").addEventListener("click", ()=> doSave(false));
+
+/* ═══ panels ═══════════════════════════════════════════════════════════════ */
+function toggleSide(){
+  if(window.innerWidth <= 768){ document.body.classList.toggle("m-side"); document.body.classList.remove("m-chat"); syncScrim(); }
+  else { document.body.classList.toggle("no-sidebar"); $("#btnSide").classList.toggle("on", !document.body.classList.contains("no-sidebar")); }
+  autosizeRaw();                                   // pane width changed → refit
+}
+function toggleChat(){
+  if(window.innerWidth <= 768){ document.body.classList.toggle("m-chat"); document.body.classList.remove("m-side"); syncScrim(); }
+  else { document.body.classList.toggle("no-chat"); $("#btnChat").classList.toggle("on", !document.body.classList.contains("no-chat")); }
+  autosizeRaw();                                   // pane width changed → refit
+}
+$("#btnSide").addEventListener("click", toggleSide);
+$("#btnHam").addEventListener("click", toggleSide);
+$("#btnChat").addEventListener("click", toggleChat);
+$("#btnChatM").addEventListener("click", toggleChat);
+$("#btnChatX").addEventListener("click", toggleChat);
+
+/* ═══ settings ═════════════════════════════════════════════════════════════ */
+function openSettings(){ openWin("#settings"); }
+function closeSettings(){ closeWin("#settings"); }
+$("#btnGear").addEventListener("click", openSettings);
+$("#btnSettingsX").addEventListener("click", closeSettings);
+$("#btnSettingsClose2").addEventListener("click", closeSettings);
+$("#btnSettingsDone").addEventListener("click", ()=>{ closeSettings(); toast("✓ settings saved"); });
+
+$$(".segbtns").forEach(g=>{
+  g.addEventListener("click", e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    $$("button", g).forEach(x=>x.classList.remove("on")); b.classList.add("on");
+    if(g.id === "densityCtl"){
+      document.documentElement.setAttribute("data-density", b.dataset.d);
+      autosizeRaw();                                  // metrics changed → refit the buffer
+      toast("density → " + b.dataset.d);
+    }
+  });
+});
+$$("[data-toggle]").forEach(b=>{
+  b.addEventListener("click", ()=>{
+    const on = b.classList.toggle("on");
+    b.textContent = (on ? "[x]" : "[ ]") + b.textContent.slice(3);
+  });
+});
+
+/* ═══ scrim / toast / clipboard ════════════════════════════════════════════ */
+$("#scrim").addEventListener("click", ()=>{
+  closeAllWins();
+  cancelCreate();
+  document.body.classList.remove("m-side","m-chat");
+  syncScrim();
+});
+let toastT = null;
+function toast(msg){
+  const t = $("#toast"); t.textContent = msg; t.classList.add("on");
+  clearTimeout(toastT); toastT = setTimeout(()=> t.classList.remove("on"), 1700);
+}
+function copyFallback(text){
+  try{
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.cssText = "position:fixed;opacity:0;left:-9999px";
+    document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+    return true;
+  }catch(err){ return false; }
+}
+function copy(text){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    /* permission can be denied — never let the rejection escape as an error */
+    navigator.clipboard.writeText(text).then(
+      ()=> toast("✓ copied to clipboard"),
+      ()=> toast(copyFallback(text) ? "✓ copied to clipboard" : "✗ clipboard unavailable"));
+    return;
+  }
+  toast(copyFallback(text) ? "✓ copied to clipboard" : "✗ clipboard unavailable");
+}
+
+/* ═══ shortcuts overlay ════════════════════════════════════════════════════ */
+function openHelp(){ openWin("#help"); }
+function closeHelp(){ closeWin("#help"); }
+$("#btnHelp").addEventListener("click", openHelp);
+$("#btnHelpX").addEventListener("click", closeHelp);
+$("#btnHelpClose").addEventListener("click", closeHelp);
+$("#btnHelpFromSettings").addEventListener("click", ()=>{ openHelp(); });
+
+/* ═══ fuzzy palette (⌘K / ⌘P) ══════════════════════════════════════════════
+   subsequence scoring, fzf-flavoured: consecutive runs and word starts score
+   highest, earlier matches win ties, shorter haystacks break the rest.       */
+function fuzzy(needle, hay){
+  const n = needle.toLowerCase(), h = hay.toLowerCase();
+  /* exact substring wins outright — fzf-ish: contiguity beats scatter */
+  const at = h.indexOf(n);
+  if(at >= 0){
+    const pos = []; for(let k = 0; k < n.length; k++) pos.push(at + k);
+    let score = 40 + n.length * 12 + Math.max(0, 16 - at);
+    if(at === 0 || /[^a-z0-9]/.test(h[at-1])) score += 10;
+    score -= Math.min(18, hay.length / 12);
+    return {score, pos};
+  }
+  const pos = []; let i = 0, score = 0, prev = -2;
+  for(let j = 0; j < h.length && i < n.length; j++){
+    if(h[j] !== n[i]) continue;
+    pos.push(j);
+    score += (j === prev + 1) ? 12 : 1;
+    if(j === 0 || /[^a-z0-9]/.test(h[j-1])) score += 7;
+    prev = j; i++;
+  }
+  if(i < n.length) return null;
+  score += Math.max(0, 16 - pos[0]);
+  score -= Math.min(18, hay.length / 12);
+  return {score, pos};
+}
+function markup(text, pos){
+  const set = new Set(pos); let out = "";
+  for(let i = 0; i < text.length; i++) out += set.has(i) ? `<span class="hit">${esc(text[i])}</span>` : esc(text[i]);
+  return out;
+}
+function windowAround(text, pos, width){
+  if(text.length <= width) return {text, pos};
+  if(!pos.length) return {text:text.slice(0, width) + "…", pos:[]};
+  const start = Math.max(0, Math.min(pos[0] - 20, text.length - width));
+  const cut = text.slice(start, start + width);
+  return {text:(start ? "…" : "") + cut + (start + width < text.length ? "…" : ""),
+          pos:pos.map(p=> p - start + (start ? 1 : 0)).filter(p=> p >= 0 && p < cut.length + 1)};
+}
+function searchVault(q){
+  const res = [];
+  for(const id in docs){
+    const d = docs[id];
+    if(!q){ res.push({id, kind:"doc", path:d.path, pos:[], line:0, snip:(d.md.split("\n")[0]||"").replace(/^#\s*/,"") , score:0}); continue; }
+    const nm = fuzzy(q, d.path);
+    if(nm) res.push({id, kind:"doc", path:d.path, pos:nm.pos, line:0,
+                     snip:(d.md.split("\n")[0]||"").replace(/^#\s*/,""), score:nm.score + 45});
+    const L = d.md.split("\n"), hits = [];
+    for(let i = 0; i < L.length; i++){
+      const t = L[i].trim(); if(!t) continue;
+      const m = fuzzy(q, t); if(!m) continue;
+      hits.push({id, kind:"line", path:d.path, pos:m.pos, line:i, snip:t, score:m.score});
+    }
+    hits.sort((a,b)=> b.score - a.score);
+    res.push(...hits.slice(0,4));
+  }
+  res.sort((a,b)=> b.score - a.score || a.path.localeCompare(b.path) || a.line - b.line);
+  return res.slice(0, 50);
+}
+function renderPalette(){
+  const q = $("#palInput").value.trim();
+  const res = searchVault(q);
+  S.palRes = res;
+  if(S.palSel >= res.length) S.palSel = Math.max(0, res.length - 1);
+  $("#palCount").textContent = `${res.length ? S.palSel + 1 : 0}/${res.length}`;
+  if(!res.length){
+    $("#plist").innerHTML = `<div class="pempty">no match for <span class="hit">${esc(q)}</span> — subsequence search across ${Object.keys(docs).length} docs</div>`;
+    return;
+  }
+  $("#plist").innerHTML = res.map((r,i)=>{
+    const isDoc = r.kind === "doc";
+    const w = windowAround(r.snip, isDoc ? [] : r.pos, 110);
+    return `<div class="pitem${i === S.palSel ? " sel" : ""}" role="option" aria-selected="${i === S.palSel}" data-i="${i}">`+
+      `<span class="mk2">▌</span>`+
+      `<span class="ppath">${isDoc ? markup(r.path, r.pos) : esc(r.path)}</span>`+
+      `<span class="lno">${isDoc ? "" : ":" + (r.line + 1)}</span>`+
+      `<span class="psnip">${isDoc ? esc(w.text) : markup(w.text, w.pos)}</span>`+
+      `<span class="kind">${isDoc ? "name" : "line"}</span></div>`;
+  }).join("");
+  const sel = $(".pitem.sel");
+  if(sel) sel.scrollIntoView({block:"nearest"});
+}
+function openPalette(){
+  openWin("#palette");
+  S.palSel = 0;
+  const i = $("#palInput"); i.value = "";
+  renderPalette();
+  setTimeout(()=> i.focus(), 10);
+}
+function closePalette(){ closeWin("#palette"); }
+function jumpToLine(line){
+  if(S.mode === "raw"){ enterRawAtLine(line); return; }
+  const els = $$("#doc [data-line]:not(.vgap)");       /* never land on empty space */
+  let best = null;
+  els.forEach(el=>{ if(+el.dataset.line <= line) best = el; });
+  if(best){
+    best.scrollIntoView({block:"center", behavior:"smooth"});
+    best.classList.add("flash-new");
+    setTimeout(()=> best.classList.remove("flash-new"), 1600);
+  }
+}
+function palOpenSel(){
+  const r = S.palRes[S.palSel]; if(!r) return;
+  closePalette();
+  openDoc(r.id, {silent:true});
+  if(r.line > 0) setTimeout(()=> jumpToLine(r.line), 30);
+  toast(`▸ ${r.path}${r.line ? ":" + (r.line+1) : ""}`);
+}
+function palMove(d){
+  if(!S.palRes.length) return;
+  S.palSel = (S.palSel + d + S.palRes.length) % S.palRes.length;
+  renderPalette();
+}
+$("#palInput").addEventListener("input", ()=>{ S.palSel = 0; renderPalette(); });
+$("#palInput").addEventListener("keydown", e=>{
+  if($("#palette").classList.contains("hidden")) return;      // stale focus after close
+  const meta = e.metaKey || e.ctrlKey;
+  /* only swallow what the palette itself handles — global chords still work */
+  if(["ArrowDown","ArrowUp","Tab","Enter","Escape"].indexOf(e.key) >= 0 ||
+     (meta && /^[kp]$/i.test(e.key))) e.stopPropagation();
+  if(e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)){ e.preventDefault(); palMove(1); return; }
+  if(e.key === "ArrowUp"   || (e.key === "Tab" &&  e.shiftKey)){ e.preventDefault(); palMove(-1); return; }
+  if(e.key === "Enter"){ e.preventDefault(); palOpenSel(); return; }
+  if(e.key === "Escape"){ e.preventDefault(); closePalette(); return; }
+  if(meta && (e.key.toLowerCase() === "k" || e.key.toLowerCase() === "p")){ e.preventDefault(); closePalette(); return; }
+});
+$("#plist").addEventListener("click", e=>{
+  const it = e.target.closest(".pitem"); if(!it) return;
+  S.palSel = +it.dataset.i; palOpenSel();
+});
+$("#plist").addEventListener("mousemove", e=>{
+  const it = e.target.closest(".pitem"); if(!it || +it.dataset.i === S.palSel) return;
+  S.palSel = +it.dataset.i;
+  $$(".pitem").forEach(x=> x.classList.toggle("sel", x === it));
+  $("#palCount").textContent = `${S.palSel + 1}/${S.palRes.length}`;
+});
+$("#btnFind").addEventListener("click", openPalette);
+
+/* ═══ fake backend socket ══════════════════════════════════════════════════ */
+(function connBlip(){
+  const next = 14000 + Math.random() * 12000;
+  setTimeout(()=>{
+    const el = $("#stConn"), txt = $("#stConn .txt");
+    el.classList.add("off"); el.querySelector(".dot").textContent = "○"; txt.textContent = "reconnecting…";
+    setTimeout(()=>{
+      el.classList.remove("off"); el.querySelector(".dot").textContent = "●"; txt.textContent = "connected";
+    }, 1400);
+    connBlip();
+  }, next);
+})();
+
+/* ═══ keymap ═══════════════════════════════════════════════════════════════ */
+document.addEventListener("keydown", e=>{
+  const meta = e.metaKey || e.ctrlKey;
+  const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+
+  /* global chords work everywhere, including inside the editor buffer */
+  if(meta && e.key.toLowerCase() === "s"){ e.preventDefault(); doSave(false); return; }
+  if(meta && e.key.toLowerCase() === "e"){ e.preventDefault(); toggleMode(); return; }
+  if(meta && e.shiftKey && e.key.toLowerCase() === "k"){ e.preventDefault(); newSession(); return; }
+  if(meta && (e.key.toLowerCase() === "k" || e.key.toLowerCase() === "p")){
+    e.preventDefault(); isOpen("#palette") ? closePalette() : openPalette(); return;
+  }
+  if(meta && e.key === ","){ e.preventDefault(); openSettings(); return; }
+  if(meta && e.shiftKey && e.key.toLowerCase() === "z"){
+    e.preventDefault();
+    const top = topOfStack(); if(top) revertProposal(top.n); else toast("stack empty");
+    return;
+  }
+  if(meta && e.shiftKey && e.key.toLowerCase() === "n"){ e.preventDefault(); startCreate("folder"); return; }
+  if(meta && e.key.toLowerCase() === "n"){ e.preventDefault(); startCreate("doc"); return; }
+  if(meta && e.key.toLowerCase() === "b"){ e.preventDefault(); toggleSide(); return; }
+  if(meta && e.key.toLowerCase() === "g"){ e.preventDefault(); toggleChat(); return; }
+  if(meta && e.key.toLowerCase() === "l" && S.unlocked){ e.preventDefault(); S.unlocked=false; renderDoc(); toast("[lock] secret re-locked"); return; }
+
+  /* ⎋ unwinds one layer at a time: newest overlay → create input → drawer */
+  if(e.key === "Escape"){
+    if(OV.length){ e.preventDefault(); closeWin(OV[OV.length-1]); return; }
+    if(S.creating){ e.preventDefault(); cancelCreate(); toast("⎋ cancelled"); return; }
+    if(document.body.classList.contains("m-side") || document.body.classList.contains("m-chat")){
+      e.preventDefault(); document.body.classList.remove("m-side","m-chat"); syncScrim(); return;
+    }
+    if(S.mode === "raw" && e.target === $("#raw")){ e.preventDefault(); $("#raw").blur(); return; }
+    return;
+  }
+
+  if(OV.length || typing) return;
+
+  if(e.key === "?"){ e.preventDefault(); openHelp(); return; }
+  if(e.key === "Enter"){
+    const n = firstAcceptable();
+    if(n){ e.preventDefault(); acceptProposal(n); }
+    return;
+  }
+});
+
+/* ═══ boot ═════════════════════════════════════════════════════════════════ */
+renderTree();
+renderChat();
+setMode("preview", {force:true, silent:true});
+updateCursor();
+window.addEventListener("resize", ()=>{
+  if(window.innerWidth > 768) document.body.classList.remove("m-side","m-chat");
+  autosizeRaw();                                   // rewrap changes the buffer's height
+  syncScrim();
+});
+})();
+</script>
+</body>
+</html>

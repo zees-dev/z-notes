@@ -1,0 +1,331 @@
+/* ============================================================
+   modern.css — "Modern": crisp SaaS-grade. Clean neutrals, one confident
+   indigo accent, soft layered shadows, 9–20px radii, micro-interactions.
+
+   Ported from prototypes/01-modern.html. Expressed entirely through the token
+   contract in base.css — this file contains NO layout, NO selectors that
+   depend on markup structure, and exactly two decorative theme-scoped rules
+   (documented at the bottom).
+   ============================================================ */
+
+:root {
+  /* --- surfaces --- */
+  --bg: #eef0f5;
+  --app-bg:
+    radial-gradient(900px 420px at 8% -6%, #e5e8fb 0%, transparent 62%),
+    linear-gradient(168deg, #e9ecf4, #f4f5f8);
+  --panel: #ffffff;
+  --panel-2: #f7f8fb;
+  --panel-3: #f1f3f8;
+  --line: #e4e7ef;
+  --line-2: #edeff5;
+
+  /* --- ink --- */
+  --text: #12141c;
+  --text-2: #3d4356;
+  --muted: #686f82;                    /* was #8a90a4 — 3.1:1 on the statusbar's
+                                          tinted white, i.e. below AA for the
+                                          11px chrome that uses it most */
+  --muted-2: #929aad;                  /* 3.2:1 — decorative only: micro-labels
+                                          and bullets, never a sentence */
+
+  /* --- accent --- */
+  --accent: #4f46e5;
+  --accent-h: #4338ca;
+  --accent-on: #ffffff;
+  --accent-soft: #eef0fe;
+  --accent-soft-2: #e2e5fd;
+  --accent-ring: rgba(79, 70, 229, .38);
+
+  /* --- semantic --- */
+  /* each ink is set against its own -soft tint, not against --bg: that is
+     where the app actually paints it (secret FLAGGED/OPEN, diff cards,
+     badges), and the bright originals were 3.0–4.2:1 there. */
+  --ok: #10703a;      --ok-soft: #e7f7ee;  --ok-bd: #c4e9d4;
+  --warn: #96631a;    --warn-soft: #fdf5e5;
+  --danger: #c42d27;  --danger-soft: #fdeceb;
+
+  /* --- diff --- */
+  --add-bg: #e9f8ef;  --add-fg: #12592f;  --add-gutter: #3f9e69;
+  --del-bg: #fdedec;  --del-fg: #8a231d;  --del-gutter: #c9645d;
+
+  /* --- misc palette --- */
+  --sel-bg: var(--accent-soft-2);
+  --scroll-thumb: #d2d7e3;
+  --scroll-thumb-hover: #b9c0d1;
+  --code-inline-fg: #b3245c;
+  --code-inline-bg: var(--panel-3);
+  --code-inline-bd: rgba(16, 20, 40, .05);
+  --hover-tint: rgba(79, 70, 229, .038);
+  --scrim-bg: rgba(18, 22, 40, .34);
+
+  /* --- typography --- */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-doc: var(--font);
+  --font-heading: var(--font);
+  --font-kbd: var(--font);
+  --w-med: 550; --w-semi: 620; --w-bold: 700;
+  --h1-size: 1.95em; --h1-weight: 700; --h1-tracking: -.028em;
+  --h2-size: 1.28em; --h2-weight: 660; --h2-tracking: -.017em;
+  --h3-size: 1.08em; --h3-weight: 640; --h3-tracking: -.012em;
+
+  /* --- shape --- */
+  --r-sm: 6px; --r: 9px; --r-lg: 14px; --r-xl: 20px; --r-pill: 99px;
+  --bd-w: 1px; --bd-style: solid;
+
+  /* --- elevation --- */
+  --sh-1: 0 1px 1px rgba(16, 20, 40, .04), 0 1px 2px rgba(16, 20, 40, .05);
+  --sh-2: 0 1px 2px rgba(16, 20, 40, .05), 0 4px 12px -2px rgba(16, 20, 40, .08);
+  --sh-3: 0 2px 4px rgba(16, 20, 40, .04), 0 12px 28px -6px rgba(16, 20, 40, .16), 0 0 0 1px rgba(16, 20, 40, .04);
+  --sh-4: 0 24px 64px -12px rgba(12, 16, 38, .32), 0 0 0 1px rgba(16, 20, 40, .06);
+  --sh-focus: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);   /* see base.css */
+
+  /* --- motion --- */
+  --ease: cubic-bezier(.32, .72, 0, 1);
+  --dur-1: .14s; --dur-2: .22s; --dur-3: .38s;
+
+  /* --- layout --- */
+  --sidebar-w: 258px;
+  --chat-w: 348px;
+  --doc-max-w: 820px;
+  --doc-pad-x: 52px;
+  --doc-pad-x-md: 34px;
+  --doc-pad-x-sm: 18px;
+
+  /* --- region treatments --- */
+  --sidebar-bg: linear-gradient(180deg, rgba(255, 255, 255, .55), rgba(255, 255, 255, .2));
+  --sidebar-bd: 1px solid rgba(210, 215, 228, .7);
+  --sidebar-blur: saturate(1.2) blur(6px);
+  --topbar-bg: rgba(255, 255, 255, .86);
+  --topbar-blur: blur(14px) saturate(1.3);
+  --editor-bg: var(--panel);
+  --statusbar-bg: rgba(250, 251, 253, .9);
+  --statusbar-blur: blur(10px);
+  --chat-bg: var(--panel-2);
+  --chat-bd: 1px solid var(--line);
+  --composer-bg: rgba(255, 255, 255, .75);
+  --modal-bg: var(--panel);
+  --veil-bg: rgba(20, 24, 44, .34);
+  --veil-blur: blur(3px);
+  --card-bg: #ffffff;
+  --code-bg: #fbfbfd;
+  --code-bar-bg: var(--panel-2);
+  --code-fg: #2c3140;
+  --tk-key: #7c3aed; --tk-str: #0f7a4d; --tk-com: #9aa1b4; --tk-num: #b3245c; --tk-fn: #2563c9;
+
+  /* --- components --- */
+  --row-hover-bg: rgba(255, 255, 255, .92);
+  --row-active-bg: #ffffff;
+  --row-active-sh: var(--sh-2), inset 0 0 0 1px rgba(79, 70, 229, .10);
+  --row-marker-w: 3px;
+  --row-marker-bg: var(--accent);
+
+  --btn-bg: #ffffff;
+  --btn-fg: var(--text-2);
+  --btn-bd: 1px solid var(--line);
+  --btn-sh: var(--sh-1);
+  --btn-hover-bg: var(--panel-2);
+  --btn-primary-bg: linear-gradient(180deg, #5d55e8, var(--accent));
+  --btn-primary-hover-bg: linear-gradient(180deg, #544ce6, var(--accent-h));
+  --btn-primary-bd: 1px solid #3f36c9;
+  --btn-primary-fg: #ffffff;
+  --btn-primary-sh: 0 1px 2px rgba(30, 25, 90, .24), 0 2px 8px -2px rgba(79, 70, 229, .5), inset 0 1px 0 rgba(255, 255, 255, .22);
+
+  --input-bg: #ffffff;
+  --input-bd: 1px solid var(--line);
+
+  --seg-track-bg: var(--panel-3);
+  --seg-on-bg: #ffffff;
+  --seg-on-fg: var(--text);
+  --seg-on-sh: var(--sh-1);
+  --seg-acc-bg: var(--accent);
+  --seg-acc-fg: #ffffff;
+
+  --kbd-bg: #ffffff;
+  --kbd-fg: var(--muted);
+  --kbd-bd: var(--line);
+  --kbd-bd-bottom-w: 2px;
+  --kbd-radius: 5px;
+
+  --cb-size: 17px;
+  --cb-radius: 5.5px;
+  --cb-bg: #ffffff;
+  --cb-bd: 1.6px solid #ccd1de;
+  --cb-on-bg: linear-gradient(180deg, #5d55e8, var(--accent));
+  --cb-on-bd: var(--accent-h);
+  --cb-mark: #ffffff;
+  --task-done-fg: var(--muted);
+
+  --bullet-size: 5px; --bullet-radius: 50%; --bullet-bg: var(--muted-2);
+
+  --quote-bd-w: 3px;
+  --quote-bd: var(--accent-soft-2);
+  --quote-style: italic;
+
+  --wl-bg: var(--accent-soft);
+  --wl-bg-hover: var(--accent-soft-2);
+  --wl-fg: var(--accent);
+  --wl-ring: inset 0 0 0 1px rgba(79, 70, 229, .10);
+  --wl-radius: 5px;
+  --wl-weight: 560;
+
+  --secret-bg: linear-gradient(180deg, #fff, #fbfbfe);
+  --secret-open-bd: #bfe3cd;
+  --table-head-bg: var(--panel-2);
+  --divider-bg: linear-gradient(90deg, var(--line), transparent);
+
+  --bubble-user-bg: linear-gradient(180deg, #5d55e8, var(--accent));
+  --bubble-user-fg: #ffffff;
+  --bubble-user-radius: 14px 14px 5px 14px;
+  --bubble-ai-bg: #ffffff;
+  --bubble-ai-fg: var(--text-2);
+  --bubble-ai-bd: 1px solid var(--line);
+  --bubble-ai-radius: 14px 14px 14px 5px;
+
+  --toast-bg: #171b2b;
+  --toast-fg: #ffffff;
+  --toast-ok: #5ee39b;
+
+  --conn-ok: var(--ok);
+  --conn-down: var(--warn);
+
+  --vault-mark-bg: linear-gradient(145deg, #6d64f5, var(--accent) 55%, #3f36c9);
+  --vault-mark-fg: #ffffff;
+  --vault-mark-radius: 8px;
+  --vault-mark-sh: 0 2px 6px -1px rgba(79, 70, 229, .55), inset 0 1px 0 rgba(255, 255, 255, .4);
+}
+
+/* ============================================================
+   DARK SCHEME
+
+   Same contract as base.css §1b: `:root[data-scheme="dark"]` outranks the
+   `:root` light palette above, and this file loads after base.css so it also
+   outranks base's neutral dark. Every LITERAL colour set above is restated
+   here; the `var(--…)` aliases (--sel-bg, --wl-bg, --seg-acc-bg, --conn-ok, …)
+   re-point themselves.
+
+   The one deliberate inversion: indigo-500 is too dark to carry white UI text
+   (≈3.9:1) once it sits on a dark ground, so the dark accent is the lavender
+   END of the ramp and the ink ON it goes dark. --accent then doubles as link
+   ink at 8.9:1 on --bg, which the light theme's #4f46e5 could never do here.
+   ============================================================ */
+:root[data-scheme="dark"] {
+  /* --- surfaces --- */
+  --bg: #0f1117;
+  --app-bg:
+    radial-gradient(900px 420px at 8% -6%, #1c2040 0%, transparent 62%),
+    linear-gradient(168deg, #101320, #14161d);
+  --panel: #171a22;
+  --panel-2: #13161d;
+  --panel-3: #1f2430;
+  --line: #272d3a;
+  --line-2: #1f2530;
+
+  /* --- ink: --text 15.3:1 and --muted 5.0:1 on --panel --- */
+  --text: #f0f2f7;
+  --text-2: #c8cedb;
+  --muted: #949bad;
+  --muted-2: #757c8f;
+
+  /* --- accent: lavender fill, dark ink — see the note above --- */
+  --accent: #a29bff;
+  --accent-h: #bdb8ff;
+  --accent-on: #0e0d1a;
+  --accent-soft: rgba(162, 155, 255, .14);
+  --accent-soft-2: rgba(162, 155, 255, .24);
+  --accent-ring: rgba(162, 155, 255, .34);
+
+  /* --- semantic --- */
+  --ok: #43cd85;      --ok-soft: rgba(67, 205, 133, .13);   --ok-bd: #2f6b45;
+  --warn: #e5b04b;    --warn-soft: rgba(229, 176, 75, .13);
+  --danger: #f2766c;  --danger-soft: rgba(242, 118, 108, .13);
+
+  /* --- diff --- */
+  --add-bg: rgba(67, 205, 133, .13);   --add-fg: #8ee7b6;  --add-gutter: #46b87c;
+  --del-bg: rgba(242, 118, 108, .13);  --del-fg: #f6aba3;  --del-gutter: #d1665e;
+
+  /* --- misc palette --- */
+  --scroll-thumb: #2f3542;
+  --scroll-thumb-hover: #434b5b;
+  --code-inline-fg: #ff8ab8;
+  --code-inline-bd: rgba(255, 255, 255, .07);
+  --hover-tint: rgba(162, 155, 255, .07);
+  --scrim-bg: rgba(3, 5, 12, .62);
+
+  /* --- elevation --- */
+  --sh-1: 0 1px 1px rgba(0, 0, 0, .38), 0 1px 2px rgba(0, 0, 0, .3);
+  --sh-2: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 12px -2px rgba(0, 0, 0, .5);
+  --sh-3: 0 2px 4px rgba(0, 0, 0, .36), 0 12px 28px -6px rgba(0, 0, 0, .62), 0 0 0 1px rgba(255, 255, 255, .05);
+  --sh-4: 0 24px 64px -12px rgba(0, 0, 0, .74), 0 0 0 1px rgba(255, 255, 255, .07);
+
+  /* --- region treatments --- */
+  --sidebar-bg: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .012));
+  --sidebar-bd: 1px solid rgba(255, 255, 255, .07);
+  --topbar-bg: rgba(20, 23, 31, .86);
+  --statusbar-bg: rgba(16, 19, 26, .9);
+  --composer-bg: rgba(23, 26, 34, .75);
+  --veil-bg: rgba(3, 5, 12, .58);
+  --card-bg: #171a22;
+  --code-bg: #12151c;
+  --code-fg: #c8cedb;
+  --tk-key: #c4a2f7; --tk-str: #7fdba4; --tk-com: #757c8f; --tk-num: #ff8ab8; --tk-fn: #79b8ff;
+
+  /* --- components --- */
+  --row-hover-bg: rgba(255, 255, 255, .06);
+  --row-active-bg: #1f2430;
+  --row-active-sh: var(--sh-2), inset 0 0 0 1px rgba(162, 155, 255, .22);
+
+  --btn-bg: #1c202b;
+  --btn-primary-bg: linear-gradient(180deg, #b3adff, #9a92fb);
+  --btn-primary-hover-bg: linear-gradient(180deg, #c2bdff, #a8a1ff);
+  --btn-primary-bd: 1px solid #7d75e0;
+  --btn-primary-fg: #12101f;
+  --btn-primary-sh: 0 1px 2px rgba(0, 0, 0, .5), 0 2px 10px -2px rgba(122, 112, 240, .45), inset 0 1px 0 rgba(255, 255, 255, .22);
+
+  --input-bg: #12151c;
+  --seg-on-bg: #262c38;
+  --seg-acc-fg: #12101f;
+  --kbd-bg: #1c202b;
+  --cb-bg: #12151c;
+  --cb-bd: 1.6px solid #414a5c;
+  --cb-on-bg: linear-gradient(180deg, #b3adff, #9a92fb);
+  --cb-mark: #12101f;
+  --wl-ring: inset 0 0 0 1px rgba(162, 155, 255, .18);
+
+  --secret-bg: linear-gradient(180deg, #191d26, #16191f);
+  --secret-open-bd: #2f6b45;
+
+  --bubble-user-bg: linear-gradient(180deg, #b3adff, #9a92fb);
+  --bubble-user-fg: #12101f;
+  --bubble-ai-bg: #1a1e27;
+
+  --toast-bg: #f0f2f7;
+  --toast-fg: #12141c;
+  --toast-ok: #1a8f52;
+
+  --vault-mark-bg: linear-gradient(145deg, #c9c4ff, #a29bff 55%, #7d75e0);
+  --vault-mark-fg: #12101f;
+  --vault-mark-sh: 0 2px 6px -1px rgba(122, 112, 240, .5), inset 0 1px 0 rgba(255, 255, 255, .35);
+}
+
+/* Density: Modern keeps base.css's rescaled two-rung scale and only re-states
+   the doc gutter, which it wants a touch airier than base at both rungs.
+   Must use the same selector as base.css or the attribute selector's
+   specificity wins over a plain :root. */
+:root[data-density="comfy"] { --d-doc-pad: 20px; }
+:root[data-density="compact"] { --d-doc-pad: 12px; }
+
+/* ------------------------------------------------------------------
+   Theme-scoped decorative rules — the only two selectors in this file.
+   Both are pure ornament: removing them changes nothing structural.
+     1. the user bubble's indigo glow (a shadow that must follow the
+        gradient, so it cannot live on a single-value token)
+     2. the context-usage bar's gradient fill
+   ------------------------------------------------------------------ */
+[data-theme="modern"] .msg.user .bubble { box-shadow: 0 2px 10px -3px rgba(79, 70, 229, .55); }
+[data-theme="modern"] .ctxbar i { background: linear-gradient(90deg, #6d64f5, var(--accent)); }
+/* both follow the accent inversion in dark — the indigo glow disappears under
+   a lavender bubble, and the bar's ramp has to start below its end colour */
+[data-theme="modern"][data-scheme="dark"] .msg.user .bubble { box-shadow: 0 2px 12px -3px rgba(162, 155, 255, .4); }
+[data-theme="modern"][data-scheme="dark"] .ctxbar i { background: linear-gradient(90deg, #7d75e0, var(--accent)); }

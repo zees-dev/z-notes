@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+    # SPEC §10: there is no app-level auth. The perimeter is the cluster plus
+    # the tailnet, so the pod is hardened at the runtime level instead —
+    # non-root, no privilege escalation, all capabilities dropped. Enforcing
+    # `restricted` here means a manifest that regresses on that is REJECTED at
+    # admission rather than quietly shipping a root note server.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

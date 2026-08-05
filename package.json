@@ -1,0 +1,19 @@
+{
+  "name": "z-notes",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot server.ts",
+    "start": "bun server.ts",
+    "test": "bun test",
+    "gates": "bun test tests/roundtrip.test.ts tests/reconcile.test.ts tests/ai.test.ts tests/leak.test.ts tests/e2e.test.ts"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.4.0"
+  },
+  "dependencies": {
+    "age-encryption": "0.3.0",
+    "diff": "9.0.0",
+    "gpt-tokenizer": "3.4.0"
+  }
+}

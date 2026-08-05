@@ -1,0 +1,35 @@
+# `kubectl apply -k deploy/k3s` applies everything in the right order.
+#
+# Ordering note: kustomize sorts by kind, so Namespace and PVC land before the
+# Deployment regardless of file numbering. The numeric prefixes are for humans
+# reading `ls`, and for the plain `kubectl apply -f deploy/k3s/` path.
+#
+# alt-ingressroute.yaml is deliberately absent — it is an EITHER/OR with
+# 50-ingress.yaml. See the header of that file.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: znotes
+
+resources:
+  - 00-namespace.yaml
+  - 10-pvc.yaml
+  - 20-deployment.yaml
+  - 30-service.yaml
+  - 40-certificates.yaml
+  - 50-ingress.yaml
+
+# `labels` with includeSelectors:false, NOT the older `commonLabels`.
+# commonLabels injects into spec.selector.matchLabels, which is IMMUTABLE on an
+# existing Deployment — adding a label later would make every apply fail with
+# "field is immutable". These are metadata only.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: z-notes
+
+images:
+  # Change the tag in ONE place when you rebuild:
+  #   kustomize edit set image z-notes=z-notes:0.2.0
+  - name: z-notes
+    newTag: "0.1.0"

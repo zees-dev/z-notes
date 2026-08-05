@@ -1,0 +1,50 @@
+# =============================================================================
+# ALTERNATIVE ingress — the Tailscale Kubernetes operator.
+#
+# NOT applied by kustomization.yaml. This is the path that makes the CA trust
+# step disappear: the operator runs a proxy pod that joins your tailnet as a
+# device, and Tailscale issues it a REAL, publicly-trusted certificate for
+# <name>.<tailnet>.ts.net. Every browser on the tailnet gets a secure context
+# with nothing to install, which is exactly what SPEC §6's WebCrypto
+# requirement wants.
+#
+# Trade-off vs. 50-ingress.yaml + 40-certificates.yaml: this is reachable ONLY
+# from the tailnet — there is no LAN hostname and no path in when Tailscale is
+# down. Running both is fine and is the belt-and-braces answer: cert-manager +
+# Traefik for znotes.home.arpa on the LAN, this for the phone.
+#
+# Requires: the Tailscale operator installed, MagicDNS and HTTPS certificates
+# enabled in the tailnet admin console (both are off by default), and the
+# operator's OAuth client permitted to create devices with the `tag:k8s` tag.
+#
+#   helm repo add tailscale https://pkgs.tailscale.com/helmcharts
+#   helm upgrade --install tailscale-operator tailscale/tailscale-operator \
+#     -n tailscale --create-namespace \
+#     --set-string oauth.clientId="<id>" --set-string oauth.clientSecret="<secret>"
+#
+#   kubectl apply -f deploy/k3s/alt-tailscale-ingress.yaml
+#   # then: https://znotes.<tailnet>.ts.net
+#
+# The OAuth credentials are yours to create in the Tailscale admin console —
+# nothing here invents or stores one.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: znotes-tailscale
+  namespace: znotes
+  labels:
+    app.kubernetes.io/name: z-notes
+spec:
+  # The operator watches for this class and provisions the tailnet device.
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: znotes
+      port:
+        name: http
+  tls:
+    # No secretName: Tailscale provisions and renews the certificate itself.
+    # The host becomes <this value>.<your-tailnet>.ts.net.
+    - hosts:
+        - znotes

@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en" data-density="comfy" data-theme="minimal">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Kept in step with app.js applyColorScheme(): the resolved scheme goes here
+     so the UA paints form controls, scrollbars and the canvas to match. -->
+<meta name="color-scheme" id="schemeMeta" content="light dark">
+<!-- The shell is served from `/` AND from `/d/<doc path>` (one URL per open
+     doc), so every relative reference below — the stylesheets, ./app.js, and
+     through import.meta.url the API root and the crypto worker — has to resolve
+     against the app root rather than against whatever doc URL is in the bar. -->
+<base href="/">
+<title>z-notes</title>
+<!-- zero external requests: an empty data: icon stops the browser's favicon probe -->
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="./themes/base.css">
+<!-- swapped live by the Settings › Theme control; ?theme=<id> overrides at boot.
+     The href below is the DEFAULT theme; the resolver under it rewrites it from
+     the cache before the parser leaves <head>, so a non-default theme costs one
+     request, not one repaint. -->
+<link rel="stylesheet" id="theme-css" href="./themes/minimal.css">
+<!-- ── the look, resolved BEFORE the first paint ─────────────────────────────
+     `.boot` paints var(--bg) in the theme's own palette, so the splash is the
+     first thing that would flash the wrong ANYTHING. All three axes — scheme,
+     theme, density — arrive over the network in app.js start(), which is far
+     too late, so this runs synchronously in <head>, after the stylesheet links
+     (it rewrites one of them) and before the parser can paint anything.
+
+       1. `znotes.scheme` / `znotes.theme` / `znotes.density` — NOT stored
+          settings and NOT defaults. Each is a cache of the value app.js last
+          applied, written on every apply. The server's value always wins:
+          start() re-applies the real setting within a tick and rewrites the
+          cache if it disagreed.
+       2. `system` (the shipped default scheme) and "no cache at all" both fall
+          through to the OS preference — which is the whole reason the scheme
+          cache holds the preference rather than what it resolved to. Caching
+          `resolved` would pin the palette this browser last ended on, so an OS
+          that flipped while the app was closed would boot into the stale one
+          and snap a frame later. `matchMedia` is synchronous and needs no
+          network, so under `system` the first paint is already right.
+       3. A theme id is a filename, so it is shape-checked before it is used.
+          The check is a safety net over a hand-edited storage value, not a
+          source of truth: the only writer is applyTheme(), which is only ever
+          called with an id the SERVER declared, so an allow-list hard-coded
+          here would be a fourth place a new theme has to be registered.
+
+     A cold profile — one that has never run this app — is the one case none of
+     this can resolve, because the values live on the server. It costs exactly
+     one repaint on that first load, and none afterwards.
+
+     app.js owns everything after this: the live matchMedia listener, the
+     Settings controls, and the <meta> above. -->
+<script>
+(function () {
+  var root = document.documentElement;
+  var cached = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
+
+  var v = cached("znotes.scheme");
+  if (v !== "dark" && v !== "light")
+    v = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  root.setAttribute("data-scheme", v);
+  document.getElementById("schemeMeta").setAttribute("content", v);
+
+  var d = cached("znotes.density");
+  if (d === "comfy" || d === "compact") root.setAttribute("data-density", d);
+
+  var t = cached("znotes.theme");
+  if (t && /^[a-z][a-z0-9-]{0,23}$/.test(t) && t !== root.getAttribute("data-theme")) {
+    root.setAttribute("data-theme", t);
+    document.getElementById("theme-css").setAttribute("href", "./themes/" + t + ".css");
+  }
+})();
+</script>
+</head>
+<body>
+
+<!-- boot splash. There is no gate: the inline script at the foot of this file
+     imports app.js unconditionally and hides this div once app.start() resolves
+     (a throw leaves it up, carrying the reason). The serviceWorker loop down
+     there is a one-off eviction of any prototype-era worker on this origin,
+     not something boot waits on. -->
+<div class="boot" id="boot">
+  <div class="msg" id="bootMsg">starting z-notes…</div>
+</div>
+
+<!-- No `chat-open` here on purpose: whether the assistant is up is REMEMBERED
+     (localStorage `znotes.chat`) and width-gated, and app.js `initChatOpen()`
+     is the single writer of both this class and #chatBtn's `on`. The shell used
+     to ship it open, which is how every reload at a tablet width re-entered the
+     three-pane grid and handed the document a 172px column. #app is `hidden`
+     until start() resolves, so resolving it in JS costs no flash. -->
+<div class="app" id="app" hidden>
+
+  <!-- ================= SIDEBAR ================= -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-head">
+      <!-- the HOME button. Which doc is `editor.homeDoc` (settings.toml + ⌘,),
+           so the title/aria are painted from the setting at boot and on every
+           change — never hard-coded here. -->
+      <button class="vault" type="button" id="homeBtn" data-act="home" title="Home">
+        <span class="vault-mark">z</span>
+        <span class="vault-lines">
+          <span class="vault-name" id="vaultName">z-notes</span>
+          <span class="vault-sub" id="vaultSub">~/vault</span>
+        </span>
+      </button>
+      <!-- `only-drawer`, not `only-mobile`: the sidebar is a drawer up to
+           1023px now (base.css §11), and a drawer needs its own way out. -->
+      <button class="iconbtn only-drawer" data-act="nav-close" title="Close">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="sb-search">
+      <button class="search" data-act="palette" aria-label="Search vault (⌘K)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+        <span class="ph">Search vault…</span>
+        <kbd>⌘K</kbd>
+      </button>
+    </div>
+
+    <nav class="tree" id="tree" aria-label="Vault"></nav>
+
+    <div class="sb-foot">
+      <button class="mini" data-act="new-doc" title="New doc (⌘N) — in the folder you picked, or the open doc's folder">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        New doc
+      </button>
+      <button class="mini" data-act="new-folder" title="New folder (⇧⌘N) — same context as ⌘N">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.4h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg>
+        Folder
+      </button>
+    </div>
+    <!-- App-level navigation, deliberately NOT in `.sb-foot` with New doc /
+         Folder: those two CREATE things in the vault, this one GOES somewhere.
+         Its own full-width row mirrors the search button at the top of the
+         sidebar (icon · label · shortcut), and only a row of its own can carry
+         the `.on` state that says "you are on this page right now". -->
+    <div class="sb-nav">
+      <button class="sb-link" id="settingsLink" data-act="settings" title="Settings (⌘/ or ⌘,)" aria-current="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+        <span class="t">Settings</span>
+        <!-- two chords, one route: ⌘/ is the one this row advertises (it is the
+             conventional one and the one the overlay leads with), ⌘, keeps
+             working and is in the title and the overlay. Printing both here
+             would out-width the row's icon · label · hint rhythm. -->
+        <kbd>⌘/</kbd>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ================= MAIN ================= -->
+  <div class="main">
+    <header class="topbar">
+      <!-- These two are the same control at two layouts and are keyed to the
+           DOCK breakpoint, not the phone one: below 1024px the sidebar is a
+           drawer, so the hamburger opens it and there is no column left for
+           `toggle-sidebar` to collapse. ⌘B follows the same fork in app.js. -->
+      <button class="iconbtn only-drawer" data-act="nav-open" title="Menu">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <button class="iconbtn no-drawer" data-act="toggle-sidebar" title="Toggle sidebar (⌘B)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></svg>
+      </button>
+      <div class="crumbs" id="crumbs"></div>
+      <div class="spacer"></div>
+      <!-- The Raw/Preview SEGMENTED CONTROL used to sit here. It is gone: which
+           of two views of the same document you are looking at is *state*, and
+           the statusbar is where this app says state. The replacement is the
+           `#stMode` chip down there — one muted word, the same weight as the
+           line and word counts, clickable, and still ⌘E. A 100px two-button
+           control in the topbar was more chrome than the fact deserved. -->
+      <!-- raw mode only: wrap the selection in an ```age fence encrypted to the
+           vault recipient. Works while the vault is LOCKED (SPEC §6). -->
+      <button class="iconbtn" id="encBtn" data-act="encrypt-selection" title="Encrypt selection (⌘⇧E)" hidden>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
+      </button>
+      <div class="saved" id="saveInd" title="Autosave status"><span class="pip"></span><span class="save-txt" id="saveTxt">Saved</span></div>
+      <button class="btn primary no-mobile" data-act="save" title="Save now">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+        Save <kbd>⌘S</kbd>
+      </button>
+      <button class="iconbtn only-mobile" data-act="save" title="Save (⌘S)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+      </button>
+      <!-- The settings GEAR that used to live here is gone: Settings is a
+           routed page now (/settings), entered from the labelled row at the
+           bottom of the sidebar, which prints its own ⌘/ hint. Two chrome
+           affordances for one route — one of them an unlabelled glyph — is the
+           duplicate mechanism this move was meant to remove. -->
+      <button class="iconbtn" id="chatBtn" data-act="toggle-chat" title="AI panel (⌘J)" aria-expanded="false">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4.2A8 8 0 1 1 21 12z"/></svg>
+      </button>
+    </header>
+
+    <div class="scroll" id="scroll">
+      <article class="doc" id="doc"></article>
+    </div>
+
+    <!-- ================= SETTINGS — A PAGE, NOT A MODAL =================
+         Lives inside `.main`, as the editor pane's other content: the sidebar,
+         topbar and statusbar stay exactly where they were, so the tree is still
+         there to navigate away with and the AI chip that links INTO this page
+         does not vanish the moment you arrive. `.app.route-settings` is what
+         swaps it for `#scroll` (base.css) — no veil, no scrim, and nothing here
+         is `position: fixed`, so Esc has nothing to dismiss.
+
+         Every control id is unchanged from the modal this was cut out of:
+         tests/settings.test.ts derives settings parity STRUCTURALLY by grepping
+         this file for `data-num` / `data-sw` / segment + input ids. -->
+    <section class="settings-view" id="settingsView" aria-label="Settings">
+      <div class="sv-head">
+        <div class="sv-title">
+          <h2>Settings</h2>
+          <p>Local vault · nothing leaves this machine unless you sync.</p>
+        </div>
+        <!-- The unsaved count. Present because Settings BUFFERS now: a page
+             that holds edits without saying so is a page that loses them. -->
+        <span class="sv-dirty" id="settingsDirty" hidden aria-live="polite"></span>
+        <!-- Back to the doc you came from. A page has no "close" — this is a
+             navigation, and it spends the history entry the arrival pushed.
+             It used to say "Done", which claimed to FINISH something while
+             every control was already saving itself behind it. Now that Save
+             is a real button, the navigation must not wear its word. -->
+        <button class="btn" data-act="close-settings" title="Back to the doc">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12H5M11 6l-6 6 6 6"/></svg>
+          Back
+        </button>
+        <!-- Drop the draft. Only offered while there IS one: a Discard that is
+             always live is a button whose only purpose is to be misclicked. -->
+        <button class="btn" id="settingsDiscard" data-act="discard-settings" title="Throw the unsaved changes away" hidden>Discard</button>
+        <!-- THE Save. Disabled unless the draft differs from what the server
+             has, so "no diff" and "nothing to do" are the same state. -->
+        <button class="btn primary" id="settingsSave" data-act="save-settings" title="Save the changed settings (⌘S)" disabled>Save</button>
+      </div>
+      <!-- The save error, parked here and MOVED next to the offending field
+           whenever the server's typed code names one (bad-base-url → Base URL,
+           bad-branch → Branch, …). One element, so there can only ever be one
+           error on the page and it cannot be orphaned. -->
+      <div class="sv-err" id="settingsErr" role="alert" hidden></div>
+
+      <!-- Section rail: every entry is the same route the URL carries
+           (`/settings/<section>`), so the deep link is not a hidden feature —
+           clicking one rewrites the address bar to exactly what you could have
+           typed. Sections are a scroll position within one page, so they
+           REPLACE the entry rather than stacking one Back press per click. -->
+      <nav class="sv-nav" id="settingsNav" aria-label="Settings sections">
+        <button data-sec="appearance">Appearance</button>
+        <button data-sec="editing">Editing</button>
+        <button data-sec="git">Git sync</button>
+        <button data-sec="secrets">Secrets</button>
+        <button data-sec="ai">AI</button>
+        <button data-sec="terminal">Terminal</button>
+      </nav>
+
+      <div class="sv-body" id="settingsBody">
+        <div class="sv-wrap">
+          <section class="grp" id="settingsGrp-appearance">
+            <div class="grp-t">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/></svg>
+              Appearance
+            </div>
+            <div class="field">
+              <div class="lab"><b>Theme</b><span>Swaps the stylesheet live — no reload. Try <code>?theme=terminal</code> too.</span></div>
+              <div class="ctl"><div class="seg" data-seg="theme" id="themeSeg"></div></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Colour scheme</b><span>Pin dark or light, or follow the OS — System repaints live when the OS flips.</span></div>
+              <div class="ctl"><div class="seg" data-seg="colorScheme" id="schemeSeg"></div></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Density</b><span>Comfy is the default; Compact tightens every surface further.</span></div>
+              <div class="ctl"><div class="seg" data-seg="density" id="densitySeg"></div></div>
+            </div>
+          </section>
+
+          <section class="grp" id="settingsGrp-editing">
+            <div class="grp-t">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+              Editing
+            </div>
+            <div class="field">
+              <div class="lab"><b>Autosave interval</b><span>Writes to disk after you stop typing.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="editor.autosaveSeconds" value="" aria-label="Autosave seconds">
+                <span class="unit"></span>
+              </div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Click preview to edit</b><span>Clicking rendered text jumps to that line in Raw.</span></div>
+              <div class="ctl"><button class="sw" data-sw="editor.clickToEdit"></button></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Home doc</b><span>Where the vault button (top left) goes. Vault-relative path; blank means the first doc.</span></div>
+              <div class="ctl"><input class="inp mono" id="homeDoc" data-draft="editor.homeDoc" aria-label="Home doc"></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Keyboard shortcuts</b><span>⌘E raw · ⌘S save · ⌘K search · Esc dismiss.</span></div>
+              <div class="ctl"><button class="btn" data-act="shortcuts">Show all <kbd>?</kbd></button></div>
+            </div>
+          </section>
+
+          <section class="grp" id="settingsGrp-git">
+            <div class="grp-t">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M18 9v6M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><path d="M18 9a6 6 0 0 1-6 6"/></svg>
+              Git sync
+            </div>
+            <div class="field">
+              <div class="lab"><b>GitHub token</b><span>Stored in the system keychain; the server only ever sends it masked.</span></div>
+              <div class="ctl"><input class="inp mono masked" type="text" id="gitToken" autocomplete="off" data-1p-ignore data-lpignore="true" aria-label="GitHub token"></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Branch</b><span>Commits land here on every sync.</span></div>
+              <div class="ctl"><input class="inp mono" id="gitBranch" data-draft="git.branch" aria-label="Branch"></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Auto-sync</b><span>Push after each autosave, pull on focus.</span></div>
+              <div class="ctl"><button class="sw" data-sw="git.autoSync"></button></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Auto-sync interval</b><span>Commits once changes have settled for this long.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="git.autoSyncSeconds" aria-label="Auto-sync seconds">
+                <span class="unit"></span>
+              </div>
+            </div>
+            <div class="sync-line" id="syncLine">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+              <span id="syncLineTxt">—</span>
+            </div>
+          </section>
+
+          <!-- Auto-lock policy. Applied by the crypto worker the moment it changes —
+               an already-unlocked session picks a shorter timeout up on the next tick. -->
+          <section class="grp" id="settingsGrp-secrets">
+            <div class="grp-t">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10.5" width="16" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
+              Secrets
+            </div>
+
+            <!-- ---------- vault key (SPEC §6, research §5.3) ----------
+                 Status first, then the one key operation that is safe to offer:
+                 CHANGE PASSPHRASE. It re-wraps the SAME age identity under a new
+                 passphrase (scrypt logN=18) in the crypto worker and PUTs the
+                 re-wrapped file back — the vault key never changes, so nothing
+                 in the corpus has to be re-encrypted and every existing block
+                 still decrypts. Full key ROTATION is deliberately absent: it is
+                 a corpus-wide operation (research §5.3) and pretending it is a
+                 settings toggle is how a vault gets half-rotated.
+
+                 The storage note is not decoration. "Where does this live?" is
+                 the first thing anyone asks of a passphrase field, and the two
+                 password fields in this panel answer it in OPPOSITE ways. -->
+            <div class="key-state" id="keyState">
+              <span class="dot"></span>
+              <span class="tx" id="keyStateTxt">—</span>
+              <span class="spacer"></span>
+              <button class="btn sm" id="keyLockBtn" hidden>Lock</button>
+            </div>
+            <div class="field stacked">
+              <div class="lab">
+                <b>Vault passphrase</b>
+                <span id="keyPassHint">Re-wraps <code>.znotes/identity.age</code> under a new passphrase. The vault key itself does not change, so every block you already have still decrypts.</span>
+              </div>
+              <!-- no type="password" anywhere: the same text + .masked idiom the
+                   token, the AI key and the terminal password use -->
+              <div class="ctl key-pw">
+                <input class="inp mono masked" type="text" id="keyCurrent" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" data-gramm="false" data-1p-ignore data-lpignore="true" aria-label="Current vault passphrase" placeholder="current passphrase">
+                <input class="inp mono masked" type="text" id="keyNew" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" data-gramm="false" data-1p-ignore data-lpignore="true" aria-label="New vault passphrase" placeholder="new passphrase">
+                <input class="inp mono masked" type="text" id="keyConfirm" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" data-gramm="false" data-1p-ignore data-lpignore="true" aria-label="Confirm new vault passphrase" placeholder="confirm new">
+                <button class="btn" id="keyGen">Generate</button>
+                <button class="btn" id="keyChangeBtn">Change</button>
+              </div>
+            </div>
+            <div class="field stacked">
+              <div class="lab"><b>Where this is stored</b><span>The two password fields in this panel answer that differently.</span></div>
+              <div class="ctl"><div class="note" id="keyStoreNote">
+                <b>Your passphrase is not stored anywhere.</b> It is typed into the crypto worker, spent on scrypt, and dropped — never written to <code>.znotes/settings.toml</code>, never to the sqlite index, never to <code>sessionStorage</code>, and never sent to the server. Nothing in this app can show it to you again.<br><br>
+                What the backend keeps is the <b>wrapped key</b>: <code>.znotes/identity.age</code> — your age identity encrypted <i>under</i> the passphrase — and the public recipient <code>.znotes/vault.pub</code>. Both are committed with the vault, which is what makes it portable: any clone of the repo plus the passphrase in your head can decrypt. Changing the passphrase rewrites that one file and nothing else.<br><br>
+                Contrast the <b>terminal password</b> further down: the server has to verify that one, so it stores a scrypt <b>hash</b> of it and checks what you type against it. There is no equivalent here, because the server never sees a passphrase or a plaintext — it stores and serves two opaque strings.<br><br>
+                <b>This does not rotate the vault key.</b> The same key encrypts and decrypts every block before and after, and older copies of <code>identity.age</code> in git history stay decryptable with the <b>old</b> passphrase. If a passphrase was actually exposed, changing it does not undo that — rotating the key means re-encrypting every block in the vault, and rotating the secrets themselves.
+              </div></div>
+            </div>
+
+            <div class="field">
+              <div class="lab"><b>Lock when idle</b><span>No typing, clicking or scrolling for this long.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="secrets.idleLockMinutes" aria-label="Idle lock minutes">
+                <span class="unit"></span>
+              </div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Lock when hidden</b><span>This tab has been in the background this long.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="secrets.hiddenLockMinutes" aria-label="Hidden lock minutes">
+                <span class="unit"></span>
+              </div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Session ceiling</b><span>One unlock never lasts longer than this, however busy you are.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="secrets.sessionHours" aria-label="Session hours">
+                <span class="unit"></span>
+              </div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Clear clipboard after</b><span>A copied secret is wiped from the clipboard on this countdown.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="secrets.clipboardClearSeconds" aria-label="Clipboard clear seconds">
+                <span class="unit"></span>
+              </div>
+            </div>
+          </section>
+
+          <section class="grp" id="settingsGrp-ai">
+            <div class="grp-t">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5 13.9 8 19.5 9.9 13.9 11.8 12 17.3 10.1 11.8 4.5 9.9 10.1 8z"/></svg>
+              AI
+            </div>
+            <div class="field">
+              <div class="lab"><b>Base URL</b><span>OpenAI-compatible endpoint (<code>/v1/responses</code>).</span></div>
+              <div class="ctl"><input class="inp mono" id="aiBase" data-draft="ai.baseUrl" aria-label="Base URL"></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>API key</b><span>Masked · relayed server-side, never in the browser.</span></div>
+              <div class="ctl"><input class="inp mono masked" type="text" id="aiKey" autocomplete="off" data-1p-ignore data-lpignore="true" aria-label="API key"></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Model</b><span>Used for chat and proposed edits.</span></div>
+              <div class="ctl"><input class="inp mono" id="aiModel" data-draft="ai.model" aria-label="Model"></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Reasoning effort</b><span>Higher effort, slower and more thorough.</span></div>
+              <div class="ctl"><div class="seg" data-seg="effort" id="effortSeg"></div></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Max reply</b><span>Ceiling on a single answer.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="ai.maxOutputTokens" aria-label="Max output tokens">
+                <span class="unit"></span>
+              </div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Context budget</b><span>How much of your notes may be assembled into one turn.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="ai.contextBudgetTokens" aria-label="Context budget tokens">
+                <span class="unit"></span>
+              </div>
+            </div>
+            <!-- filled from meta.ai (server-declared): what the endpoint rejected and
+                 what the relay gave up to keep working. Never silently degraded. -->
+            <div class="field stacked" id="aiEndpointField" hidden>
+              <div class="lab"><b>Endpoint</b><span>Capability probed at save.</span></div>
+              <div class="ctl"><div class="note" id="aiEndpointNote"></div></div>
+            </div>
+          </section>
+
+          <!-- ================= TERMINAL (SPEC §13) =================
+               A streaming command runner, not a terminal emulator: there is no PTY
+               in bun, so full-screen programs cannot work and the banner says so
+               rather than letting one hang. Locked behind its own password, which
+               is NOT the vault passphrase (that one never leaves the browser and
+               so cannot gate anything server-side). No type="password" anywhere —
+               the same text + .masked idiom the token and key fields use. -->
+          <section class="grp" id="settingsGrp-terminal">
+            <div class="grp-t">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-5-6-5"/><path d="M12 19h8"/></svg>
+              Terminal
+            </div>
+
+            <!-- state line: disabled / locked / unlocked. One row, always truthful. -->
+            <div class="term-state" id="termState">
+              <span class="dot"></span>
+              <span class="tx" id="termStateTxt">—</span>
+              <span class="spacer"></span>
+              <button class="btn sm" id="termLockBtn" hidden>Lock</button>
+            </div>
+
+            <!-- set / change / clear the password -->
+            <div class="field stacked" id="termPwField">
+              <div class="lab">
+                <b id="termPwLab">Terminal password</b>
+                <span id="termPwHint">Set one to enable the terminal. Independent of your vault passphrase.</span>
+              </div>
+              <div class="ctl term-pw">
+                <input class="inp mono masked" type="text" id="termCurrent" autocomplete="off" data-1p-ignore data-lpignore="true" aria-label="Current terminal password" placeholder="current" hidden>
+                <input class="inp mono masked" type="text" id="termNew" autocomplete="off" data-1p-ignore data-lpignore="true" aria-label="New terminal password" placeholder="at least 8 characters">
+                <button class="btn" id="termPwBtn">Set</button>
+              </div>
+            </div>
+
+            <!-- unlock, shown only when a password exists and we are locked -->
+            <div class="field stacked" id="termUnlockField" hidden>
+              <div class="lab"><b>Unlock</b><span>Re-locks itself when idle, and whenever this tab is closed.</span></div>
+              <div class="ctl term-pw">
+                <input class="inp mono masked" type="text" id="termPass" autocomplete="off" data-1p-ignore data-lpignore="true" aria-label="Terminal password">
+                <button class="btn primary" id="termUnlockBtn">Unlock</button>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="lab"><b>Enable terminal</b><span>Off also hides the command tool from the assistant.</span></div>
+              <div class="ctl"><button class="sw" data-sw="terminal.enabled"></button></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Lock when idle</b><span>No command for this long and the terminal re-locks.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="terminal.idleLockMinutes" aria-label="Terminal idle lock minutes">
+                <span class="unit"></span>
+              </div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Shell</b><span>Absolute path, or empty for <code>$SHELL</code>.</span></div>
+              <div class="ctl"><input class="inp mono" id="termShell" data-draft="terminal.shell" aria-label="Shell" placeholder="$SHELL"></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Starting directory</b><span>Absolute path, or empty for the vault root.</span></div>
+              <div class="ctl"><input class="inp mono" id="termCwd" data-draft="terminal.startupCwd" aria-label="Starting directory" placeholder="vault root"></div>
+            </div>
+            <div class="field">
+              <div class="lab">
+                <b>Let the assistant run commands without asking</b>
+                <span>Off: every AI command waits for your Run. Notes and fetched pages can carry injected instructions — this is what stops them becoming a shell.</span>
+              </div>
+              <div class="ctl"><button class="sw" data-sw="terminal.allowAiAutoRun"></button></div>
+            </div>
+
+            <!-- the console itself -->
+            <div class="term" id="termConsole" hidden>
+              <div class="term-bar">
+                <span class="cwd mono" id="termCwdLine">—</span>
+                <span class="spacer"></span>
+                <button class="btn sm" id="termClearBtn" title="Clear the scrollback">Clear</button>
+                <button class="btn sm danger" id="termStopBtn" hidden title="Cancel the running command (Ctrl+C)">Stop</button>
+              </div>
+              <div class="term-out mono" id="termOut" tabindex="0" role="log" aria-label="Terminal output" aria-live="polite"></div>
+              <div class="term-prompt">
+                <span class="sigil mono">$</span>
+                <input class="term-in mono" id="termInput" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Command">
+              </div>
+              <div class="term-note" id="termNote"></div>
+            </div>
+          </section>
+          <p class="sv-note">Saved to <code>PUT /api/settings</code> as you change them.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="statusbar">
+      <span class="sb-i path" id="stPath">—</span>
+      <span class="divider-v"></span>
+      <span class="sb-i" id="stLines">— lines</span>
+      <span class="divider-v hide-sm sb-wide"></span>
+      <span class="sb-i hide-sm sb-wide" id="stWords">— words</span>
+      <!-- EDITOR MODE — the segmented control that used to live in the topbar.
+           It reads as state ("Preview", beside "9 lines"), it is a button, and
+           `data-mode` is what everything else addresses it by: app.js paints
+           it in syncModeUI(), the tests assert on it, and the title says both
+           ways to change it. It is NEVER shed at any width — below 768px there
+           is no ⌘E to fall back on, so this chip is the only way to reach Raw
+           on a phone; only its divider goes. -->
+      <span class="divider-v sb-mode-div"></span>
+      <button class="sb-i mode" id="stMode" data-act="toggle-mode" data-mode="preview" aria-label="Editor mode" title="Rendered preview — click (or ⌘E) for Raw">
+        <span id="stModeTxt">Preview</span>
+      </button>
+      <span class="spacer"></span>
+      <span class="sb-i hintset hide-sm" title="Keyboard shortcuts (?)">
+        <span><kbd>⌘K</kbd> search</span>
+        <!-- ⌘E's hint moved out: the mode chip three items to the left now says
+             the mode outright and carries the chord in its tooltip, so the slot
+             goes to the shortcut with no on-screen affordance of its own. -->
+        <span class="sb-xnarrow"><kbd>⌘/</kbd> settings</span>
+        <span class="sb-narrow"><kbd>⌘S</kbd> save</span>
+        <span class="sb-narrow"><kbd>?</kbd> keys</span>
+      </span>
+      <!-- AI endpoint: the model+effort actually in use and whether the endpoint
+           really answers. Never decorative — the dot comes from the capability
+           probe, the outcome of the last relay turn, and an on-demand re-probe
+           when clicked. Clicking opens Settings on the AI section. -->
+      <span class="divider-v hide-sm"></span>
+      <button class="sb-i conn ai pending hide-sm" id="stAi" data-act="ai-status" title="AI endpoint"><span class="dot"></span><span class="cw sb-wide" id="stAiTxt">—</span></button>
+      <span class="divider-v hide-sm sb-mid"></span>
+      <span class="sb-i hide-sm sb-mid" id="stBranch">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M18 9v6M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><path d="M18 9a6 6 0 0 1-6 6"/></svg>
+        <span>—</span>
+      </span>
+      <!-- only visible while the vault is unlocked; click = lock now (⌘⇧L) -->
+      <button class="sb-i" id="stVault" data-act="lock-vault" title="Vault unlocked — click to lock (⌘⇧L)" hidden>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 7.6-1.8"/></svg>
+        <span class="hide-sm">Vault unlocked</span>
+      </button>
+      <span class="divider-v hide-sm"></span>
+      <span class="sb-i ok" id="stSync">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+        <span class="hide-sm sb-narrow" id="stSyncTxt">—</span>
+      </span>
+      <span class="divider-v"></span>
+      <button class="sb-i conn" id="stConn" title="Live SSE connection to the z-notes backend"><span class="dot"></span><span class="cw" id="stConnTxt">connecting…</span></button>
+    </footer>
+  </div>
+
+  <!-- ================= CHAT ================= -->
+  <aside class="chat" id="chat">
+    <div class="chat-head">
+      <span class="chat-title">
+        <span class="spark">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5 13.9 8 19.5 9.9 13.9 11.8 12 17.3 10.1 11.8 4.5 9.9 10.1 8z" opacity=".95"/><path d="M18.5 14.5 19.4 17l2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z" opacity=".65"/></svg>
+        </span>
+        Assistant
+      </span>
+      <span class="model-chip"><span class="live"></span><b id="modelName">—</b> · <span id="modelEffort">—</span></span>
+      <div class="spacer"></div>
+      <button class="iconbtn" data-act="toggle-chat" title="Hide panel">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="chat-sub">
+      <button class="sess-chip" data-act="sess" id="sessChip" aria-haspopup="dialog" aria-expanded="false" title="Session details">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4.2A8 8 0 1 1 21 12z"/></svg>
+        <b id="sessCount">0</b> <span id="sessCountWord">msgs</span>
+        <span class="tk">· ~<b id="sessTok">0</b> tok</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="spacer"></div>
+      <button class="newsess" data-act="new-session" title="Clear context and start a fresh session">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        New session
+      </button>
+    </div>
+
+    <div class="pop" id="sessPop" role="dialog" aria-label="Session details">
+      <h4>Session</h4>
+      <div class="kv"><span>Session id</span><b class="mono" id="sessId">—</b></div>
+      <div class="kv"><span>Messages in context</span><b id="popMsgs">0</b></div>
+      <div class="kv"><span>Estimated tokens</span><b id="popTok">0</b></div>
+      <div class="kv"><span>Model</span><b class="mono" id="popModel">—</b></div>
+      <div class="kv"><span>Started</span><b id="popStart">—</b></div>
+      <div class="ctxbar"><i id="ctxFill" style="width:2%"></i></div>
+      <div class="kv" style="padding-top:0"><span>Context window</span><b class="mono" id="ctxPct">—</b></div>
+      <div class="pop-foot">
+        <span class="note">Clearing drops the thread, not your docs.</span>
+        <div class="spacer"></div>
+        <button class="btn sm" data-act="close-sess">Close</button>
+        <button class="btn sm primary" data-act="new-session">New session</button>
+      </div>
+    </div>
+
+    <div class="msgs" id="msgs"></div>
+
+    <div class="stack" id="stack" hidden>
+      <div class="stack-t">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7.5 12 3l9 4.5-9 4.5z"/><path d="m3 12 9 4.5L21 12M3 16.5 12 21l9-4.5"/></svg>
+        Applied changes <span class="cnt" id="stackCnt">0</span>
+      </div>
+      <div id="stackList"></div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-box">
+        <textarea id="composer" rows="2" placeholder="Ask about your vault…" aria-label="Message the assistant"></textarea>
+        <div class="composer-foot">
+          <!-- Two hints because there are two bindings. A phone keyboard has no
+               Shift+Enter to offer, so below 768px Enter is a NEWLINE and Send
+               is the only way to send (app.js, W_SHEET) — printing the desktop
+               chord there described a gesture the device cannot make, and made
+               a multi-line prompt impossible to type. -->
+          <span class="hint">
+            <span class="no-mobile">⏎ send · ⇧⏎ newline</span>
+            <span class="only-mobile">⏎ newline · Send →</span>
+          </span>
+          <button class="send" data-act="send" title="Send" aria-label="Send message">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<!-- ================= PASSPHRASE ================= -->
+<div class="veil" id="ppVeil">
+  <div class="modal pp" role="dialog" aria-label="Unlock secret block">
+    <div class="modal-head">
+      <div style="width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
+      </div>
+      <div style="flex:1">
+        <h2 id="ppTitle">Unlock secret block</h2>
+        <p><span id="ppSub">age identity</span> · <span class="mono" id="ppPath" style="font-family:var(--mono);font-size:11.5px"></span></p>
+      </div>
+    </div>
+    <div class="modal-body">
+      <!-- text + CSS masking, never type=password (SPEC §9): the browser's
+           password manager must stay out of the vault passphrase -->
+      <div class="field" style="flex-direction:column;align-items:stretch;gap:7px">
+        <div class="lab"><b>Passphrase</b></div>
+        <input class="inp mono masked" id="ppInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" data-gramm="false" data-enable-grammarly="false" data-1p-ignore data-lpignore="true" placeholder="••••••••••••" style="min-width:0;width:100%;height:34px" aria-label="Passphrase">
+      </div>
+      <div class="field" id="ppConfirmRow" hidden style="flex-direction:column;align-items:stretch;gap:7px">
+        <div class="lab"><b>Confirm</b></div>
+        <input class="inp mono masked" id="ppConfirm" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" data-gramm="false" data-enable-grammarly="false" data-1p-ignore data-lpignore="true" placeholder="••••••••••••" style="min-width:0;width:100%;height:34px" aria-label="Confirm passphrase">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="note" id="ppHint">Decrypted in the crypto worker; never sent to the server.</span>
+      <div class="spacer"></div>
+      <button class="btn" id="ppGen" data-act="pp-generate" hidden>Generate</button>
+      <button class="btn" data-act="pp-cancel">Cancel</button>
+      <button class="btn primary" id="ppOk" data-act="pp-ok">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 7.5-2"/></svg>
+        <span id="ppOkTxt">Unlock</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= CONFIRM (destructive ops are human-only, SPEC §5) ================= -->
+<div class="veil" id="cfVeil">
+  <div class="modal cf" id="cfModal" role="dialog" aria-modal="true" aria-labelledby="cfTitle">
+    <div class="modal-head">
+      <!-- two glyphs, one shown: `.safe` (set by confirmDialog for a
+           constructive OK) swaps the warning triangle for a neutral mark, so a
+           dialog that CREATES something never wears the delete pattern. -->
+      <div class="cf-ico">
+        <svg class="i-warn" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5 21 20H3z"/><path d="M12 10v4M12 17.2v.1"/></svg>
+        <svg class="i-safe" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v.1M12 11v5"/></svg>
+      </div>
+      <div style="flex:1">
+        <h2 id="cfTitle">Delete</h2>
+        <p><span class="mono" id="cfPath" style="font-family:var(--mono);font-size:11.5px"></span></p>
+      </div>
+    </div>
+    <div class="modal-body">
+      <p class="note" id="cfBody" style="margin:0;line-height:1.55"></p>
+    </div>
+    <div class="modal-foot">
+      <span class="note" id="cfNote">Recoverable only from git history.</span>
+      <div class="spacer"></div>
+      <button class="btn" data-act="cf-cancel">Cancel</button>
+      <button class="btn danger" id="cfOk" data-act="cf-ok"><span id="cfOkTxt">Delete</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= SAVE CONFLICT (SPEC §5: dirty buffer → banner with diff) ================= -->
+<div class="veil" id="cxVeil">
+  <!-- tabindex: the orphan half of this veil can be raised by the AUTOSAVE, and
+       a dialog that opens under a caret must be able to take focus itself
+       rather than park it on a destructive default button (app.js
+       orphanDialog). -1 keeps it out of the tab order. -->
+  <div class="modal cf" role="dialog" aria-modal="true" aria-labelledby="cxTitle" tabindex="-1">
+    <div class="modal-head">
+      <div class="cf-ico">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5 21 20H3z"/><path d="M12 10v4M12 17.2v.1"/></svg>
+      </div>
+      <div style="flex:1">
+        <h2 id="cxTitle">This doc changed on disk</h2>
+        <p><span class="mono" id="cxPath" style="font-family:var(--mono);font-size:11.5px"></span></p>
+      </div>
+    </div>
+    <div class="modal-body">
+      <p class="note" id="cxBody" style="margin:0 0 8px;line-height:1.55"></p>
+      <div class="diff-body" id="cxDiff" style="max-height:220px;overflow:auto"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="note" id="cxNote">Your unsaved text is still in the editor.</span>
+      <div class="spacer"></div>
+      <!-- Two pairs of verbs, one veil. The first pair answers "the file
+           changed"; the second answers "the file is gone" (paintConflictMode).
+           Recreate is a BUTTON on purpose: nothing here may resurrect a doc
+           that was deliberately deleted somewhere else. -->
+      <button class="btn" id="cxDisk" data-act="cx-take-disk">Take disk</button>
+      <button class="btn primary" id="cxMine" data-act="cx-keep-mine">Keep mine</button>
+      <button class="btn" id="cxDiscard" data-act="cx-discard" hidden>Discard</button>
+      <button class="btn primary" id="cxRecreate" data-act="cx-recreate" hidden>Recreate</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= ⌘K PALETTE ================= -->
+<div class="veil top" id="palVeil">
+  <div class="modal pal" role="dialog" aria-label="Search vault">
+    <div class="pal-in">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+      <input id="palInput" placeholder="Search docs and content…" aria-label="Search docs and content" autocomplete="off" spellcheck="false">
+      <span class="count" id="palCount"></span>
+    </div>
+    <div class="pal-list" id="palList" role="listbox" aria-label="Results"></div>
+    <div class="pal-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+      <span><kbd>⏎</kbd> open</span>
+      <span><kbd>Esc</kbd> close</span>
+      <span class="hide-xs" style="margin-left:auto">GET /api/search · fuzzy</span>
+    </div>
+  </div>
+</div>
+
+<!-- ================= SHORTCUTS ================= -->
+<div class="veil" id="scVeil">
+  <div class="modal sc" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="modal-head">
+      <div style="flex:1">
+        <h2>Keyboard shortcuts</h2>
+        <p>Everything here works from anywhere in the app.</p>
+      </div>
+      <button class="iconbtn" data-act="close-shortcuts" title="Close">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="sc-grid">
+        <!-- app.js binds BOTH (SPEC §9); ⌘P is the one VS Code muscle memory
+             reaches for, and this overlay claims to list everything -->
+        <div class="sc-row">Search vault<span class="k"><kbd>⌘K</kbd><kbd>⌘P</kbd></span></div>
+        <!-- the same toggle the statusbar's mode word is; there is no longer a
+             segmented control in the topbar -->
+        <div class="sc-row">Toggle Preview / Raw — or click the mode in the statusbar<span class="k"><kbd>⌘E</kbd></span></div>
+        <!-- one chord, one meaning: "save what is in front of me". On the
+             settings page that is the settings draft, because there is no
+             document there — the topbar's Save is hidden for the same reason. -->
+        <div class="sc-row">Save now — the doc, or the settings draft<span class="k"><kbd>⌘S</kbd></span></div>
+        <div class="sc-row">Dismiss anything<span class="k"><kbd>Esc</kbd></span></div>
+        <div class="sc-row">This overlay<span class="k"><kbd>?</kbd></span></div>
+        <div class="sc-row">Settings<span class="k"><kbd>⌘/</kbd><kbd>⌘,</kbd></span></div>
+        <!-- ⌘C is COPY first and only falls through to this toggle when the
+             copy would be a no-op: nothing selected and focus outside every
+             text surface. ⌘J is unconditional. -->
+        <div class="sc-row">Toggle AI panel — ⌘C only with no selection and no field focused<span class="k"><kbd>⌘C</kbd><kbd>⌘J</kbd></span></div>
+        <div class="sc-row">Toggle sidebar<span class="k"><kbd>⌘B</kbd></span></div>
+        <div class="sc-row">New doc — in the picked folder, else the open doc's<span class="k"><kbd>⌘N</kbd></span></div>
+        <div class="sc-row">New folder — same context as ⌘N<span class="k"><kbd>⇧⌘N</kbd></span></div>
+        <div class="sc-row">…then type a path: <code>a/b/c.md</code> nests, <code>abc/</code> is a folder<span class="k"><kbd>⏎</kbd></span></div>
+        <!-- on the focused sidebar row: one input renames AND moves (type a path) -->
+        <div class="sc-row">Rename / move (sidebar row)<span class="k"><kbd>F2</kbd></span></div>
+        <div class="sc-row">Delete (sidebar row)<span class="k"><kbd>Del</kbd></span></div>
+        <!-- the same menu right-click opens, for people who do not right-click.
+             Both keys open it (app.js), and both are listed for the same reason
+             ⌘P is above: this overlay claims to list everything. -->
+        <div class="sc-row">Sidebar context menu<span class="k"><kbd>⇧F10</kbd><kbd>Menu</kbd></span></div>
+        <div class="sc-row">Menu: move / choose<span class="k"><kbd>↑</kbd><kbd>↓</kbd><kbd>Home</kbd><kbd>End</kbd><kbd>⏎</kbd></span></div>
+        <!-- both are global bindings (app.js); this overlay claims to list
+             everything, and encrypt-selection's only other affordance is a
+             Raw-mode-only icon button -->
+        <div class="sc-row">Encrypt selection<span class="k"><kbd>⇧⌘E</kbd></span></div>
+        <div class="sc-row">Lock vault<span class="k"><kbd>⇧⌘L</kbd></span></div>
+        <div class="sc-row">Palette: move<span class="k"><kbd>↑</kbd><kbd>↓</kbd></span></div>
+        <div class="sc-row">Palette: open doc<span class="k"><kbd>⏎</kbd></span></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="note">Click any rendered line in Preview to edit it in Raw.</span>
+      <div class="spacer"></div>
+      <button class="btn primary" data-act="close-shortcuts">Got it</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= SIDEBAR CONTEXT MENU =================
+     Right-click (or Shift+F10 / the Menu key) anywhere in the left panel. The
+     items are built in app.js from what was clicked, because they depend on it
+     — a folder offers rename/delete, empty space does not. Positioned `fixed`
+     at the pointer and flipped near the viewport edges; it is NOT inside
+     #sidebar, whose `overflow` would clip it. -->
+<div class="menu" id="ctxMenu" role="menu" aria-label="Sidebar actions" hidden></div>
+
+<div class="toast" id="toast"><span class="ok">✓</span><span id="toastTxt">Saved</span></div>
+
+<script type="module">
+/* ------------------------------------------------------------------
+   Boot. The prototype's service-worker gate is gone: this page is
+   served by the real bun backend, so /api/* and /events are live from
+   the first request. If a stale mock worker from the prototype era
+   still controls this origin, evict it before starting.
+   ------------------------------------------------------------------ */
+const bootMsg = document.getElementById('bootMsg');
+
+function fatal(text, detail){
+  bootMsg.innerHTML = '<b>' + text + '</b><br><span style="font-size:12px">' + detail + '</span>';
+}
+
+async function boot(){
+  if ('serviceWorker' in navigator){
+    const regs = await navigator.serviceWorker.getRegistrations().catch(() => []);
+    for (const r of regs) await r.unregister().catch(() => {});
+  }
+
+  bootMsg.textContent = 'loading vault…';
+  try {
+    const app = await import('./app.js');
+    await app.start();
+  } catch (err) {
+    console.error(err);
+    fatal('The app failed to start', String(err && err.message || err));
+    return;
+  }
+  document.getElementById('boot').hidden = true;
+  document.getElementById('app').hidden = false;
+}
+boot();
+</script>
+</body>
+</html>

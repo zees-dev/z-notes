@@ -1,0 +1,353 @@
+/* ============================================================
+   terminal.css — "Terminal / TUI": monospace everything, square corners,
+   1px hairline boxes, phosphor-green-on-near-black, visible keybinds and
+   markdown syntax markers.
+
+   Ported from prototypes/04-terminal.html. Almost entirely token values;
+   the box-drawing chrome, `#` heading markers, bracketed keys and CRT grain
+   cannot be expressed as single token values and live in the documented
+   theme-scoped block at the bottom of this file.
+   ============================================================ */
+
+:root {
+  /* --- surfaces: phosphor terminal, four depths ------------------------- */
+  --bg: #0a0d0c;                       /* editor ground */
+  --app-bg: var(--bg);
+  --panel: #0e1211;                    /* sidebar / chat / modal panes */
+  --panel-2: #121716;                  /* head + foot chrome, table heads */
+  --panel-3: #161d1b;                  /* chips, hover wells, seg track */
+  --line: #1e2725;
+  --line-2: #172020;
+
+  /* --- ink -------------------------------------------------------------- */
+  --text: #e9f2ea;                     /* fg-bright */
+  --text-2: #c8d3cb;                   /* fg */
+  --muted: #8a9a91;                    /* dim (lifted from the prototype for
+                                          contrast at 10–11px) */
+  --muted-2: #6b7c73;                  /* dimmer */
+
+  /* --- accent: phosphor green ------------------------------------------- */
+  --accent: #6fd18b;
+  --accent-h: #9ce6b0;
+  --accent-on: #06120b;                /* ink on a green fill — inverse video */
+  --accent-soft: rgba(111, 209, 139, .13);
+  --accent-soft-2: rgba(111, 209, 139, .22);
+  --accent-ring: rgba(111, 209, 139, .30);
+
+  /* --- semantic --------------------------------------------------------- */
+  --ok: #6fd18b;     --ok-soft: rgba(111, 209, 139, .10);  --ok-bd: #2f6b45;
+  --warn: #e8b14b;   --warn-soft: rgba(232, 177, 75, .10);
+  --danger: #ef6f61; --danger-soft: rgba(239, 111, 97, .10);
+
+  /* --- diff: the prototype's unified-diff colouring --------------------- */
+  --add-bg: rgba(111, 209, 139, .09);  --add-fg: #9ce6b0;  --add-gutter: #6fd18b;
+  --del-bg: rgba(239, 111, 97, .10);   --del-fg: #f0a49b;  --del-gutter: #ef6f61;
+
+  /* --- misc palette ----------------------------------------------------- */
+  --sel-bg: rgba(111, 209, 139, .28);
+  --sel-fg: #e9f2ea;
+  --scroll-thumb: #20302b;
+  --scroll-thumb-hover: #2e4a3f;
+  --mark-fg: #e8b14b;                  /* fzf-style amber hit */
+  --code-inline-fg: #e8b14b;
+  --code-inline-bg: var(--panel-3);
+  --code-inline-bd: var(--line);
+  --hover-tint: rgba(111, 209, 139, .06);
+  --scrim-bg: rgba(3, 6, 5, .72);
+
+  /* --- typography: one mono stack, no exceptions ------------------------ */
+  --font: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Mono",
+          Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  --mono: var(--font);
+  --font-doc: var(--font);
+  --font-heading: var(--font);
+  --font-kbd: var(--font);
+  --tracking-tight: 0em;               /* mono never wants negative tracking */
+  --tracking-wide: .10em;
+  --w-med: 400; --w-semi: 600; --w-bold: 700;
+  --h1-size: 1.62em; --h1-weight: 700; --h1-tracking: -.01em; --h1-transform: none;
+  --h2-size: 1.22em; --h2-weight: 700; --h2-tracking: -.01em; --h2-transform: none;
+  --h3-size: 1.05em; --h3-weight: 700; --h3-tracking: -.01em; --h3-transform: none;
+  --heading-prefix-opacity: .55;       /* consumed by the `#` markers below */
+  --label-transform: uppercase;
+  --label-tracking: .10em;
+
+  /* --- shape: a terminal has no radii ----------------------------------- */
+  --r-sm: 0px; --r: 0px; --r-lg: 0px; --r-xl: 0px; --r-pill: 0px;
+  --bd-w: 1px; --bd-style: solid;
+
+  /* --- elevation: hairlines, not shadows -------------------------------- */
+  --sh-1: none;
+  --sh-2: none;
+  --sh-3: 0 0 0 1px var(--line), 0 14px 40px rgba(0, 0, 0, .6);
+  --sh-4: 0 0 0 1px var(--ok-bd), 0 18px 60px rgba(0, 0, 0, .75), 0 0 26px rgba(111, 209, 139, .09);
+  --sh-focus: 0 0 0 1px var(--accent), 0 0 8px rgba(111, 209, 139, .28);
+
+  /* --- motion: quick, but never stepped (base animates the mobile
+         drawers with --ease, and steps() makes those look broken) -------- */
+  --ease: cubic-bezier(.3, .8, .3, 1);
+  --dur-1: .1s;
+  --dur-2: .13s;
+  --dur-3: .22s;
+
+  /* --- layout dials ------------------------------------------------------ */
+  --sidebar-w: 262px;
+  --chat-w: 352px;
+  --doc-max-w: 84ch;                   /* a mono measure, like the prototype's
+                                          min(74ch, 100%) — a little wider so the
+                                          doc-meta row stays on one line */
+  --doc-pad-x: 26px;
+  --doc-pad-x-md: 20px;
+  --doc-pad-x-sm: 14px;
+  --doc-pad-bottom: 42vh;
+
+  /* --- region treatments ------------------------------------------------- */
+  --sidebar-bg: var(--panel);
+  --sidebar-bd: 1px solid var(--line);
+  --sidebar-blur: none;
+  --topbar-bg: linear-gradient(180deg, var(--panel-2), var(--panel));
+  --topbar-blur: none;
+  --editor-bg: var(--bg);
+  --statusbar-bg: var(--panel-2);
+  --statusbar-blur: none;
+  --chat-bg: var(--panel);
+  --chat-bd: 1px solid var(--line);
+  --composer-bg: var(--panel-2);
+  --modal-bg: var(--panel);
+  --veil-bg: rgba(3, 6, 5, .72);
+  --veil-blur: none;
+  --card-bg: #0b100f;
+  --code-bg: #070909;
+  --code-bar-bg: var(--panel-2);
+  --code-fg: var(--text-2);
+  --tk-key: #d38ac2; --tk-str: #6fd18b; --tk-com: #6b7c73; --tk-num: #e8b14b; --tk-fn: #63c9d6;
+
+  /* --- components -------------------------------------------------------- */
+  --row-hover-bg: rgba(111, 209, 139, .07);
+  --row-active-bg: rgba(111, 209, 139, .13);
+  --row-active-fg: var(--accent);
+  --row-active-sh: inset 0 0 0 1px var(--ok-bd);
+  --row-marker-w: 2px;
+  --row-marker-bg: var(--accent);
+
+  --btn-bg: transparent;
+  --btn-fg: var(--muted);
+  --btn-bd: 1px solid var(--line);
+  --btn-sh: none;
+  --btn-hover-bg: var(--panel-3);
+  --btn-primary-bg: transparent;
+  --btn-primary-hover-bg: var(--accent-soft);
+  --btn-primary-bd: 1px solid var(--ok-bd);
+  --btn-primary-fg: var(--accent);
+  --btn-primary-sh: none;
+
+  --input-bg: #070909;
+  --input-bd: 1px solid var(--line);
+  --input-fg: var(--text);
+
+  --seg-track-bg: #070909;
+  --seg-on-bg: var(--accent);          /* inverse video, like the prototype's
+                                          preview|raw control */
+  --seg-on-fg: var(--accent-on);
+  --seg-on-sh: none;
+  --seg-acc-bg: var(--accent);
+  --seg-acc-fg: var(--accent-on);
+
+  --kbd-bg: transparent;               /* keys are bracketed glyphs, not caps */
+  --kbd-fg: var(--accent);
+  --kbd-bd: transparent;
+  --kbd-bd-bottom-w: 1px;
+  --kbd-radius: 0px;
+
+  --cb-size: 15px;
+  --cb-radius: 0px;
+  --cb-bg: transparent;
+  --cb-bd: 1px solid var(--muted-2);
+  --cb-on-bg: transparent;
+  --cb-on-bd: var(--accent);
+  --cb-mark: var(--accent);
+  --task-done-fg: var(--muted);
+  --task-done-decoration: line-through;
+
+  --bullet-size: 5px;
+  --bullet-radius: 0;
+  --bullet-bg: var(--muted);
+
+  --quote-bd-w: 1px;
+  --quote-bd: rgba(232, 177, 75, .55);
+  --quote-style: italic;
+  --quote-fg: var(--muted);
+
+  --wl-bg: transparent;
+  --wl-bg-hover: rgba(99, 201, 214, .14);
+  --wl-fg: #63c9d6;
+  --wl-ring: inset 0 -1px 0 rgba(99, 201, 214, .5);   /* dotted-underline feel */
+  --wl-radius: 0px;
+  --wl-weight: 400;
+  --wl-icon-opacity: .55;
+
+  --secret-bg: linear-gradient(180deg, rgba(47, 107, 69, .10), rgba(47, 107, 69, .02));
+  --secret-open-bd: var(--warn);
+  --table-head-bg: var(--panel-2);
+  --divider-bg: var(--line);
+
+  --bubble-user-bg: transparent;
+  --bubble-user-fg: var(--text);
+  --bubble-user-radius: 0;
+  --bubble-ai-bg: transparent;
+  --bubble-ai-fg: var(--text-2);
+  --bubble-ai-bd: 0;                   /* the rail comes from the ornament below */
+  --bubble-ai-radius: 0;
+
+  --toast-bg: var(--panel);
+  --toast-fg: var(--accent);
+  --toast-ok: var(--accent);
+
+  --conn-ok: var(--accent);
+  --conn-down: var(--warn);
+
+  --vault-mark-bg: transparent;
+  --vault-mark-fg: var(--accent);
+  --vault-mark-radius: 0;
+  --vault-mark-sh: inset 0 0 0 1px var(--ok-bd);
+}
+
+/* ============================================================
+   DENSITY — the prototype's own two scales. Comfy is 12.7px/1.56,
+   Compact is a genuinely tighter 11.6px/1.32 with near-zero block gaps.
+   Same selectors as base.css or the attribute specificity wins.
+   ============================================================ */
+:root[data-density="comfy"] {
+  --d-font: 12.7px;
+  --d-lh: 1.56;
+  --d-blk-gap: 7px;
+  --d-list-gap: 4px;
+  --d-sec-gap: 12px;
+  --d-row-h: 22px;
+  --d-row-gap: 0px;
+  --d-pane-pad: 8px;
+  --d-topbar: 38px;
+  --d-status: 24px;
+  --d-ctl-h: 26px;
+  --d-doc-pad: 18px;
+  --d-msg-gap: 9px;
+  --d-msg-pad: 2px 9px;
+  --d-raw-fs: 12.7px;
+  --d-raw-lh: 1.56;
+  --d-cell-pad: 4px 10px;
+  --d-pre-pad: 8px 10px;
+  --d-pre-lh: 1.6;
+}
+:root[data-density="compact"] {
+  --d-font: 11.6px;
+  --d-lh: 1.32;
+  --d-blk-gap: 2px;
+  --d-list-gap: 1px;
+  --d-sec-gap: 7px;
+  --d-row-h: 18px;
+  --d-row-gap: 0px;
+  --d-pane-pad: 5px;
+  --d-topbar: 33px;
+  --d-status: 21px;
+  --d-ctl-h: 23px;
+  --d-doc-pad: 12px;
+  --d-msg-gap: 6px;
+  --d-msg-pad: 1px 8px;
+  --d-raw-fs: 11.6px;
+  --d-raw-lh: 1.32;
+  --d-cell-pad: 2px 8px;
+  --d-pre-pad: 6px 8px;
+  --d-pre-lh: 1.45;
+}
+
+/* ============================================================
+   THEME-SCOPED ORNAMENT
+   Everything below is paint or inserted glyphs — no box metrics, no
+   positioning of real elements, nothing structural. Each rule exists because
+   the effect cannot be carried by a single token value.
+
+    1 · CRT grain. A fixed, pointer-transparent scanline wash — the one visual
+        signature of the prototype that has no token. It renders on a
+        pseudo-element base never uses, so it cannot affect any layout.
+    2 · Bracketed keys. `<kbd>` is drawn as `[⌘K]` rather than a keycap; the
+        `.btn kbd` rule re-tints the two keycap overrides base ships.
+    3 · Box-drawing labels. Section labels wear the prototype's `┤ … ├` ticks.
+    4 · Markdown syntax markers. Preview keeps its `#` prefixes, and h2/h3 take
+        the prototype's green/cyan heading ladder.
+    5 · Prompt glyphs. The user bubble opens with `❯`, the selected palette hit
+        with `❯`, and both speakers get the prototype's cyan/magenta names;
+        the AI bubble keeps a magenta rail instead of a full border box.
+    6 · Amber chrome. Table heads, code-block language tags, settings-group and
+        popover titles — amber in the prototype, no token of their own.
+    7 · Inverse-video path segment in the statusbar.
+    8 · Green window titlebar on modals, matching the prototype's `.win-head`.
+    9 · Bordered segmented controls, cyan folder rows, the secret block's green
+        fence, the phosphor glow on the live-connection lamp, and squaring the
+        handful of radii base hardcodes instead of tokenising (send button,
+        secret icon, empty-doc ring, switch knob).
+   ============================================================ */
+
+/* 1 · CRT grain */
+html[data-theme="terminal"] body::after {
+  content: "";
+  position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(255, 255, 255, .016) 0 1px, transparent 1px 3px);
+  mix-blend-mode: screen;
+  opacity: .55;
+}
+
+/* 2 · bracketed keys */
+html[data-theme="terminal"] kbd::before { content: "["; color: var(--muted-2); }
+html[data-theme="terminal"] kbd::after  { content: "]"; color: var(--muted-2); }
+html[data-theme="terminal"] .btn kbd { background: transparent; border-color: transparent; color: var(--accent); }
+
+/* 3 · box-drawing labels */
+html[data-theme="terminal"] .sec-label::before,
+html[data-theme="terminal"] .stack-t::before,
+html[data-theme="terminal"] .grp-t::before,
+html[data-theme="terminal"] .pop h4::before { content: "┤ "; color: var(--muted-2); }
+html[data-theme="terminal"] .sec-label::after,
+html[data-theme="terminal"] .stack-t::after,
+html[data-theme="terminal"] .grp-t::after,
+html[data-theme="terminal"] .pop h4::after { content: " ├"; color: var(--muted-2); }
+
+/* 4 · markdown syntax markers */
+html[data-theme="terminal"] .md h1::before { content: "# ";   color: var(--accent);  opacity: var(--heading-prefix-opacity); }
+html[data-theme="terminal"] .md h2::before { content: "## ";  color: var(--ok-bd);   opacity: 1; }
+html[data-theme="terminal"] .md h3::before { content: "### "; color: var(--muted-2); opacity: 1; }
+html[data-theme="terminal"] .md h2 { color: var(--accent); }
+html[data-theme="terminal"] .md h3 { color: #63c9d6; }
+
+/* 5 · prompt glyphs and speaker colours */
+html[data-theme="terminal"] .msg.user .bubble::before { content: "❯ "; color: var(--accent); }
+html[data-theme="terminal"] .msg.user .who { color: #63c9d6; }
+html[data-theme="terminal"] .msg.ai .who { color: #d38ac2; }
+html[data-theme="terminal"] .msg.ai .bubble { box-shadow: inset 1px 0 0 rgba(211, 138, 194, .38); }
+html[data-theme="terminal"] .msg.user .bubble { box-shadow: inset -1px 0 0 rgba(99, 201, 214, .38); }
+html[data-theme="terminal"] .pal-item.sel .nm::before { content: "❯ "; color: var(--accent); }
+
+/* 6 · amber chrome */
+html[data-theme="terminal"] th,
+html[data-theme="terminal"] .code-bar .lang,
+html[data-theme="terminal"] .grp-t,
+html[data-theme="terminal"] .pop h4 { color: var(--warn); }
+
+/* 7 · statusbar path segment, inverse-video */
+html[data-theme="terminal"] .statusbar .path { background: var(--panel-3); color: var(--text-2); padding: 0 6px; }
+
+/* 8 · modal titlebar */
+html[data-theme="terminal"] .modal-head { background: rgba(47, 107, 69, .18); color: var(--accent); }
+html[data-theme="terminal"] .pal-in { background: #070909; }
+
+/* 9 · odds and ends */
+html[data-theme="terminal"] .seg { box-shadow: inset 0 0 0 1px var(--line); }
+html[data-theme="terminal"] .row.folder:not(.active) .lbl { color: #7fd0da; }
+html[data-theme="terminal"] .secret { border-color: var(--ok-bd); }
+html[data-theme="terminal"] .conn .dot { box-shadow: 0 0 8px rgba(111, 209, 139, .55); }
+/* the last few radii base hardcodes rather than tokenises */
+html[data-theme="terminal"] .send,
+html[data-theme="terminal"] .secret-ico,
+html[data-theme="terminal"] .empty-doc .ring,
+html[data-theme="terminal"] .sw::after { border-radius: 0; }
+html[data-theme="terminal"] .sw::after { background: var(--muted); }
+html[data-theme="terminal"] .sw.on::after { background: var(--accent-on); }
