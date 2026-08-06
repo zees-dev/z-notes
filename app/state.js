@@ -24,6 +24,10 @@ export const state = {
      destination you come back FROM, and the doc it returns to is the one it
      never let go of. */
   view: "doc",
+  /* How the settings page was ENTERED — "open" (from a doc), "back"/"forward"
+     (history traversal). Written by shell.js routing and read back by
+     settings.js when leaving; shared mutable, so it lives here. */
+  settingsExit: "open",
   settingsSection: "", // the `/settings/<section>` the address bar carries, if any
   mode: "preview",
   dirty: false,

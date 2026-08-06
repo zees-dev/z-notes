@@ -10,7 +10,7 @@
 import * as api from "./api.js";
 import { state } from "./state.js";
 import { $, $$, I, apiFail, el, esc, inline, toast } from "./ui.js";
-import { renderDiff } from "./tree.js";
+import { renderDiff } from "./dialogs.js";
 import { autoGrow, openDoc, renderDoc, saveDoc, setBaseline, syncRaw } from "./editor.js";
 import { closeSess, isOpen } from "./shell.js";
 import { commandCard, upsertCommand } from "./terminal.js";

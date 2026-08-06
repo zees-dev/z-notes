@@ -17,13 +17,14 @@ import * as api from "./api.js";
 import { estimateBits, generatePassphrase } from "./entropy.js";
 import { state } from "./state.js";
 import { $, $$, clearStickyToast, lookupLink, toast } from "./ui.js";
-import { LONGPRESS_MS, closeConfirm, closeCtx, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
+import { LONGPRESS_MS, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
+import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, wireDialogs } from "./dialogs.js";
 import { refreshTrash, toggleTrash } from "./trash.js";
-import { autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, syncModeUI, trackScrollPointerDown } from "./editor.js";
-import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, ppMode, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
+import { autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, syncModeUI, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
+import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closePal, loadProposals, loadSession, openPal, palInputChanged, palMove, palOpen, renderChat, sendMessage, startNewSession } from "./chat.js";
-import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, draftedLook, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, settingsDraft, showSettings } from "./settings.js";
-import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, onPop, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport } from "./shell.js";
+import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, draftedLook, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
+import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, onPop, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
 
 /* ============================================================
@@ -256,7 +257,7 @@ function wire() {
     })
   );
   $("#ppInput").addEventListener("input", () => {
-    if (ppMode !== "create") return;
+    if (vault.ppMode !== "create") return;
     const bits = estimateBits($("#ppInput").value);
     ppHint("~" + bits + " bits" + (bits < 60 ? " — too weak, 60 minimum" : " — good"), bits < 60);
   });
@@ -323,7 +324,7 @@ function wire() {
       const path = inp.dataset.num;
       const v = coerceNumberSetting(path, inp.value);
       if (v == null) {
-        delete settingsDraft[path];
+        clearDraft(path);
         inp.value = savedValue(path);
         clearSettingsError();
         paintSaveState();
@@ -726,6 +727,7 @@ function wire() {
    BOOT
    ============================================================ */
 export async function start() {
+  wireDialogs({ refreshTree: loadTree, renderDoc, saveDoc, setBaseline, setSaveIndicator, app, openFirstDoc });
   /* settings first: they decide the theme, and a wrong theme flashing is worse
      than 40ms of a blank shell */
   const s = await api.getSettings();
