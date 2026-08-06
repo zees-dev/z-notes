@@ -1,5 +1,5 @@
 # =============================================================================
-# TLS — cert-manager, self-signed root -> private CA -> server certificate.
+# TLS — cert-manager, signed by the CLUSTER's existing private CA.
 #
 # WHY THIS EXISTS AT ALL: SPEC §6 encrypts secrets in the browser with
 # WebCrypto, and window.crypto.subtle is only defined in a SECURE CONTEXT.
@@ -8,82 +8,16 @@
 # unlock UI is replaced by a badge explaining why. HTTPS is what turns the
 # secrets half of the product on.
 #
-# WHY A PRIVATE CA AND NOT LET'S ENCRYPT: SPEC §10 puts this on a private
-# tailnet. There is no public DNS name and no inbound port 80, so HTTP-01 is
-# impossible and DNS-01 would mean handing a DNS provider token to a personal
-# notes box. A self-signed CA costs one trust step, once, per device.
-# (If you would rather have a publicly-trusted cert with zero trust steps, the
-# Tailscale operator path in deploy/README.md gets you a real *.ts.net
-# certificate instead — use that and skip this file.)
+# This cluster already runs a private CA for every app on it (ClusterIssuer
+# `selfsigned-ca-issuer` → cliproxy-tls, homepage-tls, filebrowser-tls, …),
+# and every device on the LAN already trusts it. Minting a second, z-notes-only
+# CA (the earlier revision of this file) would have meant a second trust step
+# on every device for no gain — so this is ONE Certificate against the CA the
+# cluster already has, exactly like its neighbours.
 #
-# WHY A CA AND NOT ONE SELF-SIGNED LEAF: trusting a leaf means re-trusting on
-# every renewal, on every device. Trusting the CA once means the 90-day leaf
-# rotates underneath you forever. This is the whole reason for the two-issuer
-# dance below.
-#
-# ORDER OF OPERATIONS (all four objects are namespaced, so this is self-
-# contained — no ClusterIssuer, no cluster-wide blast radius):
-#   znotes-selfsigned  (Issuer)      signs nothing but the root
-#     -> znotes-ca     (Certificate) isCA, 10 years, secret `znotes-ca`
-#        -> znotes-ca-issuer (Issuer) signs with that secret
-#           -> znotes-tls (Certificate) the 90-day server cert Traefik serves
-#
-# Requires cert-manager installed (see deploy/README.md). It is not vendored
-# here because it is a cluster-wide component with its own CRDs and upgrade
-# cadence, and pinning someone else's 20k-line manifest inside an app repo ages
-# badly.
-#
-# >>> EDIT THE HOSTNAMES BELOW. <<< A certificate is only useful for the exact
-# name the browser types. Both entries in dnsNames must match reality or you
-# get a name-mismatch error that looks identical to an untrusted-CA error.
+# The hostname is `znotes.k3s.lan` because the LAN resolver already serves a
+# `*.k3s.lan` wildcard pointing at the cluster — no /etc/hosts entry needed.
 # =============================================================================
----
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: znotes-selfsigned
-  namespace: znotes
-  labels:
-    app.kubernetes.io/name: z-notes
-spec:
-  selfSigned: {}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: znotes-ca
-  namespace: znotes
-  labels:
-    app.kubernetes.io/name: z-notes
-spec:
-  isCA: true
-  commonName: z-notes local CA
-  # This secret is the private key of a CA your devices will trust. It is not
-  # an app credential, but it is the most dangerous object in this directory:
-  # anyone holding it can mint a certificate for any name. It never leaves the
-  # cluster — only tls.crt (the public half) is exported for the trust step.
-  secretName: znotes-ca
-  duration: 87600h    # 10 years — a root you re-trust annually is a root you stop trusting
-  renewBefore: 8760h  # 1 year
-  privateKey:
-    algorithm: ECDSA
-    size: 256
-    rotationPolicy: Never  # rotating the root means re-trusting every device
-  issuerRef:
-    name: znotes-selfsigned
-    kind: Issuer
-    group: cert-manager.io
----
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: znotes-ca-issuer
-  namespace: znotes
-  labels:
-    app.kubernetes.io/name: z-notes
-spec:
-  ca:
-    secretName: znotes-ca
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -106,19 +40,10 @@ spec:
     - server auth
     - digital signature
     - key encipherment
-  commonName: znotes.home.arpa
+  commonName: znotes.k3s.lan
   dnsNames:
-    # home.arpa is the IETF-reserved name for local networks (RFC 8375) — it
-    # can never collide with a real registration, unlike .local (mDNS) or a
-    # made-up TLD. Point it at the k3s node in /etc/hosts, or at a CNAME/A
-    # record in your LAN resolver.
-    - znotes.home.arpa
-    # Your Tailscale MagicDNS name. Replace <tailnet> with your tailnet's
-    # name (`tailscale status` shows it) — e.g. znotes.tail1a2b3.ts.net.
-    # Listing it here is what makes the SAME certificate valid from the phone
-    # over the tailnet and from the laptop on the LAN.
-    - znotes.<tailnet>.ts.net
+    - znotes.k3s.lan
   issuerRef:
-    name: znotes-ca-issuer
-    kind: Issuer
+    name: selfsigned-ca-issuer
+    kind: ClusterIssuer
     group: cert-manager.io

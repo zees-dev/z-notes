@@ -16,7 +16,7 @@
 #                    app over an insecure origin and wonder why the secrets
 #                    features are switched off (SPEC §6 degradation).
 #
-# >>> The three `znotes.home.arpa` occurrences must match 40-certificates.yaml
+# >>> The three `znotes.k3s.lan` occurrences must match 40-certificates.yaml
 # and what you type in the browser. Add a second `rules[]` host block (and a
 # second `tls[].hosts` entry) for the *.ts.net name if you want to reach it by
 # MagicDNS as well as by LAN name.
@@ -36,11 +36,11 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - znotes.home.arpa
+        - znotes.k3s.lan
         # - znotes.<tailnet>.ts.net
       secretName: znotes-tls
   rules:
-    - host: znotes.home.arpa
+    - host: znotes.k3s.lan
       http:
         paths:
           # One prefix rule for everything. The app is a single origin: the
@@ -76,7 +76,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: znotes.home.arpa
+    - host: znotes.k3s.lan
       http:
         paths:
           - path: /
