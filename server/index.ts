@@ -20,40 +20,25 @@ import { Trash, TrashError, isTrashId } from "./trash.ts";
 import { Reconciler, type ChangeHint, type ChangeHints, type ChangeReason, type DocChange } from "./watch.ts";
 import { SSE_HEADERS, sseFrame } from "./sse.ts";
 import {
-  absOf,
   affectedTargets,
-  blockedByFile as vaultBlockedByFile,
   buildTree,
-  dbPath,
-  exists,
   hasSecrets,
   isArmor,
   isRecipient,
   linkSafeTarget,
-  makeFolder,
-  missingFolders,
-  moveNode,
-  pruneEmptyFolders,
   planLinkRewrites,
-  readDoc,
-  readVaultKeys,
   revOf,
   safePath,
   sameNode,
-  scanDocs,
-  scanFolders,
-  scanTree,
   slugOf,
   titleOf,
-  vaultName,
-  vaultRoot,
-  writeDocAtomic,
-  writeVaultKeys,
+  Vault,
   type FileMeta,
 } from "./vault.ts";
 import { rm } from "node:fs/promises";
 
 const VAULT = resolve(process.env.ZNOTES_VAULT || "./vault");
+const vault = new Vault(VAULT);
 const PORT = Number(process.env.ZNOTES_PORT || 4700);
 const APP_DIR = resolve(import.meta.dir, "..", "app");
 const VENDOR_ENTRY = resolve(import.meta.dir, "age-entry.js");
@@ -151,8 +136,8 @@ function decodeDocPath(rest: string): string | null {
    Boot: index, settings, reconcile, watch
    ============================================================ */
 
-const index = new Index(dbPath(VAULT));
-const settings = new Settings(VAULT, index);
+const index = new Index(vault.dbPath);
+const settings = new Settings(vault, index);
 await settings.load();
 
 const clients = new Set<SseClient>();
@@ -168,7 +153,7 @@ let vaultEpoch = Number(index.getMeta("vaultEpoch") || 0);
    edits the reconciler discovers. The vault is the source of truth and git only
    mirrors it, so a change made in vim has exactly as much claim to a commit as
    one made in the app. */
-const recon = new Reconciler(VAULT, index, (change) => {
+const recon = new Reconciler(vault, index, (change) => {
   vaultEpoch = index.nextSeq("vaultEpoch");
   broadcast("doc-changed", change);
   gitSync.schedule();
@@ -185,7 +170,7 @@ const GIT_LOG = process.env.ZNOTES_GIT_LOG === "1";
    ============================================================ */
 
 const trash = new Trash({
-  vault: VAULT,
+  vault,
   settings,
   log: (line) => {
     if (GIT_LOG || process.env.ZNOTES_TRASH_LOG === "1") process.stdout.write(`[z-notes] ${line}\n`);
@@ -199,7 +184,7 @@ const TRASH_SWEEP_MS = (() => {
 })();
 
 const gitSync = new GitSync({
-  vault: VAULT,
+  vault,
   settings,
   index,
   onStatus: (s) => broadcast("sync-status", s),
@@ -293,8 +278,8 @@ function metaOf(row: {
 async function treeResponse() {
   const files = index.allFileMeta().map(metaOf);
   return {
-    vault: { name: vaultName(VAULT), root: vaultRoot(VAULT), docCount: files.length },
-    tree: buildTree(files, index.folderOpen(), await scanFolders(VAULT)),
+    vault: { name: vault.name, root: vault.realRoot, docCount: files.length },
+    tree: buildTree(files, index.folderOpen(), await vault.scanFolders()),
   };
 }
 
@@ -306,7 +291,7 @@ async function treeResponse() {
  * overwritten instead of raising 409.
  */
 async function docBody(path: string) {
-  const disk = await readDoc(VAULT, path);
+  const disk = await vault.readDoc(path);
   if (!disk) return null;
   const md = disk.markdown;
   return {
@@ -356,8 +341,6 @@ function canonicalDocPath(p: string): string {
 
 const isMd = (p: string) => /\.md$/i.test(p);
 
-/** vault.ts blockedByFile, bound to this server's vault. */
-const blockedByFile = (target: string) => vaultBlockedByFile(VAULT, target);
 
 /**
  * PATCH /api/docs/{path} `{to}` and DELETE /api/docs/{path}.
@@ -371,7 +354,7 @@ async function fileOp(method: "PATCH" | "DELETE", rel: string, body: unknown): P
   return recon.lock(async () => {
     await recon.reconcileHeld();
 
-    const kind = await exists(VAULT, rel);
+    const kind = await vault.exists(rel);
     if (!kind) return fail(404, "not-found", { message: `Nothing at ${rel}` });
     // a doc is a .md file (SPEC §5). Anything else that happens to sit in the
     // vault is in no tree, no search result, and is not renamable or deletable
@@ -379,7 +362,7 @@ async function fileOp(method: "PATCH" | "DELETE", rel: string, body: unknown): P
     if (kind === "file" && !isMd(rel)) return fail(404, "not-found", { message: `No doc at ${rel}` });
     const from = kind === "file" ? canonicalDocPath(rel) : rel;
 
-    const beforeDocs = await scanDocs(VAULT);
+    const beforeDocs = await vault.scanDocs();
     const subtree = kind === "file" ? [from] : beforeDocs.filter((d) => d.startsWith(from + "/"));
     /* Every FILE the op will actually touch, `.md` or not: `moveNode` is one
        rename(2) and the trash move another, so a folder carries its images and
@@ -387,7 +370,7 @@ async function fileOp(method: "PATCH" | "DELETE", rel: string, body: unknown): P
        commit left those deleted-in-the-worktree and alive-in-HEAD forever — the
        bulk `stage()` is `.md`-only too, so nothing downstream could ever heal
        it, and `dirtyOutsideAllowlist()` then wedged every future push. */
-    const payload = kind === "file" ? [from] : await scanTree(VAULT, from);
+    const payload = kind === "file" ? [from] : await vault.scanTree(from);
 
     return method === "DELETE"
       ? deleteNode(from, kind, subtree, payload)
@@ -404,7 +387,7 @@ async function moveNodeOp(
   body: any
 ): Promise<Response> {
   const to = safePath(body?.to);
-  if (!to || !absOf(VAULT, to)) {
+  if (!to || !vault.abs(to)) {
     return fail(400, "bad-path", { message: "`to` must be a vault-relative path that stays inside the vault." });
   }
   if (kind === "file" && !isMd(to)) return fail(400, "bad-path", { message: "A doc path must end in .md." });
@@ -421,13 +404,13 @@ async function moveNodeOp(
     return fail(400, "bad-path", { message: "A folder cannot be moved inside itself." });
   }
 
-  const absFrom = absOf(VAULT, from)!;
-  const absTo = absOf(VAULT, to)!;
-  const taken = await exists(VAULT, to);
+  const absFrom = vault.abs(from)!;
+  const absTo = vault.abs(to)!;
+  const taken = await vault.exists(to);
   // ...unless the two spellings are the same inode: on macOS `Foo.md` →
   // `foo.md` is a legal rename that `exists()` reports as a collision
   if (taken && !sameNode(absFrom, absTo)) return fail(409, "exists", { message: `${to} already exists.` });
-  const blocker = await blockedByFile(to);
+  const blocker = await vault.blockedByFile(to);
   if (blocker) return fail(409, "exists", { message: `${blocker} is a doc, not a folder.` });
 
   /* ---------- plan ---------- */
@@ -458,7 +441,7 @@ async function moveNodeOp(
   const affected = affectedTargets(beforeDocs, mapping, index.linkTargets());
   const candidates: Array<{ path: string; markdown: string }> = [];
   for (const src of index.backlinkSources(affected)) {
-    const disk = await readDoc(VAULT, src);
+    const disk = await vault.readDoc(src);
     if (!disk) continue; // vanished between the pass and here
     candidates.push({ path: mapping.get(src) ?? src, markdown: disk.markdown });
   }
@@ -470,23 +453,23 @@ async function moveNodeOp(
   let moved: { created: string | null } | null = null;
   const written: string[] = [];
   try {
-    moved = await moveNode(VAULT, from, to);
+    moved = await vault.moveNode(from, to);
     for (const r of rewrites) {
-      await writeDocAtomic(VAULT, r.path, r.markdown);
+      await vault.writeDocAtomic(r.path, r.markdown);
       written.push(r.path);
     }
   } catch (err) {
     const message = String((err as Error)?.message || err);
     for (const p of written.reverse()) {
       try {
-        await writeDocAtomic(VAULT, p, pre.get(p)!);
+        await vault.writeDocAtomic(p, pre.get(p)!);
       } catch (rollbackErr) {
         process.stderr.write(`[z-notes] move rollback FAILED for ${p} — ${String(rollbackErr)}\n`);
       }
     }
     if (moved) {
       try {
-        await moveNode(VAULT, to, from);
+        await vault.moveNode(to, from);
         // the scaffolding mkdir -p made for a target that no longer exists
         if (moved.created) await rm(moved.created, { recursive: true, force: true }).catch(() => {});
       } catch (rollbackErr) {
@@ -826,7 +809,7 @@ function runSearch(q: string, limit: number): SearchHit[] {
    ============================================================ */
 
 const terminal = new Terminal({
-  vault: VAULT,
+  vault,
   settings,
   index,
   log: (line) => {
@@ -840,7 +823,7 @@ const terminal = new Terminal({
 });
 
 const ai = new AI({
-  vault: VAULT,
+  vault,
   settings,
   index,
   git: gitSync,
@@ -1015,7 +998,7 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
     if (!p) return fail(400, "bad-path", { message: "Path escapes the vault." });
     // safePath is lexical; absOf also resolves symlinks, so this is what stops a
     // link inside the vault from becoming a create outside it
-    if (!absOf(VAULT, p)) return fail(400, "bad-path", { message: "Path escapes the vault." });
+    if (!vault.abs(p)) return fail(400, "bad-path", { message: "Path escapes the vault." });
     const type = body?.type === "folder" ? "folder" : "doc";
 
     /* The same guard the MOVE applies to its destinations, applied at birth.
@@ -1033,19 +1016,19 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
     }
 
     if (type === "folder") {
-      if (await exists(VAULT, p)) return fail(409, "exists", { message: `${p} already exists.` });
-      const blocker = await blockedByFile(p);
+      if (await vault.exists(p)) return fail(409, "exists", { message: `${p} already exists.` });
+      const blocker = await vault.blockedByFile(p);
       if (blocker) return fail(409, "exists", { message: `${blocker} is a doc, not a folder.` });
       return recon.lock(async () => {
         // re-checked under the lock: the gate above raced anything already held
-        if (await exists(VAULT, p)) return fail(409, "exists", { message: `${p} already exists.` });
+        if (await vault.exists(p)) return fail(409, "exists", { message: `${p} already exists.` });
         /* implicit parents, and a real rollback for them: `a/b/c` makes a and
            a/b on the way, and a failure must not leave that tree standing */
-        const implicit = await missingFolders(VAULT, p, true);
+        const implicit = await vault.missingFolders(p, true);
         try {
-          await makeFolder(VAULT, p);
+          await vault.makeFolder(p);
         } catch (err) {
-          await pruneEmptyFolders(VAULT, implicit);
+          await vault.pruneEmptyFolders(implicit);
           return fail(500, "write-failed", { message: `${p} could not be created.` });
         }
         index.setFolderOpen(p, true);
@@ -1054,23 +1037,23 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
     }
 
     const file = p.replace(/\.md$/i, "") + ".md";
-    if (await exists(VAULT, file)) return fail(409, "exists", { message: `${file} already exists.` });
-    const blocker = await blockedByFile(file);
+    if (await vault.exists(file)) return fail(409, "exists", { message: `${file} already exists.` });
+    const blocker = await vault.blockedByFile(file);
     if (blocker) return fail(409, "exists", { message: `${blocker} is a doc, not a folder.` });
     const markdown = typeof body?.markdown === "string" ? body.markdown : "";
     return recon.lock(async () => {
-      if (await exists(VAULT, file)) return fail(409, "exists", { message: `${file} already exists.` });
-      const implicit = await missingFolders(VAULT, file, false);
+      if (await vault.exists(file)) return fail(409, "exists", { message: `${file} already exists.` });
+      const implicit = await vault.missingFolders(file, false);
       try {
-        await writeDocAtomic(VAULT, file, markdown);
+        await vault.writeDocAtomic(file, markdown);
       } catch (err) {
-        await pruneEmptyFolders(VAULT, implicit);
+        await vault.pruneEmptyFolders(implicit);
         return fail(500, "write-failed", { message: `${file} could not be created.` });
       }
       await recon.reconcileHeld(new Map<string, ChangeReason>([[file, "created"]]));
       const out = await docBody(file);
       if (out) return json(out, 201);
-      await pruneEmptyFolders(VAULT, implicit);
+      await vault.pruneEmptyFolders(implicit);
       return fail(500, "write-failed", { message: "The new doc vanished after writing." });
     });
   }
@@ -1115,7 +1098,7 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
           // identical bytes ⇒ same rev, no write, no doc-changed
           return json({ path: p, rev: current.rev, bytes: current.bytes, mtime: current.mtime });
         }
-        await writeDocAtomic(VAULT, p, markdown);
+        await vault.writeDocAtomic(p, markdown);
         await recon.reconcileHeld(new Map<string, ChangeReason>([[p, "write"]]));
         // read the result back off disk: a write that landed must never be
         // reported as a server fault because an index lookup missed
@@ -1216,14 +1199,14 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
 
   if (rest === "vault/recipient") {
     if (method !== "GET") return fail(405, "method-not-allowed", { message: `${method} /api/vault/recipient` });
-    const keys = await readVaultKeys(VAULT);
+    const keys = await vault.readKeys();
     if (!keys.recipient) return fail(404, "no-identity", { message: "This vault has no age recipient yet." });
     return json({ recipient: keys.recipient });
   }
 
   if (rest === "vault/identity") {
     if (method === "GET") {
-      const keys = await readVaultKeys(VAULT);
+      const keys = await vault.readKeys();
       if (!keys.identity) return fail(404, "no-identity", { message: "This vault has no age identity yet." });
       /* the body IS the armor — the client hands it straight to the worker,
          and a JSON wrapper would only be one more place to re-encode it */
@@ -1243,7 +1226,7 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
       // 64 KiB is ~100× a wrapped X25519 identity; anything larger is not one
       if (identity.length > 65536) return fail(413, "too-large", { message: "identity is implausibly large." });
 
-      const existing = await readVaultKeys(VAULT);
+      const existing = await vault.readKeys();
       const present = !!(existing.identity || existing.recipient);
       if (present && body?.replace !== true)
         return fail(409, "exists", {
@@ -1251,7 +1234,7 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
           recipient: existing.recipient,
         });
 
-      await writeVaultKeys(VAULT, identity, recipient);
+      await vault.writeKeys(identity, recipient);
       /* `.znotes/` is invisible to the doc reconciler, so nothing else would
          ever ask git to commit the new keyring — both files are in
          TRACKED_META (git.ts) and this is what stages them (SPEC §7). */

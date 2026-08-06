@@ -12,7 +12,7 @@
 
 import type { Index } from "./db.ts";
 import { TERMINAL_PASSWORD_KEY, hashTerminalPassword } from "./terminal.ts";
-import { settingsPath } from "./vault.ts";
+import type { Vault } from "./vault.ts";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -273,7 +273,7 @@ export class Settings {
       only way to tell "the file changed under us" from "the file is ours". */
   private onDisk: string | null = null;
 
-  constructor(private readonly vault: string, private readonly index: Index) {}
+  constructor(private readonly vault: Vault, private readonly index: Index) {}
 
   /**
    * `meta` is server-declared capability, not user state (API.md § Settings).
@@ -293,7 +293,7 @@ export class Settings {
 
   /** Read settings.toml, absorbing any raw credentials it carries. */
   async load(): Promise<void> {
-    const file = Bun.file(settingsPath(this.vault));
+    const file = Bun.file(this.vault.settingsPath);
     let parsed: Json = {};
     this.onDisk = null;
     if (await file.exists()) {
@@ -358,7 +358,7 @@ export class Settings {
    * save. Cheap: one small read on the settings routes only.
    */
   async reloadIfChanged(): Promise<boolean> {
-    const file = Bun.file(settingsPath(this.vault));
+    const file = Bun.file(this.vault.settingsPath);
     if (!(await file.exists())) return false; // gone: persist() re-creates it
     const text = await file.text().catch(() => null);
     if (text == null || text === this.onDisk) return false;
@@ -374,7 +374,7 @@ export class Settings {
    * Returns true if the file carried one.
    */
   async absorbFileCredentials(): Promise<boolean> {
-    const file = Bun.file(settingsPath(this.vault));
+    const file = Bun.file(this.vault.settingsPath);
     if (!(await file.exists())) return false;
     let parsed: Json;
     try {
@@ -786,7 +786,7 @@ export class Settings {
 
   /** Stable, human-readable serialisation — credentials never included. */
   private async persist(): Promise<void> {
-    const target = settingsPath(this.vault);
+    const target = this.vault.settingsPath;
     await mkdir(dirname(target), { recursive: true });
     const text = serializeToml(this.data);
     const file = Bun.file(target);

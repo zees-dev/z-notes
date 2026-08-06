@@ -67,7 +67,7 @@ function realContained(root: string, abs: string): boolean {
 }
 
 /** Absolute path for a vault-relative path, or null if it escapes the vault. */
-export function absOf(vault: string, rel: string): string | null {
+function absOf(vault: string, rel: string): string | null {
   const root = resolve(vault);
   const abs = resolve(root, rel);
   if (abs !== root && !abs.startsWith(root + "/")) return null;
@@ -78,19 +78,19 @@ export function absOf(vault: string, rel: string): string | null {
 }
 
 export const znotesDir = (vault: string) => resolve(vault, ".znotes");
-export const dbPath = (vault: string) => resolve(vault, ".znotes", "index.db");
-export const settingsPath = (vault: string) => resolve(vault, ".znotes", "settings.toml");
+const dbPath = (vault: string) => resolve(vault, ".znotes", "index.db");
+const settingsPath = (vault: string) => resolve(vault, ".znotes", "settings.toml");
 const identityPath = (vault: string) => resolve(vault, ".znotes", "identity.age");
 const recipientPath = (vault: string) => resolve(vault, ".znotes", "vault.pub");
 
 /** Display name for the vault. A directory literally called `vault` borrows
     its parent's name, which is what the prototype showed ("z-notes"). */
-export function vaultName(vault: string): string {
+function vaultName(vault: string): string {
   const b = basename(resolve(vault));
   return b === "vault" ? basename(dirname(resolve(vault))) : b;
 }
 
-export function vaultRoot(vault: string): string {
+function vaultRoot(vault: string): string {
   const abs = resolve(vault);
   const home = process.env.HOME || "";
   return home && abs.startsWith(home + "/") ? "~" + abs.slice(home.length) : abs;
@@ -579,7 +579,7 @@ interface DiskDoc {
   mtimeMs: number;
 }
 
-export async function readDoc(vault: string, rel: string): Promise<DiskDoc | null> {
+async function readDoc(vault: string, rel: string): Promise<DiskDoc | null> {
   const abs = absOf(vault, rel);
   if (!abs) return null;
   const file = Bun.file(abs);
@@ -605,7 +605,7 @@ export async function readDoc(vault: string, rel: string): Promise<DiskDoc | nul
 
 /** The stat half of readDoc alone — for the reconciler's cheap gate, which
     must not pay for a read+decode of a doc it is about to skip. */
-export async function statDoc(vault: string, rel: string): Promise<{ size: number; mtimeMs: number } | null> {
+async function statDoc(vault: string, rel: string): Promise<{ size: number; mtimeMs: number } | null> {
   const abs = absOf(vault, rel);
   if (!abs) return null;
   try {
@@ -616,7 +616,7 @@ export async function statDoc(vault: string, rel: string): Promise<{ size: numbe
   }
 }
 
-export async function exists(vault: string, rel: string): Promise<"file" | "dir" | null> {
+async function exists(vault: string, rel: string): Promise<"file" | "dir" | null> {
   const abs = absOf(vault, rel);
   if (!abs) return null;
   try {
@@ -631,7 +631,7 @@ export async function exists(vault: string, rel: string): Promise<"file" | "dir"
     null when the way is clear. `mkdir -p` through a file throws ENOTDIR out of
     a route; naming the real problem beats surfacing an errno. Shared by
     POST /api/docs, the move, and the trash restore. */
-export async function blockedByFile(vault: string, target: string): Promise<string | null> {
+async function blockedByFile(vault: string, target: string): Promise<string | null> {
   const segs = target.split("/");
   let acc = "";
   for (let i = 0; i < segs.length - 1; i++) {
@@ -645,7 +645,7 @@ export async function blockedByFile(vault: string, target: string): Promise<stri
  * Atomic write: temp file inside .znotes/tmp (same filesystem) then rename into
  * place, so a reconcile triggered mid-write can never read half a file.
  */
-export async function writeDocAtomic(vault: string, rel: string, text: string): Promise<DiskDoc> {
+async function writeDocAtomic(vault: string, rel: string, text: string): Promise<DiskDoc> {
   const abs = absOf(vault, rel);
   if (!abs) throw new Error("bad-path");
   await mkdir(dirname(abs), { recursive: true });
@@ -712,7 +712,7 @@ interface VaultKeys {
   recipient: string | null;
 }
 
-export async function readVaultKeys(vault: string): Promise<VaultKeys> {
+async function readVaultKeys(vault: string): Promise<VaultKeys> {
   const read = async (abs: string) => {
     const f = Bun.file(abs);
     if (!(await f.exists())) return null;
@@ -743,7 +743,7 @@ export const PREV_IDENTITY = "identity.age.prev";
  * identity is moved aside first and only deleted once the new pair is complete.
  * No window destroys a key: every intermediate state is recoverable.
  */
-export async function writeVaultKeys(vault: string, identity: string, recipient: string): Promise<void> {
+async function writeVaultKeys(vault: string, identity: string, recipient: string): Promise<void> {
   const dir = znotesDir(vault);
   await mkdir(dir, { recursive: true });
   const tmpDir = resolve(dir, "tmp");
@@ -772,7 +772,7 @@ export async function writeVaultKeys(vault: string, identity: string, recipient:
   }
 }
 
-export async function makeFolder(vault: string, rel: string): Promise<void> {
+async function makeFolder(vault: string, rel: string): Promise<void> {
   const abs = absOf(vault, rel);
   if (!abs) throw new Error("bad-path");
   await mkdir(abs, { recursive: true });
@@ -789,7 +789,7 @@ export async function makeFolder(vault: string, rel: string): Promise<void> {
  * `includeSelf` distinguishes the two callers: a folder create wants the leaf
  * counted, a doc create stops at the leaf's parent.
  */
-export async function missingFolders(vault: string, rel: string, includeSelf: boolean): Promise<string[]> {
+async function missingFolders(vault: string, rel: string, includeSelf: boolean): Promise<string[]> {
   const segs = rel.split("/");
   const depth = includeSelf ? segs.length : segs.length - 1;
   const out: string[] = [];
@@ -808,7 +808,7 @@ export async function missingFolders(vault: string, rel: string, includeSelf: bo
  * these keeps its folder, and nothing that was on disk before the failed create
  * can be removed by it.
  */
-export async function pruneEmptyFolders(vault: string, rels: string[]): Promise<void> {
+async function pruneEmptyFolders(vault: string, rels: string[]): Promise<void> {
   for (let i = rels.length - 1; i >= 0; i--) {
     const abs = absOf(vault, rels[i]);
     if (!abs) continue;
@@ -847,7 +847,7 @@ export function sameNode(a: string, b: string): boolean {
  * value), so a caller rolling the move back can remove the empty scaffolding it
  * left behind instead of parking a stray folder in the tree.
  */
-export async function moveNode(vault: string, from: string, to: string): Promise<{ created: string | null }> {
+async function moveNode(vault: string, from: string, to: string): Promise<{ created: string | null }> {
   const src = absOf(vault, from);
   const dst = absOf(vault, to);
   if (!src || !dst) throw new Error("bad-path");
@@ -864,7 +864,7 @@ async function removeNode(vault: string, rel: string): Promise<void> {
 }
 
 /** Every .md under the vault, vault-relative, excluding dot-directories. */
-export async function scanDocs(vault: string): Promise<string[]> {
+async function scanDocs(vault: string): Promise<string[]> {
   const glob = new Bun.Glob("**/*.md");
   const out: string[] = [];
   for await (const rel of glob.scan({ cwd: resolve(vault), onlyFiles: true, dot: false })) {
@@ -887,7 +887,7 @@ export async function scanDocs(vault: string): Promise<string[]> {
  * the worktree and alive in HEAD, permanently, with no in-app way to clear it.
  * The commit pathspec is built from this instead.
  */
-export async function scanTree(vault: string, rel: string): Promise<string[]> {
+async function scanTree(vault: string, rel: string): Promise<string[]> {
   const root = resolve(vault);
   const base = absOf(vault, rel);
   if (!base) return [];
@@ -913,7 +913,7 @@ export async function scanTree(vault: string, rel: string): Promise<string[]> {
 
 /** Every directory under the vault, vault-relative, excluding dot-directories.
     Folders exist on disk, so an empty one survives a database rebuild. */
-export async function scanFolders(vault: string): Promise<string[]> {
+async function scanFolders(vault: string): Promise<string[]> {
   const root = resolve(vault);
   const out: string[] = [];
   const walk = async (rel: string) => {
@@ -1008,4 +1008,90 @@ export function buildTree(
   };
 
   return assemble("");
+}
+
+/* ============================================================
+   Vault — the disk half of this module, bound to one root.
+
+   Everything above that takes text is a pure function and stays importable;
+   everything that touches the filesystem threads the same root path, so it
+   lives here as a method and the path is threaded exactly once, in the
+   constructor. `root` is public for the few callers that genuinely need the
+   raw path (git's spawn cwd, the fs watcher, the sqlite file).
+   ============================================================ */
+
+export class Vault {
+  constructor(readonly root: string) {}
+
+  /** lexically-safe rel path → absolute path, or null when a symlink escapes */
+  abs(rel: string): string | null {
+    return absOf(this.root, rel);
+  }
+
+  get znotesDir(): string {
+    return znotesDir(this.root);
+  }
+  get dbPath(): string {
+    return dbPath(this.root);
+  }
+  get settingsPath(): string {
+    return settingsPath(this.root);
+  }
+  get name(): string {
+    return vaultName(this.root);
+  }
+  /** the real (symlink-resolved) root, for containment comparisons */
+  get realRoot(): string {
+    return vaultRoot(this.root);
+  }
+
+  readDoc(rel: string): Promise<DiskDoc | null> {
+    return readDoc(this.root, rel);
+  }
+  statDoc(rel: string): Promise<{ size: number; mtimeMs: number } | null> {
+    return statDoc(this.root, rel);
+  }
+  exists(rel: string): Promise<"file" | "dir" | null> {
+    return exists(this.root, rel);
+  }
+  /** first ancestor of `target` that is a FILE (a doc blocking a folder), or null */
+  blockedByFile(target: string): Promise<string | null> {
+    return blockedByFile(this.root, target);
+  }
+  writeDocAtomic(rel: string, text: string): Promise<DiskDoc> {
+    return writeDocAtomic(this.root, rel, text);
+  }
+
+  makeFolder(rel: string): Promise<void> {
+    return makeFolder(this.root, rel);
+  }
+  missingFolders(rel: string, includeSelf: boolean): Promise<string[]> {
+    return missingFolders(this.root, rel, includeSelf);
+  }
+  pruneEmptyFolders(rels: string[]): Promise<void> {
+    return pruneEmptyFolders(this.root, rels);
+  }
+  moveNode(from: string, to: string): Promise<{ created: string | null }> {
+    return moveNode(this.root, from, to);
+  }
+  removeNode(rel: string): Promise<void> {
+    return removeNode(this.root, rel);
+  }
+
+  scanDocs(): Promise<string[]> {
+    return scanDocs(this.root);
+  }
+  scanTree(rel: string): Promise<string[]> {
+    return scanTree(this.root, rel);
+  }
+  scanFolders(): Promise<string[]> {
+    return scanFolders(this.root);
+  }
+
+  readKeys(): Promise<VaultKeys | null> {
+    return readVaultKeys(this.root);
+  }
+  writeKeys(identity: string, recipient: string): Promise<void> {
+    return writeVaultKeys(this.root, identity, recipient);
+  }
 }

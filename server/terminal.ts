@@ -59,7 +59,7 @@ import { join, resolve } from "node:path";
 import type { CommandRow, Index } from "./db.ts";
 import type { Settings } from "./settings.ts";
 import { sseResponse } from "./sse.ts";
-import { ARMOR_BEGIN, ARMOR_CANARY, ARMOR_END, hasSecrets } from "./vault.ts";
+import { ARMOR_BEGIN, ARMOR_CANARY, ARMOR_END, hasSecrets, type Vault } from "./vault.ts";
 
 /* ============================================================
    Password — scrypt, mirroring the vault's crypto posture
@@ -248,7 +248,7 @@ interface Running {
 }
 
 interface TerminalDeps {
-  vault: string;
+  vault: Vault;
   settings: Settings;
   index: Index;
   log: (line: string) => void;
@@ -322,7 +322,7 @@ export class Terminal {
 
   private startupCwd(): string {
     const configured = String(this.deps.settings.value("terminal.startupCwd", "") || "").trim();
-    return this.usableDir(configured) || resolve(this.deps.vault);
+    return this.usableDir(configured) || this.deps.vault.root;
   }
 
   private usableDir(p: string | null | undefined): string | null {
@@ -577,7 +577,7 @@ export class Terminal {
       unlocked: !!s,
       ready: this.available() && !!s,
       cwd: this.cwd,
-      vaultRoot: resolve(this.deps.vault),
+      vaultRoot: this.deps.vault.root,
       shell: this.shell(),
       idleLockMinutes: Number(this.deps.settings.value("terminal.idleLockMinutes", 10)),
       allowAiAutoRun: this.allowAiAutoRun(),
@@ -623,7 +623,7 @@ export class Terminal {
     for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
     env.__ZNOTES_CWD_IN = cwdIn;
     env.__ZNOTES_CWD_OUT = cwdOut;
-    env.ZNOTES_VAULT = resolve(this.deps.vault);
+    env.ZNOTES_VAULT = this.deps.vault.root;
     /* There is no terminal on the other end of these pipes. Everything below
        turns a program that would BLOCK waiting for one into a program that
        either behaves or says why it cannot — the difference between a hung
