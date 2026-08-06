@@ -3,9 +3,9 @@
 # This file must live at the CONTEXT root (the repo root), not next to the
 # Dockerfile — that is where every docker/buildkit/podman version looks for it.
 #
-# The Dockerfile also COPYs an explicit file list rather than `COPY . .`, so
-# this is defence in depth: it keeps secrets and bulk out of the tarball that
-# is uploaded to the daemon in the first place.
+# The Dockerfile also COPYs explicit paths rather than `COPY . .`, so this is
+# defence in depth: it keeps secrets and bulk out of the tarball that is
+# uploaded to the daemon in the first place.
 
 .git
 .gitignore
@@ -23,10 +23,8 @@ node_modules/
 dist/
 
 tests/
-prototypes/
-wayfinder/
 .scratch/
-SPEC.md
+docs/
 # safe to exclude: the file named by `-f` and this file are always sent to the
 # builder regardless of the ignore list
 deploy/

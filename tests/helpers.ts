@@ -7,7 +7,7 @@
      - `bun server.ts` at the repo root, env ZNOTES_VAULT / ZNOTES_PORT
      - one ready line on stdout: "z-notes listening on http://localhost:<port>"
      - clean exit on SIGTERM
-     - HTTP contract per prototypes/app/API.md + SPEC.md §3 deltas
+     - HTTP contract per docs/API.md + SPEC.md §3 deltas
      - SSE at /events
 
    Every test spawns its own server against its own freshly-built temp vault,
@@ -592,7 +592,7 @@ async function pumpLines(
 }
 
 /* ------------------------------------------------------------------
-   reference fuzzy scorer — ported verbatim from prototypes/app/sw.js.
+   reference fuzzy scorer — ported verbatim from the retired prototype mock.
 
    The gate is not "the server produced some numbers": the frontend's
    highlighter paints `matches` straight onto `text`, so the offsets have to be

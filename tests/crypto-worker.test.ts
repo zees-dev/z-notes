@@ -352,7 +352,7 @@ describe("crypto worker — an indented block decrypts (research §4.1)", () => 
 
 /* ============================================================
    `rewrap` — change the PASSPHRASE without changing the KEY
-   (SPEC §6; wayfinder/research/secrets-crypto.md §5.3, the "routine" half)
+   (SPEC §6; docs/secrets-crypto.md §5.3, the "routine" half)
 
    The whole security argument for offering this in Settings at all is that the
    KEY is invariant: same identity, same recipient, no corpus pass, so every

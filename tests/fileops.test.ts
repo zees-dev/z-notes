@@ -1,7 +1,7 @@
 /* ============================================================
    fileops.test.ts — PHASE 5 acceptance gate.
 
-   SPEC §3 delta 2, §5, §8; wayfinder/tickets/15-grilling-data-model.md.
+   SPEC §3 delta 2, §5, §8.
 
    The contract this file holds the backend to — written against the SPEC, not
    against the implementation:

@@ -1,16 +1,8 @@
----
-label: wayfinder:research
-title: Secrets crypto design — inline encrypted blocks
-ticket: ../tickets/09-research-secrets-crypto.md
-researched: 2026-07-31
----
-
 # Secrets crypto design — inline encrypted ```` ```age ```` blocks
 
 Scope: the on-disk format, KDF, cipher, key lifecycle and leak-surface rules for
 inline encrypted regions in z-notes. Everything client-side, no external
-services, ciphertext committed to git, server never sees plaintext
-([ticket 03](../tickets/03-secrets-model.md)).
+services, ciphertext committed to git, server never sees plaintext.
 
 **Headline:** don't hand-roll an armor format. Use the **age v1 file format**
 (C2SP-specified, multiple interoperable implementations) inside a fenced
@@ -245,7 +237,7 @@ Rules:
   spec version — self-describing, and authenticated by the header MAC.
 - **Prefer top-level blocks.** Inside a list item the block must carry the list's
   indentation; the lossless round-trip contract
-  ([ticket 01](../tickets/01-editor-paradigm.md)) must treat the fence as a
+  must treat the fence as a
   verbatim-preserved node including indentation.
 
 ### 4.2 Round-trip and git behaviour
@@ -261,7 +253,7 @@ Rules:
   ciphertext) and every save produces a garbage git diff.
 - **Merges:** ciphertext changes wholesale on every re-encrypt, so a line-level
   three-way merge inside an armor block always produces an undecryptable
-  Frankenstein. Sync policy ([ticket 14](../tickets/14-grilling-sync-policy.md))
+  Frankenstein. Sync policy
   must treat a conflicted secret block as **choose-a-side, never merge**, and
   the app must loudly flag any `age` fence whose body fails armor parsing or MAC
   verification.
@@ -362,12 +354,12 @@ which contains armor only.**
 | **SQLite / FTS index** | plaintext indexed, and FTS5 shadow tables + WAL + temp files keep copies | The indexer consumes the same stored markdown. Strip `age` blocks before tokenizing and index a fixed placeholder token (e.g. `⟦secret⟧`) plus the block's ordinal, so search can answer "which notes contain secrets" without content. Don't index the armor either (useless tokens, index bloat, ciphertext-at-rest in a second place). |
 | **Server / bun backend** | plaintext in request bodies or logs | Structural: there is **no API endpoint that accepts plaintext**. The write endpoint takes the markdown-as-stored. Disable request-body logging on file write/read routes; don't log armor either. |
 | **AI endpoint** | highest-value leak — whatever the client sends leaves the machine | Redact **client-side, at context-assembly time, on the AST**: replace each `age` block with `[encrypted secret block redacted]`. Context builders read from stored markdown, never from the rendered/revealed view — the revealed plaintext lives in the worker + one DOM node and is never a context source. There must be no "include decrypted secret" affordance at all. Defence in depth: a server-side pass-through filter on the AI proxy that refuses any payload containing `BEGIN AGE ENCRYPTED FILE` (cheap canary — the presence of armor in an AI payload means the redactor failed). |
-| **AI chat history** | user pastes a secret into chat; history persists to sqlite | Out of scope here but flag to [ticket 16](../tickets/16-grilling-ai-interaction.md): chat storage must be excluded from FTS and ideally encrypted to the vault recipient too. |
+| **AI chat history** | user pastes a secret into chat; history persists to sqlite | Out of scope here, but: chat storage must be excluded from FTS and ideally encrypted to the vault recipient too. |
 | **Editor undo stack / drafts** | plaintext in a persisted draft | Undo history stays in memory (fine); **no** localStorage draft persistence or crash-recovery snapshot may include a revealed block. |
 | **DOM-adjacent services** | spellcheck/autocorrect/Grammarly ship text to remote servers | On the reveal editor: `spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-gramm="false" data-enable-grammarly="false"`. |
 | **Clipboard** | copy-secret is a real need | `navigator.clipboard.writeText` + best-effort clear after 30 s + a visible countdown. Clipboard managers are outside the boundary; say so. |
 | **Raw HTML in notes** | a note containing `<script>` = XSS = key theft while unlocked | Renderer must not execute raw HTML — strict allowlist sanitization, or no raw HTML at all. This is a hard requirement, not a preference. |
-| **Secure context** | `crypto.subtle` is undefined without one | `http://localhost` / `http://127.0.0.1` / `http://*.localhost` are potentially-trustworthy origins ([MDN](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Secure_Contexts)); `http://192.168.x.x` is **not**. Any LAN/mobile exposure ([ticket 13](../tickets/13-grilling-exposure-auth.md)) needs real TLS (mkcert or a tunnel) or the crypto simply doesn't exist in the client. |
+| **Secure context** | `crypto.subtle` is undefined without one | `http://localhost` / `http://127.0.0.1` / `http://*.localhost` are potentially-trustworthy origins ([MDN](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Secure_Contexts)); `http://192.168.x.x` is **not**. Any LAN/mobile exposure needs real TLS (mkcert or a tunnel) or the crypto simply doesn't exist in the client. |
 | **External CLI use** | user decrypts to a temp file in vim/shell | Document `age -d ... \| less`; `.gitignore` obvious plaintext scratch names; never have the app write a plaintext temp file for any reason. |
 
 ---
@@ -431,8 +423,7 @@ accepting the leak and documenting it.
 
 ### 7.4 Fallback if the dependency is rejected
 
-If the "vetted dependencies" review
-([ticket 05](../tickets/05-frontend-deps-policy.md)) rejects a 0.x library, the
+If the "vetted dependencies" policy rejects a 0.x library, the
 zero-dependency alternative is pure WebCrypto — but implement it with the same
 architecture (vault key + passphrase-wrapped keyring), only swapping primitives:
 

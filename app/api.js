@@ -3,7 +3,7 @@
 
    THE ONLY FILE IN THIS APP THAT TOUCHES THE NETWORK.
    Nothing else may call fetch(), EventSource, WebSocket or XHR.
-   It implements exactly the contract in prototypes/app/API.md (normative,
+   It implements exactly the contract in docs/API.md (normative,
    SPEC §3) and knows nothing about who serves it — today server.ts.
    ============================================================ */
 "use strict";

@@ -6,18 +6,17 @@ A theme is **one CSS file that sets custom properties**. It is loaded after
 
 ```
 themes/base.css      structure, layout, behaviour, token defaults  ← never edit per theme
-themes/modern.css    Modern    (ported from 01-modern.html)
-themes/minimal.css   Minimal   (ported from 02-minimal.html) — tokens only, zero selectors
-themes/terminal.css  Terminal  (ported from 04-terminal.html)
+themes/modern.css    Modern
+themes/minimal.css   Minimal   — tokens only, zero selectors
+themes/terminal.css  Terminal
 ```
 
 ## Adding one
 
 1. Copy `modern.css` to `themes/<id>.css` and change the values.
-2. Register it in the backend's settings metadata — in the mock that is
-   `SETTINGS_META.themes` in `sw.js`; in the real backend it is whatever serves
-   `GET /api/settings`. The Settings › Theme control is built from that list, so
-   the frontend needs no change at all.
+2. Register it in the backend's settings metadata (the `meta.themes` list served
+   by `GET /api/settings`, declared in `settings.ts`). The Settings › Theme
+   control is built from that list, so the frontend needs no change at all.
 3. Test with `?theme=<id>` (see below).
 
 ## Two axes

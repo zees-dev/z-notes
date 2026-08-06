@@ -1,17 +1,15 @@
 # z-notes API — v0
 
-The frontend in `prototypes/app/` talks to **nothing but this contract**. `api.js` is the
-only file that opens a socket; `app.js` has no vault data, no document text and no `fetch`.
-`sw.js` is a throwaway mock that implements the whole contract in memory so the UI can be
-built and reviewed before the bun backend exists. The real backend implements the same
-routes and the frontend does not change.
+The frontend in `app/` talks to **nothing but this contract**. `api.js` is the
+only file that opens a socket; the rest of the frontend has no `fetch`. Anything that
+serves these routes can sit behind it — the bun backend is the implementation, and the
+frontend does not change if the implementation does.
 
 ## Conventions
 
-- **Base.** Every path below is relative to an API root. In production the root is `/`
-  (so `GET /api/docs`). In the mock the root is the app's own directory (`/app/`), because a
-  service worker may only intercept requests inside its scope — `api.js` resolves paths
-  against `new URL('./', import.meta.url)`. Everything else about the contract is identical.
+- **Base.** Every path below is relative to an API root — `/` in production
+  (so `GET /api/docs`); `api.js` resolves paths against `new URL('./', import.meta.url)`,
+  so the contract survives being served from a sub-path.
 - **Encoding.** Requests and responses are `application/json; charset=utf-8` unless stated.
   Markdown travels as a JSON string field, never as a raw body.
 - **Doc paths** are vault-relative POSIX paths without a leading slash
@@ -26,8 +24,6 @@ routes and the frontend does not change.
   `413 {"error":"too-large","limit":8388608}` on every write route. A note is text a human
   typed; the index stores each document twice (row + FTS shadow) inside the vault, so an
   unbounded body is a disk and memory cost with no legitimate caller.
-- **Latency.** The mock delays every response 30–80 ms so the UI is exercised against a
-  network that is not instantaneous.
 
 ## Status codes
 
@@ -130,7 +126,7 @@ Refusals — nothing is written by any of them:
 A doc path gets `.md` appended if it lacks it, so `{"path":"a/b/c"}` with `type:"doc"` creates
 `a/b/c.md` and the reply names the `.md` path.
 
-### `PATCH /api/docs/{path}` — rename / move *(real backend — SPEC §3 delta 2, phase 5)*
+### `PATCH /api/docs/{path}` — rename / move *(SPEC §3 delta 2)*
 
 ```json
 { "to": "archive/2026/z-notes-design.md" }
@@ -190,7 +186,7 @@ byte, and ciphertext is never edited.
 Emits the `doc-changed` pair described under [Events](#events) for every moved path, plus
 `"reason":"write"` for every doc whose links were rewritten.
 
-### `DELETE /api/docs/{path}` *(real backend — phase 5)*
+### `DELETE /api/docs/{path}`
 
 → `204`, no body. Moves a doc, or a folder and everything under it, to a
 self-describing entry below `.znotes/trash/<id>/`. The departure and retained copy land in
@@ -211,7 +207,7 @@ something used to be there. Restoring the entry makes those links resolve again.
 
 ---
 
-## Trash *(real backend, additive)*
+## Trash
 
 The trash is outside the document namespace. Its payload lives under `.znotes/trash/`,
 which the vault scan, search, backlink graph and AI context all exclude. Each entry has an
@@ -276,28 +272,13 @@ bounded to 1–365 days; zero never means “delete immediately”.
 
 ## Secrets
 
-### `POST /api/secrets/unlock`
+Decryption is client-side (SPEC §3 delta 1): no passphrase ever reaches the server. Every
+`/api/secrets/*` request answers `404 {"error":"secrets-client-side"}` — a stable slug
+clients branch on. The client uses the vault keyring routes below plus a crypto Web Worker.
 
-```json
-{ "path": "keys/cloud-keys.md", "passphrase": "…" }
-```
+### The vault keyring
 
-→ `200 { "path": "...", "plaintext": "AWS_ACCESS_KEY_ID=…\n…", "identity": "age · x25519" }`
-
-The plaintext exists only in this response — it is never in `GET /api/docs`, never on disk in
-the clear, and the client is expected to hold it in memory only. `401 {"error":"bad-passphrase"}`
-when decryption fails (the mock accepts any non-empty passphrase). `404` if the doc has no
-armored block.
-
-**Mock only. Removed in the real backend.** SPEC §3 delta 1: decryption is client-side and
-no passphrase ever reaches the server. Every `/api/secrets/*` request there answers
-`404 {"error":"secrets-client-side"}` — a stable slug clients branch on. The real client
-(`app/api.js`) no longer has an `unlockSecret` call at all; it uses the vault keyring routes
-below plus a crypto Web Worker.
-
-### The vault keyring *(real backend, additive — phase 3)*
-
-Three routes replace the mock's unlock endpoint. They move **ciphertext and a public key,
+Three routes. They move **ciphertext and a public key,
 nothing else**: the identity arrives already encrypted under the user's passphrase (age
 scrypt recipient, logN=18, done in the browser), and the server never decrypts, never
 derives a key and never sees a passphrase or a plaintext. Validation is shape-only.
@@ -725,7 +706,7 @@ BPE count, not a character heuristic.) A session also carries `degraded` — the
 
 → `200` session object. Always exists (created lazily).
 
-### `GET /api/ai/status` · `POST /api/ai/status` *(real backend, additive)*
+### `GET /api/ai/status` · `POST /api/ai/status`
 
 ```json
 { "status": { "state": "ok", "model": "gpt-5", "effort": "high", "…": "…" },
@@ -770,12 +751,9 @@ Body: `{}` or `{ "keepStack": true }`. Starts a fresh session; the thread is cle
 }
 ```
 
-The mock replies from a canned rotation and returns no new proposal; the two seeded
-proposals are the ones the UI demonstrates.
+#### Streaming *(SPEC §3 delta 4)*
 
-#### Streaming *(real backend — SPEC §3 delta 4, phase 4)*
-
-The real backend **streams** this route instead of returning the blob above. The response is
+The backend **streams** this route instead of returning the blob above. The response is
 `200 text/event-stream; charset=utf-8` (`cache-control: no-store`, `x-accel-buffering: no`,
 no gzip). Errors raised *before* the stream opens are still ordinary JSON — `400
 {"error":"empty-message"}` is the only one.
@@ -972,7 +950,7 @@ reason in `commitNote`.
 
 On success the pre-image is restored byte-for-byte, the entry is popped, the proposal returns
 to `pending` (it can be accepted again) and the response is the same shape as `accept`.
-Emits `doc-changed` (real backend: `"reason":"proposal-reverted"`).
+Emits `doc-changed` (`"reason":"proposal-reverted"`).
 
 *Real backend (phase 4):* before restoring anything the server re-reads the file and
 requires it to still equal the post-image it wrote. If it drifted — an edit in vim, a `git
@@ -993,7 +971,7 @@ if it is on the stack — revert first. → `200 { "proposal": … }`.
 
 ---
 
-## Terminal *(real backend, additive — phase 7; SPEC §13)*
+## Terminal *(SPEC §13)*
 
 A password-locked **streaming command runner** on the machine the vault lives on. It is not a
 terminal emulator and does not pretend to be one: bun has no PTY, so full-screen and
@@ -1246,7 +1224,7 @@ delete, restore, permanent deletion or sweep, so clients repaint the disclosure 
 server list rather than maintaining a second local trash index.
 
 `reason` ∈ `write | created | proposal-accepted | proposal-reverted | external | moved |
-deleted` — `external` is the real backend's fs-watch reconcile telling open editors the file
+deleted` — `external` is the fs-watch reconcile telling open editors the file
 moved under them. Clients that just wrote compare `rev` with their own and ignore the echo.
 (`moved` and `deleted` are additive, phase 5; a client that does not know them still
 converges, because both carry `removed: true` on the path that went away.)
@@ -1326,7 +1304,7 @@ and whatever doc is open. Settings do not move it — see `settings-changed` abo
 
 ## App shell
 
-### `GET /d/{path}` — the doc URL *(real backend, additive — phase 6)*
+### `GET /d/{path}` — the doc URL
 
 Not an API route: the SPA shell. The frontend gives every open doc its own URL so a doc can
 be linked, refreshed into, and walked back to with the browser's Back button, and `/d/` is
@@ -1349,7 +1327,7 @@ Because the shell is served from more than one depth, `index.html` carries `<bas
 root in `api.js` and the crypto worker's URL resolving against the app root instead of
 against whatever doc URL is in the address bar.
 
-### `GET /settings`, `GET /settings/{section}` — the settings page *(real backend, additive)*
+### `GET /settings`, `GET /settings/{section}` — the settings page
 
 The frontend's other routing space, and the same kind of thing as `/d/{path}`: Settings is a
 **page** in the editor pane, not a modal, so it has a real address that can be deep-linked,

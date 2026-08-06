@@ -38,7 +38,7 @@ import { CREDENTIAL_FILE_KEYS } from "./settings.ts";
 import { trashGitPaths } from "./trash.ts";
 import { scanDocs, znotesDir } from "./vault.ts";
 
-/* ---------- contract (prototypes/app/API.md § Sync) ---------- */
+/* ---------- contract (docs/API.md § Sync) ---------- */
 
 export type SyncState = "synced" | "syncing" | "offline" | "error";
 

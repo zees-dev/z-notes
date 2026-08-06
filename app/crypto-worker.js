@@ -2,7 +2,7 @@
    crypto-worker.js — the plaintext jail.
 
    EVERY cryptographic operation in z-notes happens here and nowhere else
-   (SPEC §6; wayfinder/research/secrets-crypto.md §5.2). Two reasons, both
+   (SPEC §6; docs/secrets-crypto.md §5.2). Two reasons, both
    load-bearing:
 
      1. scrypt at logN=18 is ~0.4–1s of synchronous work. On the main thread

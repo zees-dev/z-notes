@@ -1,10 +1,3 @@
----
-label: wayfinder:research
-ticket: 08-research-bun-capabilities
-title: Bun-native capabilities for the single-file backend
-created: 2026-07-31
----
-
 # Bun-native capabilities for the z-notes backend
 
 **Bottom line:** Bun 1.3.14 covers essentially the whole backend surface z-notes needs — routing, static

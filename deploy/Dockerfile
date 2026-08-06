@@ -48,8 +48,8 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 #
 #   1. `COPY *.ts` — every backend module lives flat at the repo root, so the
 #      glob IS the module set and cannot drift. (.dockerignore plus the repo's
-#      own hygiene keep stray .ts files out of the root; tests/, prototypes/
-#      and wayfinder/ are directories and don't match.)
+#      own hygiene keep stray .ts files out of the root; tests/, docs/
+#      and deploy/ are directories and don't match.)
 #   2. `bun build --target=bun server.ts` — resolves the ENTIRE static import
 #      graph from the real entrypoint. A missing module (say, a future
 #      lib/foo.ts that the glob doesn't cover) fails the BUILD, not the deploy.
