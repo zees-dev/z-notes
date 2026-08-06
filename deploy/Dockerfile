@@ -4,9 +4,10 @@
 # Build context is the REPO ROOT, not deploy/:
 #     docker build -f deploy/Dockerfile -t z-notes:0.1.0 .
 #
-# Two stages so the final image carries the runtime and nothing else: the
-# dependency install (and bun's ~/.bun/install/cache) stays in `deps` and is
-# never a layer in the image that ships.
+# Three stages so the final image carries the runtime and nothing else: the
+# dependency install (and bun's ~/.bun/install/cache) stays in `deps`, the
+# import-graph verification stays in `src`, and neither is a layer in the
+# image that ships.
 #
 # NO FRONTEND BUILD STEP — deliberately.
 #   `server.ts` serves the frontend as plain files out of `APP_DIR = <repo>/app`
@@ -38,31 +39,64 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
 
-# --- stage 2: runtime -------------------------------------------------------
+# --- stage 2: sources, with the import graph proven at build time ------------
+# This stage exists because the previous revision of this file shipped a
+# hand-maintained COPY list that silently went stale: sse.ts, terminal.ts and
+# trash.ts were added to the repo and the list was not updated, which would
+# have produced an image that dies at boot with "Cannot find module". Two
+# defences now:
+#
+#   1. `COPY *.ts` — every backend module lives flat at the repo root, so the
+#      glob IS the module set and cannot drift. (.dockerignore plus the repo's
+#      own hygiene keep stray .ts files out of the root; tests/, prototypes/
+#      and wayfinder/ are directories and don't match.)
+#   2. `bun build --target=bun server.ts` — resolves the ENTIRE static import
+#      graph from the real entrypoint. A missing module (say, a future
+#      lib/foo.ts that the glob doesn't cover) fails the BUILD, not the deploy.
+#      The bundle it emits is thrown away; only the resolution matters.
+#
+# node_modules is borrowed from `deps` for the graph check, then removed, so
+# the `COPY --from=src /src/ ./` in the runtime stage carries sources only.
+FROM oven/bun:1.3.14-slim AS src
+WORKDIR /src
+COPY package.json bun.lock ./
+COPY *.ts ./
+COPY app ./app
+COPY vendor ./vendor
+COPY --from=deps /src/node_modules ./node_modules
+RUN bun build --target=bun --outdir=/tmp/graph server.ts > /dev/null \
+ && rm -rf /tmp/graph node_modules
+
+
+# --- stage 3: runtime -------------------------------------------------------
 FROM oven/bun:1.3.14-slim AS runtime
 
-# git is a hard runtime dependency: SPEC §7 sync shells out to `git` via
-# Bun.spawn. ca-certificates is what lets that git push to GitHub over HTTPS.
+# Three packages, each earning its place:
+#   git             — hard runtime dependency: SPEC §7 sync shells out to `git`
+#                     via Bun.spawn.
+#   ca-certificates — what lets that git push to GitHub over HTTPS.
+#   procps          — `ps`, which terminal.ts's killTree() walks to signal a
+#                     cancelled command's whole process subtree (Bun.spawn has
+#                     no detached/setsid). Without it cancel degrades to
+#                     signalling the shell only, and a `sleep 300` child keeps
+#                     the output stream open after the user pressed Ctrl+C.
 # Nothing else is installed — in particular no curl/wget, because the k8s
 # probes are httpGet (the kubelet makes the request, not the container) and
 # the plain-docker HEALTHCHECK below uses the bun that is already here.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
+ && apt-get install -y --no-install-recommends git ca-certificates procps \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# node_modules first: it changes only when bun.lock does, so the source COPY
-# below can invalidate on every commit without re-installing anything.
+# node_modules first: its layer is content-addressed, so it re-ships only when
+# bun.lock actually changes even though source edits rebuild the stages above.
 COPY --from=deps --chown=bun:bun /src/node_modules ./node_modules
 
-# Explicit file list, not `COPY . .` — tests/, prototypes/, wayfinder/, vault/
-# and .git must not be in the image. bun.lock is NOT optional at runtime:
-# server.ts hashes it into the /vendor/age.<hash>.js cache key.
-COPY --chown=bun:bun package.json bun.lock ./
-COPY --chown=bun:bun server.ts vault.ts watch.ts db.ts settings.ts git.ts ai.ts ./
-COPY --chown=bun:bun app ./app
-COPY --chown=bun:bun vendor ./vendor
+# Everything else comes from the verified `src` stage in one copy: package.json,
+# bun.lock, the ten backend modules, app/, vendor/. bun.lock is NOT optional at
+# runtime: server.ts hashes it into the /vendor/age.<hash>.js cache key.
+COPY --from=src --chown=bun:bun /src/ ./
 
 # The vault is a MOUNT POINT, never baked in. It is created empty and owned by
 # the runtime user so a plain `docker run -v` also works; in k8s the PVC covers
