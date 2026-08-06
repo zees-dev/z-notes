@@ -340,6 +340,33 @@ export class Index {
    * text, and `SELECT *` made every one of them allocate and discard the whole
    * vault — on every SSE-driven tree refresh and every 404.
    */
+  /** GET /api/search: fuzzy over paths + redacted bodies (top 2 hit lines per doc). */
+  search(q: string, limit: number): SearchHit[] {
+    const out: SearchHit[] = [];
+    for (const row of this.allFiles()) {
+      const path = row.path;
+      const name = path.split("/").pop()!;
+      if (!q) {
+        out.push({ kind: "doc", path, name, text: path, matches: [], score: 0 });
+        continue;
+      }
+      const nm = fuzzy(q, path);
+      if (nm) out.push({ kind: "doc", path, name, text: path, matches: nm.idx, score: nm.score + 12 });
+      const lines = row.body.split("\n");
+      const hits: SearchHit[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const raw = lines[i].trim();
+        if (!raw || raw.length < 2) continue;
+        const r = fuzzy(q, raw);
+        if (r) hits.push({ kind: "line", path, name, line: i, text: raw, matches: r.idx, score: r.score });
+      }
+      hits.sort((a, b) => b.score - a.score);
+      for (const h of hits.slice(0, 2)) out.push(h);
+    }
+    out.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+    return out.slice(0, limit);
+  }
+
   allFileMeta(): FileRowMeta[] {
     return this.db.query<FileRowMeta, []>(`SELECT ${META_COLUMNS} FROM files ORDER BY path`).all();
   }
@@ -719,4 +746,49 @@ export interface ProposalRow {
   commitNote: string | null;
   appliedAt: string | null;
   revertedAt: string | null;
+}
+
+/* ============================================================
+   Search — subsequence scorer over doc paths AND content lines; the content
+   scored is the redacted body, so age armor can never surface in a result.
+   `fuzzy` is exported pure: tests/helpers.ts uses it as the offsets oracle.
+   ============================================================ */
+
+export function fuzzy(q: string, hay: string): { score: number; idx: number[] } | null {
+  if (!q) return { score: 0, idx: [] };
+  const n = q.toLowerCase();
+  const h = hay.toLowerCase();
+  const idx: number[] = [];
+  let from = 0;
+  let score = 0;
+  let prev = -2;
+  for (let i = 0; i < n.length; i++) {
+    const c = n[i];
+    if (c === " ") {
+      prev = -2;
+      continue;
+    }
+    const at = h.indexOf(c, from);
+    if (at < 0) return null;
+    idx.push(at);
+    if (at === prev + 1) score += 7;
+    else score += 1;
+    if (at === 0 || /[\s/\-_.,:|[\]()]/.test(h.charAt(at - 1))) score += 5;
+    prev = at;
+    from = at + 1;
+  }
+  if (h.indexOf(n.replace(/\s+/g, "")) >= 0) score += 22;
+  score -= idx[0] * 0.08;
+  score -= Math.max(0, hay.length - 60) * 0.01;
+  return { score, idx };
+}
+
+export interface SearchHit {
+  kind: "doc" | "line";
+  path: string;
+  name: string;
+  line?: number;
+  text: string;
+  matches: number[];
+  score: number;
 }

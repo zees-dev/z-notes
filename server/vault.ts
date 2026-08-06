@@ -1094,4 +1094,47 @@ export class Vault {
   writeKeys(identity: string, recipient: string): Promise<void> {
     return writeVaultKeys(this.root, identity, recipient);
   }
+
+  /** GET /api/vault/recipient — 200 {recipient} | 404 no-identity. */
+  async recipientOut(): Promise<{ status: number; body: unknown }> {
+    const keys = await this.readKeys();
+    if (!keys.recipient) return { status: 404, body: { error: "no-identity", message: "This vault has no age recipient yet." } };
+    return { status: 200, body: { recipient: keys.recipient } };
+  }
+
+  /** GET /api/vault/identity — the armor itself (text/plain body), or null.
+      The Response stays in the router: it is the one non-JSON API body. */
+  async identityArmor(): Promise<string | null> {
+    const keys = await this.readKeys();
+    if (!keys.identity) return null;
+    return keys.identity.endsWith("\n") ? keys.identity : keys.identity + "\n";
+  }
+
+  /** PUT /api/vault/identity — ciphertext + public key in, shape-checked, stored.
+      Nothing here decrypts and no passphrase reaches the process (SPEC §6).
+      `stored` tells the router to schedule a sync — the keyring files are in
+      TRACKED_META (git.ts) and this is what stages them (SPEC §7). */
+  async storeIdentity(body: any): Promise<{ status: number; body: unknown; stored: boolean }> {
+    const identity = typeof body?.identity === "string" ? body.identity.trim() : "";
+    const recipient = typeof body?.recipient === "string" ? body.recipient.trim() : "";
+    if (!isArmor(identity))
+      return { status: 400, body: { error: "bad-identity", message: "identity must be an age ASCII-armored file." }, stored: false };
+    if (!isRecipient(recipient))
+      return { status: 400, body: { error: "bad-recipient", message: "recipient must be an age1… public key." }, stored: false };
+    // 64 KiB is ~100× a wrapped X25519 identity; anything larger is not one
+    if (identity.length > 65536)
+      return { status: 413, body: { error: "too-large", message: "identity is implausibly large." }, stored: false };
+
+    const existing = await this.readKeys();
+    const present = !!(existing.identity || existing.recipient);
+    if (present && body?.replace !== true)
+      return {
+        status: 409,
+        body: { error: "exists", message: "This vault already has an identity. Pass replace:true to overwrite it.", recipient: existing.recipient },
+        stored: false,
+      };
+
+    await this.writeKeys(identity, recipient);
+    return { status: present ? 200 : 201, body: { recipient, replaced: present }, stored: true };
+  }
 }
