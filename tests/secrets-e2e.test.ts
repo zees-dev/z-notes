@@ -1009,8 +1009,6 @@ describe("secrets e2e — unlocking is vault-wide, and it is display only", () =
       ta.value = ta.value.replace("OTHERKEYSTAIL", "OTHERKEYSTAIL AUTOSAVEMARKER");
       ta.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await ensureMode("preview");
-
     const after = await waitUntil(
       () => {
         const t = readVaultText(vaultDir, OTHER_DOC);
@@ -1018,6 +1016,10 @@ describe("secrets e2e — unlocking is vault-wide, and it is display only", () =
       },
       { timeout: 20000, label: "the autosave to reach disk while a block is revealed" }
     );
+    /* Leaving Raw while the edit is still staged now asks for confirmation.
+       Wait for the autosave under test to establish the new baseline first;
+       the clean mode switch must then be direct and dialog-free. */
+    await ensureMode("preview");
 
     /* the armor is byte-identical across a save that happened while its own
        plaintext was on screen, and the edit is the ONLY thing that moved */

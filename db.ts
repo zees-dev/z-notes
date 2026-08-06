@@ -18,10 +18,10 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 3;
 
 /** What the age-fence body is replaced with in the search index. */
-export const AGE_PLACEHOLDER = "ageblock";
+const AGE_PLACEHOLDER = "ageblock";
 
 export interface FileRow {
   path: string;
@@ -138,7 +138,7 @@ function createSchema(db: Database) {
 }
 
 /** The glob shape a parked index takes. git.ts ignores exactly this. */
-export const CORRUPT_INDEX_SUFFIX = ".corrupt-";
+const CORRUPT_INDEX_SUFFIX = ".corrupt-";
 
 /**
  * Move a corrupt index (and whatever sidecars exist) out of the way.
@@ -193,7 +193,7 @@ export class Index {
          one shape it did not catch. */
       opened = Index.open(file);
       this.db = opened;
-      this.migrate();
+      this.migrate(file);
     } catch (err) {
       /* The db is a disposable cache for everything that has an on-disk source:
          the tree, FTS, backlinks all rebuild from the markdown on the next
@@ -227,7 +227,7 @@ export class Index {
             : `\n`)
       );
       this.db = Index.open(file);
-      this.migrate();
+      this.migrate(file);
     }
   }
 
@@ -251,7 +251,7 @@ export class Index {
     return db;
   }
 
-  private migrate() {
+  private migrate(file: string) {
     let version = 0;
     try {
       const row = this.db
@@ -265,7 +265,29 @@ export class Index {
       createSchema(this.db); // idempotent; heals a partially created db
       return;
     }
-    // migrations-by-rebuild: keep credentials, throw the rest away
+    /* Migrations-by-rebuild: keep credentials, throw the rest away. But the
+       proposals table is the whole revert/undo stack and the AI history, and
+       both live here and NOWHERE else by design (see the recovery branch in
+       the constructor) — so a NON-EMPTY old db is parked as a copy first,
+       exactly like a corrupt one, rather than silently erased. `VACUUM INTO`
+       gives a consistent copy through the open handle. A version-0 db is a
+       fresh file; nothing to keep. */
+    if (version > 0) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const parked = `${file}.v${version}-${stamp}`;
+      try {
+        // VACUUM INTO refuses a bound parameter ("non-text filename") — the
+        // target must be an SQL string literal. The path is ours, not input.
+        this.db.run(`VACUUM INTO '${parked.replaceAll("'", "''")}'`);
+        process.stderr.write(
+          `[z-notes] index.db schema v${version} → v${SCHEMA_VERSION}: rebuilding; the old file is parked at ${parked} (AI history and the undo stack are recoverable from it)\n`
+        );
+      } catch (err) {
+        process.stderr.write(
+          `[z-notes] index.db schema v${version} → v${SCHEMA_VERSION}: rebuilding; parking a copy FAILED (${String((err as Error)?.message || err)}) — AI history and the undo stack will be lost\n`
+        );
+      }
+    }
     let creds: { key: string; value: string; updatedAt: string }[] = [];
     try {
       creds = this.db.query<{ key: string; value: string; updatedAt: string }, []>("SELECT key, value, updatedAt FROM credentials").all();
@@ -357,13 +379,6 @@ export class Index {
     tx();
   }
 
-  backlinksTo(target: string): string[] {
-    return this.db
-      .query<{ src: string }, { target: string }>("SELECT src FROM backlinks WHERE target = $target ORDER BY src")
-      .all({ target })
-      .map((r) => r.src);
-  }
-
   /* ---------- backlink graph, for rename/move (SPEC §5, phase 5) ----------
 
      A move rewrites `[[links]]` vault-wide, and "vault-wide" must not mean
@@ -397,18 +412,6 @@ export class Index {
     const out = new Set<string>();
     for (const r of rows) if (want.has(r.target)) out.add(r.src);
     return [...out].sort();
-  }
-
-  /** slug → every doc carrying it. Length > 1 is a collision (SPEC §5). */
-  slugIndex(): Map<string, string[]> {
-    const out = new Map<string, string[]>();
-    for (const r of this.db.query<{ path: string; slug: string }, []>("SELECT path, slug FROM files").all()) {
-      const list = out.get(r.slug);
-      if (list) list.push(r.path);
-      else out.set(r.slug, [r.path]);
-    }
-    for (const list of out.values()) list.sort();
-    return out;
   }
 
   /* ---------- folders (advisory disclosure state) ---------- */
@@ -528,15 +531,6 @@ export class Index {
       .run(m);
   }
 
-  /** Attach a proposal to an already-stored assistant message. */
-  setMessageProposal(id: string, proposalId: string | null) {
-    this.db.query("UPDATE ai_messages SET proposalId = $proposalId WHERE id = $id").run({ id, proposalId });
-  }
-
-  setMessageContent(id: string, content: string) {
-    this.db.query("UPDATE ai_messages SET content = $content WHERE id = $id").run({ id, content });
-  }
-
   /* ---------- ai proposals (phase 4) ---------- */
 
   addProposal(p: ProposalRow) {
@@ -636,14 +630,22 @@ export class Index {
     return r ? commandOut(r) : null;
   }
 
-  /** The most recent `limit` records, oldest first — chat order. */
-  commands(limit: number): CommandRow[] {
+  /** The most recent `limit` records, oldest first — chat order.
+      `sessionId` narrows to one session's commands (the AI context path:
+      "new session" means the previous session's transcripts stay out of the
+      next session's prompt). */
+  commands(limit: number, sessionId?: string): CommandRow[] {
     const n = Math.max(1, Math.min(200, Math.floor(limit) || 30));
-    return this.db
-      .query<RawCommandRow, { n: number }>("SELECT * FROM terminal_commands ORDER BY createdAt DESC, id DESC LIMIT $n")
-      .all({ n })
-      .map(commandOut)
-      .reverse();
+    const rows = sessionId
+      ? this.db
+          .query<RawCommandRow, { n: number; sessionId: string }>(
+            "SELECT * FROM terminal_commands WHERE sessionId = $sessionId ORDER BY createdAt DESC, id DESC LIMIT $n"
+          )
+          .all({ n, sessionId })
+      : this.db
+          .query<RawCommandRow, { n: number }>("SELECT * FROM terminal_commands ORDER BY createdAt DESC, id DESC LIMIT $n")
+          .all({ n });
+    return rows.map(commandOut).reverse();
   }
 
   updateCommand(id: string, patch: Record<string, string | number | null>) {

@@ -538,7 +538,7 @@ describe("ux — Esc unwinds one layer at a time", () => {
     expect(`after Esc #2 — chat: ${await chatOpen()}`).toBe("after Esc #2 — chat: false");
   }, 60000);
 
-  test("the palette, the context menu and a focused Raw textarea each take a press first", async () => {
+  test("the palette, the context menu and Raw-to-Preview each take a press first", async () => {
     await app.clickDoc(NAV_DOC);
 
     /* the palette */
@@ -554,7 +554,7 @@ describe("ux — Esc unwinds one layer at a time", () => {
     await page.waitForFunction(() => (document.getElementById("ctxMenu") as HTMLElement).hidden, { timeout: 5000 });
     expect(`menu closed, chat still open: ${await chatOpen()}`).toBe("menu closed, chat still open: true");
 
-    /* a focused Raw textarea */
+    /* Raw mode: a clean buffer exits directly to Preview. */
     await app.chord("KeyE");
     await page.waitForSelector("#rawArea", { timeout: 5000 });
     await page.click("#rawArea");
@@ -562,8 +562,8 @@ describe("ux — Esc unwinds one layer at a time", () => {
       "rawArea focused: rawArea"
     );
     await page.keyboard.press("Escape");
-    await page.waitForFunction(() => document.activeElement?.id !== "rawArea", { timeout: 5000 });
-    expect(`textarea blurred, chat still open: ${await chatOpen()}`).toBe("textarea blurred, chat still open: true");
+    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", { timeout: 5000 });
+    expect(`Preview active, chat still open: ${await chatOpen()}`).toBe("Preview active, chat still open: true");
 
     /* only now does the panel go */
     await page.keyboard.press("Escape");
@@ -1204,7 +1204,7 @@ describe("ux — the home button", () => {
     expect(`delete dialog warning glyph shown: ${del.warnShown !== "none"}`).toBe(
       "delete dialog warning glyph shown: true"
     );
-    expect(`delete dialog footer: ${del.note}`).toBe("delete dialog footer: Recoverable only from git history.");
+    expect(`delete dialog footer: ${del.note}`).toBe("delete dialog footer: In the trash for 7 days, then purged for good.");
     await page.click('#cfVeil [data-act="cf-cancel"]');
     await app.waitVeil("cfVeil", false);
     expect(`nothing was deleted: ${vaultHas(srv.vault, HOME_DOC)}`).toBe("nothing was deleted: true");

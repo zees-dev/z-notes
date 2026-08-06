@@ -37,6 +37,7 @@ import { rm } from "node:fs/promises";
 import type { Index, ProposalRow } from "./db.ts";
 import type { GitSync } from "./git.ts";
 import type { Settings } from "./settings.ts";
+import { sseResponse } from "./sse.ts";
 import type { CommandRecord, TerminalError } from "./terminal.ts";
 import { MAX_AI_COMMANDS_PER_TURN } from "./terminal.ts";
 import type { ChangeReason } from "./watch.ts";
@@ -65,24 +66,24 @@ import {
 export { ARMOR_CANARY };
 
 /** What a credential looks like once it has been taken out of an error body. */
-export const REDACTED_SECRET = "«redacted»";
+const REDACTED_SECRET = "«redacted»";
 
-export const MAX_OUTPUT_TOKENS = 32_000;
-export const DEFAULT_CONTEXT_BUDGET = 200_000;
+const MAX_OUTPUT_TOKENS = 32_000;
+const DEFAULT_CONTEXT_BUDGET = 200_000;
 /** Per-doc cap for depth-1 linked docs — the current doc is never capped. */
-export const LINKED_DOC_TOKEN_CAP = 1_500;
-export const MAX_TOOL_RETRIES = 2;
-export const MAX_DIFF_LINES = 300;
+const LINKED_DOC_TOKEN_CAP = 1_500;
+const MAX_TOOL_RETRIES = 2;
+const MAX_DIFF_LINES = 300;
 /** Upstream connect/read budget. A model turn can legitimately be slow. */
 export const UPSTREAM_TIMEOUT_MS = 300_000;
-export const PROBE_TIMEOUT_MS = 12_000;
+const PROBE_TIMEOUT_MS = 12_000;
 
 /**
  * SPEC §8 restricts the ops to four: no `delete_doc`, no rename. The rest of
  * the schema is research §4.4 verbatim — strict structured outputs require every
  * property in `required`, so optional fields are nullable unions, not absences.
  */
-export const PROPOSE_EDITS_TOOL = {
+const PROPOSE_EDITS_TOOL = {
   type: "function",
   name: "propose_edits",
   description:
@@ -135,7 +136,7 @@ export const PROPOSE_EDITS_TOOL = {
  * every command and that approval is the default. A model told it has silent
  * shell access behaves differently from one told it is asking permission.
  */
-export const RUN_COMMAND_TOOL = {
+const RUN_COMMAND_TOOL = {
   type: "function",
   name: "run_command",
   description:
@@ -474,7 +475,7 @@ export interface AiDeps {
     queueAiCommand(command: string, why: string, sessionId: string, messageId: string | null): CommandRecord;
     attachMessage(id: string, messageId: string): void;
     autoRun(rec: CommandRecord): Promise<CommandRecord>;
-    recentForContext(limit?: number): CommandRecord[];
+    recentForContext(sessionId: string, limit?: number): CommandRecord[];
   };
   log?(line: string): void;
   /**
@@ -640,7 +641,7 @@ async function* ordered(frames: AsyncGenerator<RawEvent>): AsyncGenerator<{ type
    ============================================================ */
 
 /** Ordered rungs. Each is permanent once taken, and surfaced in settings meta. */
-export const LADDER = [
+const LADDER = [
   "reasoning.summary",
   "store",
   "parallel_tool_calls",
@@ -1164,10 +1165,19 @@ export class AI {
     return { id, role, ...(kind ? { kind } : {}), content, ...(role === "assistant" ? { proposalId } : {}), at };
   }
 
+  /** The MEASURED token count of the last context each session actually sent —
+      what estimateTokens prefers over its own approximation, because the
+      assembly also carries linked docs, search hits and command transcripts
+      that the approximation cannot see without re-reading the vault. */
+  private lastContextTokens = new Map<string, number>();
+
   /**
    * The thread's token cost as the server sees it: the real BPE count of the
-   * conversation plus the static part of the context it would attach. API.md:
-   * "the client displays it and never computes its own".
+   * conversation plus the context it would attach. API.md: "the client
+   * displays it and never computes its own". The context part is the last
+   * turn's MEASURED assembly when one exists; before any turn it falls back to
+   * the static approximation (manifest + current doc), which undercounts the
+   * linked-docs/search/commands blocks it cannot cheaply predict.
    */
   private estimateTokens(sessionId: string, contextDocPath: string | null): number {
     let total = countTokens(INSTRUCTIONS);
@@ -1175,6 +1185,8 @@ export class AI {
       if (m.kind === "divider") continue;
       total += countTokens(String(m.content || "")) + 4;
     }
+    const measured = this.lastContextTokens.get(sessionId);
+    if (measured != null) return total + measured;
     total += countTokens(this.manifest(false));
     if (contextDocPath) {
       const row = this.deps.index.file(contextDocPath);
@@ -1312,7 +1324,8 @@ export class AI {
   private async assembleContext(
     docPath: string | null,
     userText: string,
-    historyTokens: number
+    historyTokens: number,
+    sessionId: string
   ): Promise<{ text: string; parts: string[] }> {
     const budget = this.cfg().budget;
     let current = "";
@@ -1336,7 +1349,7 @@ export class AI {
        arrive as a tool result — it arrives here, on the next turn, as recorded
        fact. First to be evicted when the budget is tight: it is the least
        load-bearing part of the context, and the user can always paste. */
-    let commandsBlock = this.commandContext();
+    let commandsBlock = this.commandContext(sessionId);
 
     const build = () =>
       [
@@ -1381,8 +1394,8 @@ export class AI {
    * context. Everything here is untrusted output from a program, so it is
    * scrubbed and explicitly framed as data, not instruction.
    */
-  private commandContext(): string {
-    const recs = this.deps.terminal?.recentForContext(6) ?? [];
+  private commandContext(sessionId: string): string {
+    const recs = this.deps.terminal?.recentForContext(sessionId, 6) ?? [];
     if (!recs.length) return "";
     const blocks = recs.map((r) => {
       const head = `$ ${r.command}`;
@@ -2382,29 +2395,59 @@ export class AI {
           };
         }
       }
+      /* The write phase is atomic, exactly like accept()'s above and for the
+         same reason: a bare loop that threw on file N left files 1..N-1
+         restored with the proposal still `applied` — and the drift guard then
+         blocked every retry, because those files no longer matched their
+         stored post-images. Roll the already-reverted files forward to the
+         post-images we are holding. */
       const hints = new Map<string, ChangeReason>();
-      for (const f of files) {
-        if (!f.existed) {
-          /* the proposal created this doc; undoing that means removing it again.
-             DELIBERATELY NOT THROUGH THE TRASH (trash.ts). The trash is where a
-             document the USER deleted waits to be restored to the place it came
-             from — this file has no such place: it never existed before the
-             proposal, so "restore to its original directory" would mean putting
-             back a file whose entire provenance is the AI edit just undone. The
-             undo that matters here is already on the change stack: the proposal
-             goes back to `pending` with its post-image intact and re-accepting
-             it recreates the doc byte for byte.
+      const reverted: FileImage[] = [];
+      try {
+        for (const f of files) {
+          if (!f.existed) {
+            /* the proposal created this doc; undoing that means removing it again.
+               DELIBERATELY NOT THROUGH THE TRASH (trash.ts). The trash is where a
+               document the USER deleted waits to be restored to the place it came
+               from — this file has no such place: it never existed before the
+               proposal, so "restore to its original directory" would mean putting
+               back a file whose entire provenance is the AI edit just undone. The
+               undo that matters here is already on the change stack: the proposal
+               goes back to `pending` with its post-image intact and re-accepting
+               it recreates the doc byte for byte.
 
-             It is also what keeps SPEC §8's "the assistant has no delete power"
-             structural rather than merely intended: nothing in ai.ts can reach
-             the trash module, exactly as nothing in it can reach `moveNode` or
-             the DELETE route. The absence is the guarantee. */
-          const abs = absOf(this.deps.vault, f.path);
-          if (abs) await rm(abs, { force: true });
-        } else {
-          await writeDocAtomic(this.deps.vault, f.path, f.pre);
+               It is also what keeps SPEC §8's "the assistant has no delete power"
+               structural rather than merely intended: nothing in ai.ts can reach
+               the trash module, exactly as nothing in it can reach `moveNode` or
+               the DELETE route. The absence is the guarantee. */
+            const abs = absOf(this.deps.vault, f.path);
+            if (abs) await rm(abs, { force: true });
+          } else {
+            await writeDocAtomic(this.deps.vault, f.path, f.pre);
+          }
+          reverted.push(f);
+          hints.set(f.path, "proposal-reverted");
         }
-        hints.set(f.path, "proposal-reverted");
+      } catch (err) {
+        const message = String((err as Error)?.message || err);
+        const failedAt = files[reverted.length]?.path ?? "an unknown file";
+        for (const f of reverted.reverse()) {
+          try {
+            await writeDocAtomic(this.deps.vault, f.path, f.post);
+          } catch (rollbackErr) {
+            this.log(`ai: revert rollback FAILED for ${f.path} — ${String((rollbackErr as Error)?.message || rollbackErr)}`);
+          }
+        }
+        await this.deps.recon.reconcileHeld(hints).catch(() => {});
+        this.log(`ai: revert ${id} could not write ${failedAt} — ${message}`);
+        return {
+          status: 422,
+          body: {
+            error: "write-failed",
+            path: failedAt,
+            message: `Could not write ${failedAt}: ${message}. Nothing was reverted.`,
+          },
+        };
       }
       await this.deps.recon.reconcileHeld(hints);
 
@@ -2470,49 +2513,11 @@ export class AI {
     }
 
     const ac = new AbortController();
-    const enc = new TextEncoder();
-    let closed = false;
-
-    const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        const emit: Emit = (e) => {
-          if (closed) return;
-          try {
-            controller.enqueue(enc.encode(`event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`));
-          } catch {
-            closed = true;
-          }
-        };
-        this.runTurn(content, emit, ac.signal)
-          .catch((err) => {
-            if (closed) return;
-            emit({ event: "error", data: { message: String((err as Error)?.message || err) } });
-          })
-          .finally(() => {
-            if (closed) return;
-            closed = true;
-            try {
-              controller.close();
-            } catch {}
-          });
-      },
-      /* Bun calls this when the browser goes away. Aborting the upstream fetch
-         here is what stops the endpoint billing for a turn nobody will read
-         (research §3.3). */
-      cancel: () => {
-        closed = true;
-        ac.abort();
-      },
-    });
-
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-store",
-        connection: "keep-alive",
-        "x-accel-buffering": "no",
-      },
+    return sseResponse((emit) => this.runTurn(content, emit as Emit, ac.signal), {
+      onError: (err) => ({ event: "error", data: { message: String((err as Error)?.message || err) } }),
+      /* Aborting the upstream fetch when the browser goes away is what stops
+         the endpoint billing for a turn nobody will read (research §3.3). */
+      onCancel: () => ac.abort(),
     });
   }
 
@@ -2557,9 +2562,11 @@ export class AI {
 
     try {
       const historyTokens = history.reduce((n, m) => n + countTokens(m.content) + 4, 0);
-      const ctx = await this.assembleContext(docPath, content, historyTokens);
+      const ctx = await this.assembleContext(docPath, content, historyTokens, session.id);
       // last line of defence before the socket, over the ASSEMBLED context
       this.guard({ context: ctx.text }, "assembled context");
+      // the measured size of what is actually being sent — see estimateTokens
+      this.lastContextTokens.set(session.id, countTokens(ctx.text));
 
       const input: any[] = [...history, { role: "user", content }];
       let retries = 0;

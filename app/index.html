@@ -122,6 +122,20 @@
 
     <nav class="tree" id="tree" aria-label="Vault"></nav>
 
+    <!-- Recoverable deletes live in-place between the hierarchy and its create
+         controls. The block stays unmounted until GET /api/trash succeeds, so
+         an older server never gets a UI that promises recovery it cannot do. -->
+    <div class="sb-trash" id="sbTrash" hidden>
+      <button class="sb-link subtle" id="trashLink" type="button" data-act="trash"
+              aria-expanded="false" aria-controls="trashList">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 7V5h4v2M6.5 7l.8 12.1A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.9L17.5 7"/></svg>
+        <span class="t">Recently deleted</span>
+        <span class="trash-count" id="trashCount" hidden></span>
+        <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+      <div class="trash-list" id="trashList" hidden></div>
+    </div>
+
     <div class="sb-foot">
       <button class="mini" data-act="new-doc" title="New doc (⌘N) — in the folder you picked, or the open doc's folder">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -248,6 +262,7 @@
       <nav class="sv-nav" id="settingsNav" aria-label="Settings sections">
         <button data-sec="appearance">Appearance</button>
         <button data-sec="editing">Editing</button>
+        <button data-sec="trash">Recently deleted</button>
         <button data-sec="git">Git sync</button>
         <button data-sec="secrets">Secrets</button>
         <button data-sec="ai">AI</button>
@@ -298,6 +313,20 @@
             <div class="field">
               <div class="lab"><b>Keyboard shortcuts</b><span>⌘E raw · ⌘S save · ⌘K search · Esc dismiss.</span></div>
               <div class="ctl"><button class="btn" data-act="shortcuts">Show all <kbd>?</kbd></button></div>
+            </div>
+          </section>
+
+          <section class="grp" id="settingsGrp-trash">
+            <div class="grp-t">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 7V5h4v2M6.5 7l.8 12.1A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.9L17.5 7"/></svg>
+              Recently deleted
+            </div>
+            <div class="field">
+              <div class="lab"><b>Keep deleted documents</b><span>After this many days, the scheduled cleanup permanently removes them.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="trash.retentionDays" value="" aria-label="Trash retention days">
+                <span class="unit"></span>
+              </div>
             </div>
           </section>
 
@@ -542,7 +571,7 @@
               <div class="term-note" id="termNote"></div>
             </div>
           </section>
-          <p class="sv-note">Saved to <code>PUT /api/settings</code> as you change them.</p>
+          <p class="sv-note">Save sends changed fields to <code>PUT /api/settings</code>.</p>
         </div>
       </div>
     </section>
@@ -777,6 +806,35 @@
       <button class="btn primary" id="cxMine" data-act="cx-keep-mine">Keep mine</button>
       <button class="btn" id="cxDiscard" data-act="cx-discard" hidden>Discard</button>
       <button class="btn primary" id="cxRecreate" data-act="cx-recreate" hidden>Recreate</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= UNSAVED RAW EXIT =================
+     Every way out of Raw mode reaches this one dialog. It contains only the
+     changed lines against the last server-confirmed document; the full note is
+     never duplicated into a modal just to ask whether it may be discarded. -->
+<div class="veil" id="xgVeil">
+  <div class="modal cf" role="dialog" aria-modal="true" aria-labelledby="xgTitle" tabindex="-1">
+    <div class="modal-head">
+      <div class="cf-ico">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5 21 20H3z"/><path d="M12 10v4M12 17.2v.1"/></svg>
+      </div>
+      <div style="flex:1;min-width:0">
+        <h2 id="xgTitle">Exit without saving?</h2>
+        <p><span class="mono" id="xgPath" style="font-family:var(--mono);font-size:11.5px"></span></p>
+      </div>
+    </div>
+    <div class="modal-body">
+      <p class="note" id="xgBody" style="margin:0 0 8px;line-height:1.55"></p>
+      <div class="diff-body" id="xgDiff" style="max-height:220px;overflow:auto"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="note">Your changes remain staged in this tab until you choose.</span>
+      <div class="spacer"></div>
+      <button class="btn" data-act="xg-keep">Keep editing</button>
+      <button class="btn danger" data-act="xg-discard">Exit without saving</button>
+      <button class="btn primary" data-act="xg-save">Save &amp; exit</button>
     </div>
   </div>
 </div>

@@ -29,9 +29,6 @@
   --font: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Mono",
           Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
   --mono: var(--font);
-  --font-doc: var(--font);
-  --font-heading: var(--font);
-  --font-kbd: var(--font);
   --tracking-tight: 0em;               /* mono never wants negative tracking */
   --tracking-wide: .10em;
   --w-med: 400; --w-semi: 600; --w-bold: 700;
@@ -39,7 +36,6 @@
   --h2-size: 1.22em; --h2-weight: 700; --h2-tracking: -.01em; --h2-transform: none;
   --h3-size: 1.05em; --h3-weight: 700; --h3-tracking: -.01em; --h3-transform: none;
   --heading-prefix-opacity: .55;       /* consumed by the `#` markers below */
-  --label-transform: uppercase;
   --label-tracking: .10em;
 
   /* --- shape: a terminal has no radii ----------------------------------- */
@@ -69,30 +65,20 @@
   --doc-pad-bottom: 42vh;
 
   /* --- region treatments: all aliases, so both schemes get them free ----- */
-  --app-bg: var(--bg);
   --sidebar-bg: var(--panel);
   --sidebar-bd: 1px solid var(--line);
-  --sidebar-blur: none;
   --topbar-bg: linear-gradient(180deg, var(--panel-2), var(--panel));
-  --topbar-blur: none;
   --editor-bg: var(--bg);
-  --statusbar-bg: var(--panel-2);
-  --statusbar-blur: none;
   --chat-bg: var(--panel);
   --chat-bd: 1px solid var(--line);
   --composer-bg: var(--panel-2);
-  --modal-bg: var(--panel);
-  --veil-blur: none;
-  --code-bar-bg: var(--panel-2);
   --code-fg: var(--text-2);
-  --code-inline-bg: var(--panel-3);
   --code-inline-bd: var(--line);
 
   /* --- components: aliases only ------------------------------------------ */
   --row-active-fg: var(--accent);
   --row-active-sh: inset 0 0 0 1px var(--ok-bd);
   --row-marker-w: 2px;
-  --row-marker-bg: var(--accent);
 
   --btn-bg: transparent;
   --btn-fg: var(--muted);
@@ -106,14 +92,11 @@
   --btn-primary-sh: none;
 
   --input-bd: 1px solid var(--line);
-  --input-fg: var(--text);
 
   --seg-on-bg: var(--accent);          /* inverse video, like the prototype's
                                           preview|raw control */
   --seg-on-fg: var(--accent-on);
   --seg-on-sh: none;
-  --seg-acc-bg: var(--accent);
-  --seg-acc-fg: var(--accent-on);
 
   --kbd-bg: transparent;               /* keys are bracketed glyphs, not caps */
   --kbd-fg: var(--accent);
@@ -128,15 +111,11 @@
   --cb-on-bg: transparent;
   --cb-on-bd: var(--accent);
   --cb-mark: var(--accent);
-  --task-done-fg: var(--muted);
-  --task-done-decoration: line-through;
 
-  --bullet-size: 5px;
   --bullet-radius: 0;
   --bullet-bg: var(--muted);
 
   --quote-bd-w: 1px;
-  --quote-style: italic;
   --quote-fg: var(--muted);
 
   --wl-bg: transparent;
@@ -145,14 +124,12 @@
   --wl-icon-opacity: .55;
 
   --secret-open-bd: var(--warn);
-  --table-head-bg: var(--panel-2);
   --divider-bg: var(--line);
 
   --bubble-user-bg: transparent;
   --bubble-user-fg: var(--text);
   --bubble-user-radius: 0;
   --bubble-ai-bg: transparent;
-  --bubble-ai-fg: var(--text-2);
   --bubble-ai-bd: 0;                   /* the rail comes from the ornament below */
   --bubble-ai-radius: 0;
 
@@ -161,7 +138,6 @@
   --toast-ok: var(--accent);
 
   --conn-ok: var(--accent);
-  --conn-down: var(--warn);
 
   --vault-mark-bg: transparent;
   --vault-mark-fg: var(--accent);

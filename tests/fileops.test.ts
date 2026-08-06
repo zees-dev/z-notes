@@ -695,7 +695,12 @@ describe("DELETE /api/docs — removes the doc and leaves its backlinks broken (
       expectFileBytes(vault, "del/mourner.md", MD_MOURNER, "the referrer is byte-identical after a delete");
 
       await expectOneCommit(vault, before, "the delete");
-      expect(await commitFiles(vault)).toEqual(["del/doomed.md"]);
+      const committed = await commitFiles(vault);
+      const retained = committed.find((p) => p.endsWith("/files/del/doomed.md"));
+      expect(committed).toHaveLength(3);
+      expect(committed).toContain("del/doomed.md");
+      expect(retained?.startsWith(".znotes/trash/")).toBe(true);
+      expect(committed).toContain(retained!.slice(0, -"/files/del/doomed.md".length) + "/meta.json");
       const subject = await commitSubject(vault);
       expect(`the commit subject names the deleted path: ${subject.includes("del/doomed.md")} (${subject})`).toBe(
         `the commit subject names the deleted path: true (${subject})`
@@ -739,8 +744,13 @@ describe("DELETE /api/docs — removes the doc and leaves its backlinks broken (
     );
 
     await expectOneCommit(vault, before, "the delete");
-    expect(await commitFiles(vault)).toEqual(
-      ["delf/sub/sub-a.md", "delf/sub/sub-b.md", "delf/sub/blob.bin"].sort()
+    const originals = ["delf/sub/sub-a.md", "delf/sub/sub-b.md", "delf/sub/blob.bin"];
+    const committed = await commitFiles(vault);
+    const meta = committed.find((p) => /^\.znotes\/trash\/[^/]+\/meta\.json$/.test(p));
+    expect(meta).toBeDefined();
+    const trashRoot = meta!.slice(0, -"/meta.json".length);
+    expect(committed).toEqual(
+      [...originals, ...originals.map((p) => `${trashRoot}/files/${p}`), `${trashRoot}/meta.json`].sort()
     );
     expect(await dirtyPaths(vault)).toEqual([]);
   }, 45000);

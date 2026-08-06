@@ -812,6 +812,12 @@ kbd {
    it must never change chrome or layout. */
 .doc {
   max-width: var(--doc-max-w); margin: 0 auto;
+  /* Keep a useful pane-sized click target without making that blank space part
+     of the textarea. For a short Raw note, the textarea ends with its actual
+     content and the remainder belongs to `.doc`, so "click outside" can mean
+     outside the markdown rather than outside an invisible 46vh form field.
+     This lives on the shared container to preserve Preview/Raw parity. */
+  min-height: min(46vh, 480px);
   padding: var(--d-doc-pad) var(--doc-pad-x) var(--doc-pad-bottom) var(--doc-pad-x);
   border: 0; background: transparent; border-radius: 0; box-shadow: none;
   font-family: var(--font-doc);
@@ -840,7 +846,7 @@ kbd {
 
 /* raw markdown surface — chromeless inside the shared container */
 .raw {
-  display: block; width: 100%; min-height: min(46vh, 480px);
+  display: block; width: 100%; min-height: 0;
   border: 0; border-radius: 0; background: transparent; box-shadow: none;
   padding: 0; margin: 0; resize: none; outline: none; overflow: hidden;
   font-family: var(--mono); font-size: var(--d-raw-fs); line-height: var(--d-raw-lh);

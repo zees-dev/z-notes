@@ -58,6 +58,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CommandRow, Index } from "./db.ts";
 import type { Settings } from "./settings.ts";
+import { sseResponse } from "./sse.ts";
 import { ARMOR_BEGIN, ARMOR_CANARY, ARMOR_END, hasSecrets } from "./vault.ts";
 
 /* ============================================================
@@ -81,9 +82,9 @@ import { ARMOR_BEGIN, ARMOR_CANARY, ARMOR_END, hasSecrets } from "./vault.ts";
  * is the smallest thing that is honest about what it is.
  */
 export const SCRYPT_LOG_N = 17;
-export const SCRYPT_R = 8;
-export const SCRYPT_P = 1;
-export const SCRYPT_LEN = 32;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_LEN = 32;
 
 /** sqlite credential key. Never in settings.toml, never served, never logged. */
 export const TERMINAL_PASSWORD_KEY = "terminal.passwordHash";
@@ -122,7 +123,7 @@ export function hashTerminalPassword(password: string): string {
 let decoy: string | null = null;
 const decoyRecord = () => (decoy ??= hashTerminalPassword(randomBytes(32).toString("hex")));
 /** True once the decoy exists — the warm-up's own idempotence check. */
-export const decoyWarm = () => decoy !== null;
+const decoyWarm = () => decoy !== null;
 
 /**
  * Constant-time verify. Returns false for every failure shape — malformed
@@ -156,27 +157,27 @@ export function verifyTerminalPassword(stored: string | null | undefined, passwo
    ============================================================ */
 
 /** Bytes of a single command's output that are streamed before truncation. */
-export const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
+const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 /** Characters of a command's transcript kept for the AI / the record. */
-export const RECORD_HEAD = 4000;
-export const RECORD_TAIL = 4000;
+const RECORD_HEAD = 4000;
+const RECORD_TAIL = 4000;
 /** Nothing runs forever unattended. */
-export const MAX_COMMAND_MS = 30 * 60_000;
+const MAX_COMMAND_MS = 30 * 60_000;
 /** SIGTERM → this long → SIGKILL. */
-export const KILL_GRACE_MS = 4000;
+const KILL_GRACE_MS = 4000;
 /** Longest command string accepted. */
-export const MAX_COMMAND_CHARS = 8000;
+const MAX_COMMAND_CHARS = 8000;
 /** Failed unlocks before the backoff starts biting. */
 export const FREE_ATTEMPTS = 3;
-export const MAX_BACKOFF_MS = 60_000;
+const MAX_BACKOFF_MS = 60_000;
 /** Callers the backoff table remembers at once — see `bucketOf`. */
-export const MAX_ATTEMPT_BUCKETS = 256;
+const MAX_ATTEMPT_BUCKETS = 256;
 /** A bucket with no failure for this long is forgotten (and so is its block). */
-export const ATTEMPT_BUCKET_TTL_MS = 60 * 60_000;
+const ATTEMPT_BUCKET_TTL_MS = 60 * 60_000;
 /** No output for this long ⇒ say so, rather than letting a wedge look like work. */
-export const IDLE_NOTICE_MS = 10_000;
+const IDLE_NOTICE_MS = 10_000;
 /** Hard ceiling on one unlocked session regardless of activity. */
-export const SESSION_CEILING_MS = 12 * 3600_000;
+const SESSION_CEILING_MS = 12 * 3600_000;
 /** run_command calls one model turn may make. */
 export const MAX_AI_COMMANDS_PER_TURN = 4;
 
@@ -221,7 +222,7 @@ export interface TerminalStatus {
 /** The row db.ts stores, unchanged — one shape, no translation layer. */
 export type CommandRecord = CommandRow;
 
-export const PTY_NOTE =
+const PTY_NOTE =
   "No TTY: this runs one command at a time and streams its output. Full-screen programs (vim, htop, less, git rebase -i) cannot work here — use a real terminal for those.";
 
 /* ============================================================
@@ -923,51 +924,17 @@ export class Terminal {
       throw new TerminalError("busy", "A command is already running — cancel it first (Ctrl+C).", 409, { running: this.running.id });
 
     const id = this.nextId("cmd");
-    const enc = new TextEncoder();
-    let closed = false;
-
-    const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        const emit: TermEmit = (e) => {
-          if (closed) return;
-          try {
-            controller.enqueue(enc.encode(`event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`));
-          } catch {
-            closed = true;
-          }
-        };
-        this.execute(cmd, "user", emit, id)
-          .catch((err) => {
-            if (closed) return;
-            emit({
-              event: "error",
-              data: { error: (err as TerminalError)?.code || "exec-failed", message: String((err as Error)?.message || err) },
-            });
-          })
-          .finally(() => {
-            if (closed) return;
-            closed = true;
-            try {
-              controller.close();
-            } catch {}
-          });
-      },
+    return sseResponse((emit) => this.execute(cmd, "user", emit as TermEmit, id), {
+      onError: (err) => ({
+        event: "error",
+        data: { error: (err as TerminalError)?.code || "exec-failed", message: String((err as Error)?.message || err) },
+      }),
       /* The browser went away. A command the user can no longer see is a
-         command nobody asked to keep running. */
-      cancel: () => {
-        closed = true;
+         command nobody asked to keep running — but a teardown that arrives
+         late must never reach past its own command. */
+      onCancel: () => {
         const run = this.running;
         if (run && run.id === id) this.cancelRun(run).catch(() => {});
-      },
-    });
-
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-store",
-        connection: "keep-alive",
-        "x-accel-buffering": "no",
       },
     });
   }
@@ -1039,50 +1006,17 @@ export class Terminal {
     if (rec.state === "running") throw new TerminalError("busy", "That command is already running.", 409);
     if (this.running) throw new TerminalError("busy", "A command is already running — cancel it first (Ctrl+C).", 409);
 
-    const enc = new TextEncoder();
-    let closed = false;
-    const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        const emit: TermEmit = (e) => {
-          if (closed) return;
-          try {
-            controller.enqueue(enc.encode(`event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`));
-          } catch {
-            closed = true;
-          }
-        };
-        this.runRecord(rec, emit)
-          .catch((err) => {
-            if (closed) return;
-            emit({
-              event: "error",
-              data: { error: (err as TerminalError)?.code || "exec-failed", message: String((err as Error)?.message || err) },
-            });
-          })
-          .finally(() => {
-            if (closed) return;
-            closed = true;
-            try {
-              controller.close();
-            } catch {}
-          });
-      },
+    return sseResponse((emit) => this.runRecord(rec, emit as TermEmit), {
+      onError: (err) => ({
+        event: "error",
+        data: { error: (err as TerminalError)?.code || "exec-failed", message: String((err as Error)?.message || err) },
+      }),
       /* The browser went away — and the command it went away from is `rec`,
          not "whatever is running now". Same shape as exec()'s: a teardown that
          arrives late must never reach past its own command. */
-      cancel: () => {
-        closed = true;
+      onCancel: () => {
         const run = this.running;
         if (run && run.id === rec.id) this.cancelRun(run).catch(() => {});
-      },
-    });
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-store",
-        connection: "keep-alive",
-        "x-accel-buffering": "no",
       },
     });
   }
@@ -1167,9 +1101,11 @@ export class Terminal {
     return this.sessions.size > 0;
   }
 
-  /** Cheap read for the AI context block: the last few AI commands and results. */
-  recentForContext(limit = 6): CommandRecord[] {
-    return this.deps.index.commands(limit).filter((c) => c.state === "done" || c.state === "failed");
+  /** Cheap read for the AI context block: the last few AI commands and results.
+      Session-scoped — "new session" (ai.ts) means a cleared context, and the
+      previous session's transcripts must not ride into the next prompt. */
+  recentForContext(sessionId: string, limit = 6): CommandRecord[] {
+    return this.deps.index.commands(limit, sessionId).filter((c) => c.state === "done" || c.state === "failed");
   }
 
   /** SIGTERM anything still running — called from the server's shutdown path. */

@@ -26,6 +26,7 @@ import {
   revOf,
   scanDocs,
   slugOf,
+  statDoc,
   titleOf,
 } from "./vault.ts";
 
@@ -82,11 +83,11 @@ const hintOf = (hints: ChangeHints | undefined, path: string) => {
   return typeof h === "string" ? { reason: h } : h;
 };
 
-export const DEBOUNCE_MS = 120;
+const DEBOUNCE_MS = 120;
 /** Trailing debounce only, and a writer that never pauses (git pull, rsync,
     an editor on a 100ms autosave) starves the reconciler for as long as it
     keeps going. Staleness must be bounded by a constant, not by burst length. */
-export const MAX_WAIT_MS = 500;
+const MAX_WAIT_MS = 500;
 
 export class Reconciler {
   private watcher: FSWatcher | null = null;
@@ -169,11 +170,17 @@ export class Reconciler {
     for (const path of onDisk) {
       const prev = rows.get(path);
       rows.delete(path);
-      const doc = await readDoc(this.vault, path);
-      if (!doc) continue; // vanished between scan and stat
-
+      /* stat FIRST, read second — the order the header and SPEC §2 promise.
+         The gate exists so an unchanged doc costs a stat and nothing else;
+         reading before it pulled the whole corpus through JS on every pass,
+         under the reconcile lock every write awaits. */
+      const st = await statDoc(this.vault, path);
+      if (!st) continue; // vanished between scan and stat
       // cheap gate: identical (size, mtimeMs) ⇒ nothing to hash
-      if (prev && prev.size === doc.size && prev.mtimeMs === doc.mtimeMs && !hints?.has(path)) continue;
+      if (prev && prev.size === st.size && prev.mtimeMs === st.mtimeMs && !hints?.has(path)) continue;
+
+      const doc = await readDoc(this.vault, path);
+      if (!doc) continue; // vanished between stat and read
 
       const rev = revOf(doc.markdown);
       if (prev && prev.rev === rev) {

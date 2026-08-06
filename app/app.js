@@ -9,7 +9,7 @@
 "use strict";
 
 import * as api from "./api.js";
-import { estimateBits, generatePassphrase, WORD_BITS, MIN_BITS } from "./entropy.js";
+import { estimateBits, generatePassphrase, MIN_BITS } from "./entropy.js";
 import { dedentArmor, indentArmor, isArmorShape } from "./armor.js";
 
 /* ============================================================
@@ -233,8 +233,17 @@ function lookupLink(target) {
 function inline(s) {
   let h = esc(s);
   h = h.replace(/`([^`]+)`/g, (m, c) => '<code class="ic">' + c + "</code>");
-  h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  h = h.replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  /* bold/em carry the same code-span alternation the wikilink pass below does,
+     and for the same reason: `h` already contains the emitted <code> spans, so
+     a bare .replace would render `**bold**` INSIDE backticks — text the fence
+     promises stays literal. Skip the spans; style everything else. */
+  const CODE_SPAN = /(<code class="ic">[\s\S]*?<\/code>)/;
+  h = h.replace(new RegExp(CODE_SPAN.source + "|\\*\\*([^*]+)\\*\\*", "g"), (m, code, b) =>
+    code ? code : "<strong>" + b + "</strong>"
+  );
+  h = h.replace(new RegExp(CODE_SPAN.source + "|(^|[\\s(])\\*([^*\\n]+)\\*", "g"), (m, code, pre, e) =>
+    code ? code : pre + "<em>" + e + "</em>"
+  );
   /* `h` is already escaped, so `name` must not be escaped a second time.
      The alternation carries the already-emitted inline-code spans so a
      `[[link]]` written inside backticks stays literal text — which is exactly
@@ -1105,8 +1114,15 @@ function neighbourDoc(path) {
   return null;
 }
 
-async function doDelete(path, kind) {
+async function doDelete(path, kind, opts) {
   const affects = state.active === path || (kind === "folder" && state.active && state.active.indexOf(path + "/") === 0);
+  /* Confirming a delete is also an attempt to leave the active Raw buffer.
+     Ask the delete question first, then the staged-diff question: Keep editing
+     cancels the removal, Save & exit puts the bytes into the retained copy,
+     and Exit without saving retains exactly the last server-confirmed file. */
+  if (affects && !(opts && opts.force)) {
+    if (!guardRawExit(() => doDelete(path, kind, { force: true }))) return;
+  }
   /* read while the tree still knows where this doc was — see the note above */
   const next = affects ? neighbourDoc(path) : null;
   try {
@@ -1201,6 +1217,22 @@ function trashRetentionNote() {
  * while the drawer is OPEN is the one case with somewhere to say so.
  */
 let trashAgain = false;
+
+/** Adopt the server's whole list. Used by both GET and `trash-changed`, so an
+    open drawer follows deletes/restores/purges from another client without a
+    close/reopen and there is still only one local shape for the response. */
+function adoptTrash(r) {
+  if (!r || !Array.isArray(r.entries)) return;
+  state.trash.available = true;
+  state.trash.entries = r.entries;
+  state.trash.retentionDays = r.retentionDays;
+  state.trash.error = null;
+  const live = new Set(r.entries.map((e) => e.id));
+  [...state.trash.busy].forEach((id) => live.has(id) || state.trash.busy.delete(id));
+  [...state.trash.rowErr.keys()].forEach((id) => live.has(id) || state.trash.rowErr.delete(id));
+  paintTrash();
+}
+
 async function refreshTrash() {
   /* A folder delete announces one `doc-changed` PER DOC, so this is called in
      bursts. Dropping the extras would be wrong — the last event is the one that
@@ -1213,16 +1245,7 @@ async function refreshTrash() {
   state.trash.loading = true;
   paintTrash();
   try {
-    const r = await api.getTrash();
-    state.trash.available = true;
-    state.trash.entries = r.entries;
-    state.trash.retentionDays = r.retentionDays;
-    state.trash.error = null;
-    /* rows that are no longer listed cannot still be busy or still be showing
-       last time's refusal */
-    const live = new Set(r.entries.map((e) => e.id));
-    [...state.trash.busy].forEach((id) => live.has(id) || state.trash.busy.delete(id));
-    [...state.trash.rowErr.keys()].forEach((id) => live.has(id) || state.trash.rowErr.delete(id));
+    adoptTrash(await api.getTrash());
   } catch (err) {
     /* A server with no trash route is not an error the user did anything to
        cause: leave the block unmounted and say nothing. Anything else IS a
@@ -1824,6 +1847,96 @@ function lineDiff(disk, mine) {
   return out.slice(0, 300);
 }
 
+/**
+ * Added/removed lines only, across as many separate hunks as the edit has.
+ *
+ * `lineDiff` above intentionally includes a context row and collapses the
+ * whole middle between a common head and tail. That is useful in the conflict
+ * and proposal surfaces, but it is not the Raw-exit contract: two edits far
+ * apart must not make every unchanged line between them appear removed and
+ * re-added. Myers' shortest-edit walk gives the real changed rows without
+ * copying the full document into the modal. The result is capped at the same
+ * 300 visible rows as the other diff surfaces.
+ */
+function changedLineDiff(disk, mine) {
+  const diskLines = String(disk).split("\n");
+  const mineLines = String(mine).split("\n");
+  /* Most note edits leave a large common rim. Remove it before retaining the
+     Myers frontiers: a two-line edit in a 10,000-line note should cost two
+     lines, not two copies of the note. */
+  let head = 0;
+  while (head < diskLines.length && head < mineLines.length && diskLines[head] === mineLines[head]) head++;
+  let tail = 0;
+  while (
+    tail < diskLines.length - head &&
+    tail < mineLines.length - head &&
+    diskLines[diskLines.length - 1 - tail] === mineLines[mineLines.length - 1 - tail]
+  )
+    tail++;
+  const a = diskLines.slice(head, diskLines.length - tail);
+  const b = mineLines.slice(head, mineLines.length - tail);
+  const n = a.length;
+  const m = b.length;
+  const max = n + m;
+  /* The modal displays 300 changed rows. A rewrite whose shortest path is far
+     beyond that must not allocate a quadratic trace merely to discard nearly
+     all of it; after this bound, a context-free replacement is still an honest
+     +/- diff and includes rows from both versions. */
+  const walkTo = Math.min(max, 600);
+  let v = new Map([[1, 0]]);
+  const trace = [];
+  const at = (map, k) => (map.has(k) ? map.get(k) : -Infinity);
+
+  for (let d = 0; d <= walkTo; d++) {
+    /* The snapshot is V[d-1]. Backtracking from the d-edit endpoint needs
+       exactly that frontier to decide which diagonal it came from. */
+    trace.push(new Map(v));
+    for (let k = -d; k <= d; k += 2) {
+      let x;
+      if (k === -d || (k !== d && at(v, k - 1) < at(v, k + 1))) x = Math.max(0, at(v, k + 1));
+      else x = Math.max(0, at(v, k - 1)) + 1;
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      v.set(k, x);
+      if (x < n || y < m) continue;
+
+      const out = [];
+      let bx = n;
+      let by = m;
+      for (let bd = trace.length - 1; bd >= 0; bd--) {
+        const prev = trace[bd];
+        const bk = bx - by;
+        const prevK = bk === -bd || (bk !== bd && at(prev, bk - 1) < at(prev, bk + 1)) ? bk + 1 : bk - 1;
+        const prevX = Math.max(0, at(prev, prevK));
+        const prevY = prevX - prevK;
+        while (bx > prevX && by > prevY) {
+          bx--;
+          by--;
+          out.push({ marker: " ", text: a[bx] });
+        }
+        if (bd === 0) break;
+        if (bx === prevX) {
+          by--;
+          out.push({ marker: "+", text: b[by] });
+        } else {
+          bx--;
+          out.push({ marker: "-", text: a[bx] });
+        }
+      }
+      return out.reverse().filter((row) => row.marker !== " ").slice(0, 300);
+    }
+  }
+  const oldCount = Math.min(n, m ? 150 : 300);
+  const newCount = Math.min(m, 300 - oldCount);
+  return [
+    ...a.slice(0, oldCount).map((text) => ({ marker: "-", text })),
+    ...b.slice(0, newCount).map((text) => ({ marker: "+", text })),
+  ];
+}
+
 /** Take disk: throw the buffer away, deliberately, on the user's say-so. */
 async function conflictTakeDisk() {
   const c = state.conflict;
@@ -1860,9 +1973,9 @@ async function conflictKeepMine() {
    The third dialog on the SAME veil chrome as the two above, and for the same
    reason they share one: every one of them asks the single question this app
    has about unsaved work — "what is in front of you is not what is on disk,
-   say what happens to it" — and shows the SAME `lineDiff` → `renderDiff` rows
-   to say what "not what is on disk" means. A second diff renderer or a second
-   modal shell would be a second place for that guard to drift.
+   say what happens to it" — and uses the SAME `renderDiff` rows to say what
+   "not what is on disk" means. The Raw-exit rows deliberately omit the context
+   used by save conflicts; the renderer and modal shell remain shared.
 
    What it guards is every way OUT of Raw:
 
@@ -1909,8 +2022,11 @@ function rawExitDiff() {
   const ta = $("#rawArea");
   const buf = ta ? ta.value : String(doc.markdown || "");
   if (buf === doc.diskText) return null;
-  const rows = lineDiff(doc.diskText, buf);
-  return rows.some((r) => r.marker !== " ") ? rows : null;
+  /* This confirmation is deliberately terser than the save-conflict view:
+     the request is to show ONLY what changed from the original document, not
+     one unchanged context row on either side. */
+  const rows = changedLineDiff(doc.diskText, buf);
+  return rows.length ? rows : null;
 }
 
 /**
@@ -4109,7 +4225,10 @@ async function doSaveDoc(path, opts) {
       toast("This doc changed on disk — reloading");
       const fresh = await api.getDoc(path).catch(() => null);
       if (fresh) {
-        state.docs.set(path, Object.assign({}, doc, fresh, { loaded: true }));
+        // setBaseline like every other adopt: skipping it left diskText naming
+        // the pre-conflict bytes, and the Raw-exit guard then offered to
+        // "discard" text that was already on disk
+        state.docs.set(path, setBaseline(Object.assign({}, doc, fresh, { loaded: true }), fresh.markdown));
         if (path === state.active) renderDoc();
       }
     } else apiFail(err, "Save failed");
@@ -4329,7 +4448,10 @@ function absorbProposalResult(r) {
   }
   if (r.doc) {
     const prev = state.docs.get(r.doc.path) || {};
-    state.docs.set(r.doc.path, Object.assign({}, prev, r.doc, { loaded: true }));
+    // setBaseline like every other adopt: an accept/revert rewrote the file on
+    // disk, and a stale diskText made the Raw-exit guard diff against bytes
+    // that no longer exist
+    state.docs.set(r.doc.path, setBaseline(Object.assign({}, prev, r.doc, { loaded: true }), r.doc.markdown));
   }
 }
 
@@ -4533,10 +4655,26 @@ async function sendMessage() {
     absorbTurn(r);
   } catch (err) {
     if (streamCtl === ctl) streamCtl = null;
+    /* An abort is the user's own doing (new message, new session) — not a
+       fault. But the SERVER keeps the aborted turn: the user message was
+       persisted before the stream opened and runTurn's abort branch keeps the
+       streamed partial as the assistant reply. Dropping both here left the
+       thread missing a turn the backend holds — invisible now, back on reload,
+       and replayed upstream as two consecutive user messages. Keep the same
+       two messages the server kept. */
+    if (err && err.name === "AbortError") {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      tmpAi.content = acc;
+      tmpAi._streaming = false;
+      tmpAi._think = "";
+      // the server keeps the partial only when something streamed; mirror it
+      if (!acc) s.messages = s.messages.filter((m) => m.id !== tmpAi.id);
+      renderChat();
+      return;
+    }
     drop();
     renderChat();
-    // an abort is the user's own doing (new message, new session) — not a fault
-    if (err && err.name === "AbortError") return;
     apiFail(err, "Message failed");
   }
 }
@@ -5323,6 +5461,7 @@ const SETTINGS_ERROR_FIELDS = {
   "bad-terminal": "#termShell",
   "bad-auto-sync": "[data-sw='git.autoSync']",
   "bad-auto-sync-seconds": "[data-num='git.autoSyncSeconds']",
+  "bad-retention-days": "[data-num='trash.retentionDays']",
 };
 
 function clearSettingsError() {
@@ -5420,6 +5559,7 @@ function applySavedSettings(paths) {
   /* `terminal.enabled` / `shell` / `startupCwd` change what the SERVER will
      accept, not just what is stored — re-read the verdict rather than assume */
   if (paths.some((p) => p.indexOf("terminal.") === 0)) refreshTerminalStatus();
+  if (paths.some((p) => p.indexOf("trash.") === 0)) refreshTrash();
 }
 
 /* ---------- settings that arrived from somewhere else ----------
@@ -5838,6 +5978,10 @@ function connect() {
     /* Settings saved by ANOTHER client (or another tab of this one). Masked
        already — see the note on this event in api.js. */
     onSettingsChanged: adoptSettings,
+    /* The whole server list, not a mutation hint. A permanent purge has no
+       doc-changed frame, so this is the only way an already-open drawer on a
+       second client can remove the row promptly. */
+    onTrashChanged: adoptTrash,
     /* A terminal command record changed state — a NOTIFICATION carrying an id
        and nothing else, because this stream is not behind the terminal
        password. The content comes back over the bearer-gated route, and only
@@ -6168,7 +6312,7 @@ function dismissTop() {
    * THE BOTTOM LAYER: the chat panel, at every width (it used to be dismissed
    * only in the mobile sheet). Deliberately last, so every rule above still
    * holds — a modal, the palette, the context menu, the session popover, an
-   * inline tree editor and a focused raw textarea each take Esc first, and only
+   * inline tree editor and Raw-to-Preview each take Esc first, and only
    * once nothing else is up does Esc close the panel.
    *
    * The DRAFT IS NEVER LOST. `toggleChat` collapses a grid column above
@@ -7066,6 +7210,10 @@ async function runTerminal(command, opts) {
     }
     if (err.status === 401 || err.status === 403 || err.status === 409) {
       state.term.status = await api.getTerminalStatus().catch(() => state.term.status);
+      /* and PAINT it: a 401 means the session died (idle lock, another tab's
+         lock) — updating the state while leaving the unlocked console on
+         screen kept an input field wired to a terminal that will refuse it */
+      paintTerminal();
     }
   } finally {
     termAnsiFlush();
@@ -7267,7 +7415,13 @@ function fillCommandFoot(c, foot) {
     run.disabled = !ready || state.term.busy;
     run.title = ready ? "Run this command and show its output" : "Unlock the terminal first (Settings → Terminal)";
     run.addEventListener("click", async () => {
-      openSettings("terminal");
+      /* NOT openSettings(): that call is a GATED navigation — with a dirty Raw
+         buffer it raises the exit guard and paints nothing, and this handler
+         used to run the command anyway, streaming its output into a page the
+         user was never shown. Running the command is the decision the click
+         made; the navigation is only so the output is visible, so it must not
+         be re-blocked. showSettings is the ungated painter boot/popstate use. */
+      showSettings("terminal", {});
       await runTerminal(c.command, { commandId: c.id, byAi: true });
     });
     const rej = el("button", "btn sm", "Reject");
@@ -7365,7 +7519,10 @@ function wire() {
         const p = generatePassphrase();
         $("#ppInput").value = p;
         $("#ppConfirm").value = p;
-        ppHint("Generated · ~" + Math.round(WORD_BITS * Math.ceil(80 / WORD_BITS)) + " bits. Write it down now — there is no recovery.", false);
+        /* measured with estimateBits like the Settings handler — the two
+           Generate buttons must report the same strength for the same
+           generator, and re-deriving the arithmetic here was how they split */
+        ppHint("Generated · ~" + estimateBits(p) + " bits. Write it down now — there is no recovery.", false);
       }
       if (a === "encrypt-selection") encryptSelection();
       if (a === "lock-vault") lockVault("manual");
@@ -7527,17 +7684,19 @@ function wire() {
   $("#doc").addEventListener("click", previewClickToEdit);
   $("#scroll").addEventListener("click", paneClickToPreview);
 
+  /* backdrop click = dismiss, through the SAME closer table dismissTop uses.
+     The if-chain this replaces was a second copy of that table, and it had
+     already drifted: #palVeil fell through to the bare class-toggle, so a
+     backdrop click closed the palette without closePal's focus release. Every
+     veil with teardown beyond hiding must be in CLOSERS, and now there is one
+     place that says so. A click on the exit guard's scrim is Keep editing —
+     the least destructive answer, which is what closeExitGuard does. */
   $$(".veil").forEach((v) =>
     v.addEventListener("mousedown", (e) => {
       if (e.target !== v) return;
-      if (v.id === "ppVeil") return closePP();
-      // the confirm carries state beyond the class — dismiss it, do not just hide it
-      if (v.id === "cfVeil") return closeConfirm();
-      if (v.id === "cxVeil") return closeConflict();
-      /* a click on the scrim is Keep editing — the least destructive answer,
-         which is what an accidental click has to mean here */
-      if (v.id === "xgVeil") return closeExitGuard();
-      v.classList.remove("show");
+      const close = CLOSERS["#" + v.id];
+      if (close) close();
+      else v.classList.remove("show");
     })
   );
   /* The scrim is the DRAWER's click-away and nothing else now (see syncScrim):
@@ -7725,12 +7884,6 @@ function wire() {
      one is a secret held for no reason. See the note above `settingsDraft`. */
   bindInput("#gitToken", (v) => pushSettings({ git: { tokenMasked: v } }));
   bindInput("#aiKey", (v) => pushSettings({ ai: { apiKeyMasked: v } }));
-
-  $$("input[type=password]").forEach((inp) => {
-    if (inp.id === "ppInput") return;
-    inp.addEventListener("focus", () => (inp.type = "text"));
-    inp.addEventListener("blur", () => (inp.type = "password"));
-  });
 
   /* palette */
   $("#palInput").addEventListener("input", (e) => {

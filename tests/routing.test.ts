@@ -453,7 +453,7 @@ describe("routing — Settings is a page at /settings", () => {
     await chord("Comma");
     await waitSettings(true);
     const len = await histLen();
-    for (const sec of ["editing", "git", "secrets", "terminal"]) {
+    for (const sec of ["editing", "trash", "git", "secrets", "terminal"]) {
       await page.click(`#settingsNav button[data-sec="${sec}"]`);
       await page.waitForFunction((s) => location.pathname === "/settings/" + s, { timeout: 4000 }, sec);
     }
@@ -823,7 +823,7 @@ describe("routing — renames and dirty buffers", () => {
     }
   }, 90000);
 
-  test("BACK with a dirty buffer flushes it to disk instead of dropping the text", async () => {
+  test("BACK with a dirty buffer waits for confirmation, then Save & exit writes before navigating", async () => {
     await boot("/");
     await clickDoc(B);
     await chord("KeyE");
@@ -835,10 +835,18 @@ describe("routing — renames and dirty buffers", () => {
     await page.keyboard.type("\nROUTING-DIRTY-MARKER\n");
     await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent !== "Saved", { timeout: 6000 });
 
-    await backTo(A);
+    await back();
+    await waitVeil("xgVeil", true);
+    expect(await shown()).toBe(B);
+    expect(await urlPath()).toBe(dUrl(B));
+    expect(readVaultText(srv.vault, B)).not.toContain("ROUTING-DIRTY-MARKER");
+
+    await page.click('#xgVeil [data-act="xg-save"]');
+    await waitVeil("xgVeil", false);
+    await settled(A);
     await waitUntil(() => readVaultText(srv.vault, B).includes("ROUTING-DIRTY-MARKER"), {
       timeout: 10000,
-      label: "the dirty buffer to reach disk across a BACK",
+      label: "Save & exit to write the dirty buffer before replaying BACK",
     });
     expect(readVaultText(srv.vault, B)).toContain("ROUTING-DIRTY-MARKER");
     /* and FORWARD brings the text back — the raw buffer still carries it */

@@ -107,14 +107,16 @@ afterAll(async () => {
   if (srv) await srv.stop();
 });
 
-/* a veil left standing by a failure must not decide the next test */
+/* Every case starts from a fresh client state. This became load-bearing once
+   leaving a dirty Raw buffer correctly started asking for confirmation: a
+   late save continuation or an orphan veil from one case must not turn the
+   next case's first tree click into an answer about the previous document. */
 afterEach(async () => {
   if (!page) return;
   try {
-    await page.evaluate(() => {
-      document.querySelectorAll(".veil.show").forEach((v) => v.classList.remove("show"));
-      document.getElementById("toast")?.classList.remove("show", "sticky");
-    });
+    await page.goto(srv.base + "/", { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#app:not([hidden])", { timeout: 25000 });
+    await page.waitForFunction(() => document.querySelectorAll("#tree .row.file").length > 0, { timeout: 25000 });
   } catch {}
 });
 
@@ -256,6 +258,12 @@ describe("visibilitychange flushes the buffer (SPEC §4)", () => {
     );
     console.log(`[lifecycle] ${bytes} bytes flushed on hidden in ${took}ms (keepalive dropped, request kept)`);
     await showPage();
+    /* Disk visibility can win the poll just before the fetch continuation
+       adopts its new baseline. Do not carry that transient dirty state into
+       the next test, where the Raw-exit guard would correctly stop navigation. */
+    await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent !== "Unsaved changes", {
+      timeout: 8000,
+    });
   }, 90000);
 
   /* THE MIRROR OF THE FLUSH: a save that FAILED has no second attempt of its

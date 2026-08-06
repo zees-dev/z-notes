@@ -80,8 +80,8 @@ export function absOf(vault: string, rel: string): string | null {
 export const znotesDir = (vault: string) => resolve(vault, ".znotes");
 export const dbPath = (vault: string) => resolve(vault, ".znotes", "index.db");
 export const settingsPath = (vault: string) => resolve(vault, ".znotes", "settings.toml");
-export const identityPath = (vault: string) => resolve(vault, ".znotes", "identity.age");
-export const recipientPath = (vault: string) => resolve(vault, ".znotes", "vault.pub");
+const identityPath = (vault: string) => resolve(vault, ".znotes", "identity.age");
+const recipientPath = (vault: string) => resolve(vault, ".znotes", "vault.pub");
 
 /** Display name for the vault. A directory literally called `vault` borrows
     its parent's name, which is what the prototype showed ("z-notes"). */
@@ -603,6 +603,19 @@ export async function readDoc(vault: string, rel: string): Promise<DiskDoc | nul
   return { path: rel, markdown, size: st.size, mtimeMs: st.mtimeMs };
 }
 
+/** The stat half of readDoc alone — for the reconciler's cheap gate, which
+    must not pay for a read+decode of a doc it is about to skip. */
+export async function statDoc(vault: string, rel: string): Promise<{ size: number; mtimeMs: number } | null> {
+  const abs = absOf(vault, rel);
+  if (!abs) return null;
+  try {
+    const st = await Bun.file(abs).stat();
+    return st.isFile() ? { size: st.size, mtimeMs: st.mtimeMs } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function exists(vault: string, rel: string): Promise<"file" | "dir" | null> {
   const abs = absOf(vault, rel);
   if (!abs) return null;
@@ -612,6 +625,20 @@ export async function exists(vault: string, rel: string): Promise<"file" | "dir"
   } catch {
     return null;
   }
+}
+
+/** The ancestor segment of `target` that is a FILE rather than a folder, or
+    null when the way is clear. `mkdir -p` through a file throws ENOTDIR out of
+    a route; naming the real problem beats surfacing an errno. Shared by
+    POST /api/docs, the move, and the trash restore. */
+export async function blockedByFile(vault: string, target: string): Promise<string | null> {
+  const segs = target.split("/");
+  let acc = "";
+  for (let i = 0; i < segs.length - 1; i++) {
+    acc = acc ? acc + "/" + segs[i] : segs[i];
+    if ((await exists(vault, acc)) === "file") return acc;
+  }
+  return null;
 }
 
 /**

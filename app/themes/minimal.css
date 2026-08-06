@@ -16,7 +16,6 @@
 :root {
   /* --- surfaces --- */
   --bg: #fcfcfb;
-  --app-bg: var(--bg);
   --panel: #ffffff;                    /* only where a surface must lift: inputs, knobs */
   --panel-2: #f6f6f4;                  /* code wells, table/diff/modal footers */
   --panel-3: rgba(23, 24, 26, .05);    /* hover wells, tracks, chips */
@@ -50,7 +49,6 @@
 
   /* --- misc palette --- */
   --sel-bg: rgba(78, 110, 93, .17);
-  --sel-fg: var(--text);
   --scroll-thumb: rgba(23, 24, 26, .14);
   --scroll-thumb-hover: rgba(23, 24, 26, .26);
   --mark-fg: var(--accent-h);
@@ -62,9 +60,6 @@
 
   /* --- typography --- */
   --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --font-doc: var(--font);
-  --font-heading: var(--font);
   --font-kbd: var(--mono);
   --tracking-tight: -.008em;
   --tracking-wide: .14em;
@@ -72,7 +67,6 @@
   --h1-size: 1.72em; --h1-weight: 600; --h1-tracking: -.028em; --h1-transform: none;
   --h2-size: 1.07em; --h2-weight: 600; --h2-tracking: -.017em; --h2-transform: none;
   --h3-size: .96em;  --h3-weight: 600; --h3-tracking: -.012em; --h3-transform: none;
-  --label-transform: uppercase;
   --label-tracking: .14em;              /* the typographic signature of the theme */
 
   /* --- shape: small radii, one hairline weight --- */
@@ -103,12 +97,9 @@
   /* --- region treatments: one flat paper, hairlines between --- */
   --sidebar-bg: var(--bg);
   --sidebar-bd: var(--bd-w) var(--bd-style) var(--line-2);
-  --sidebar-blur: none;
   --topbar-bg: var(--bg);
-  --topbar-blur: none;
   --editor-bg: var(--bg);
   --statusbar-bg: var(--bg);
-  --statusbar-blur: none;
   --chat-bg: var(--bg);
   --chat-bd: var(--bd-w) var(--bd-style) var(--line-2);
   --composer-bg: var(--bg);
@@ -127,10 +118,8 @@
   --row-active-fg: var(--accent-h);
   --row-active-sh: none;
   --row-marker-w: 2px;
-  --row-marker-bg: var(--accent);
 
   --btn-bg: transparent;
-  --btn-fg: var(--text-2);
   --btn-bd: var(--bd-w) var(--bd-style) var(--line);
   --btn-sh: none;
   --btn-hover-bg: rgba(23, 24, 26, .04);
@@ -141,9 +130,7 @@
   --btn-primary-fg: var(--accent);
   --btn-primary-sh: none;
 
-  --input-bg: var(--panel);
   --input-bd: var(--bd-w) var(--bd-style) var(--line);
-  --input-fg: var(--text);
 
   --seg-track-bg: rgba(23, 24, 26, .045);
   --seg-on-bg: var(--accent-soft);
@@ -154,7 +141,6 @@
 
   --kbd-bg: transparent;
   --kbd-fg: var(--muted-2);
-  --kbd-bd: var(--line);
   --kbd-bd-bottom-w: 1px;
   --kbd-radius: 4px;
 
@@ -162,13 +148,11 @@
   --cb-radius: 3px;
   --cb-bg: transparent;
   --cb-bd: 1px solid var(--muted-2);
-  --cb-on-bg: var(--accent);
   --cb-on-bd: var(--accent);
   --cb-mark: #ffffff;
   --task-done-fg: var(--muted);        /* struck through AND dropped a step —
                                           that is enough signal without taking
                                           a done line to 2.5:1 */
-  --task-done-decoration: line-through;
 
   /* the prototype marks list items with a short rule, not a disc. --bullet-size
      is one value for both axes, so the dash is painted *inside* the 6px box by
@@ -191,7 +175,6 @@
   --wl-icon-opacity: .45;
 
   --secret-bg: transparent;
-  --secret-open-bd: var(--ok-bd);
   --table-head-bg: transparent;
   --divider-bg: var(--line-2);
 
@@ -200,7 +183,6 @@
   --bubble-user-fg: var(--text);
   --bubble-user-radius: var(--r);
   --bubble-ai-bg: transparent;
-  --bubble-ai-fg: var(--text-2);
   --bubble-ai-bd: var(--bd-w) var(--bd-style) var(--line-2);
   --bubble-ai-radius: var(--r);
 
@@ -209,7 +191,6 @@
   --toast-ok: #9ccdae;
 
   --conn-ok: var(--accent);
-  --conn-down: var(--warn);
 
   --vault-mark-bg: transparent;
   --vault-mark-fg: var(--accent);
