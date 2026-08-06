@@ -50,12 +50,13 @@
 
 import { dirname, resolve } from "node:path";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
-import { absOf, exists, safePath, znotesDir } from "./vault.ts";
+import { absOf, blockedByFile, exists, safePath, znotesDir } from "./vault.ts";
+import { TRASH_RETENTION_DEFAULT_DAYS } from "./settings.ts";
 
 /** Vault-relative, POSIX, for git pathspecs and log lines. */
-export const TRASH_REL = ".znotes/trash";
+const TRASH_REL = ".znotes/trash";
 
-export const trashDir = (vault: string) => resolve(znotesDir(vault), "trash");
+const trashDir = (vault: string) => resolve(znotesDir(vault), "trash");
 
 /**
  * Entry ids are minted here and never accepted from a client unchecked: the id
@@ -199,7 +200,7 @@ export interface TrashDeps {
   log?: (line: string) => void;
 }
 
-export const DEFAULT_RETENTION_DAYS = 7;
+const DEFAULT_RETENTION_DAYS = TRASH_RETENTION_DEFAULT_DAYS;
 
 export class Trash {
   private readonly vault: string;
@@ -226,15 +227,6 @@ export class Trash {
     const base = `${TRASH_REL}/${id}`;
     if (!meta) return [`${base}/meta.json`];
     return [`${base}/meta.json`, ...meta.files.map((f) => `${base}/files/${f}`)];
-  }
-
-  /**
-   * Every file under `.znotes/trash`, vault-relative — what the bulk `stage()`
-   * in git.ts adds so an entry created out of band (a pull, a crash between the
-   * move and the commit) still reaches the remote.
-   */
-  gitPaths(): Promise<string[]> {
-    return trashGitPaths(this.vault);
   }
 
   /* ---------- read ---------- */
@@ -296,18 +288,11 @@ export class Trash {
   /**
    * What stands between this entry and its original path: the path itself if
    * something is there now, or the ancestor segment that is a FILE rather than
-   * a folder (`mkdir -p` through a file throws ENOTDIR, and naming the real
-   * problem beats surfacing an errno). Null when the way is clear.
+   * a folder (vault.ts blockedByFile). Null when the way is clear.
    */
   private async blocker(path: string): Promise<string | null> {
     if (await exists(this.vault, path)) return path;
-    const segs = path.split("/");
-    let acc = "";
-    for (let i = 0; i < segs.length - 1; i++) {
-      acc = acc ? acc + "/" + segs[i] : segs[i];
-      if ((await exists(this.vault, acc)) === "file") return acc;
-    }
-    return null;
+    return blockedByFile(this.vault, path);
   }
 
   /** Every entry, newest deletion first — the order the panel shows them in. */
@@ -462,9 +447,7 @@ export class Trash {
    */
   async sweep(): Promise<{ purged: string[]; entryPaths: string[] }> {
     const cutoff = Date.now() - this.retentionDays() * DAY_MS;
-    const purged: string[] = [];
-    const entryPaths: string[] = [];
-    for (const id of await this.ids()) {
+    return this.purgeWhere(async (id) => {
       const meta = await this.readMeta(id);
       let at: number;
       if (meta) at = Date.parse(meta.deletedAt);
@@ -475,20 +458,23 @@ export class Trash {
           .then((s) => s.mtimeMs)
           .catch(() => 0);
       }
-      if (!(at <= cutoff)) continue;
-      const r = await this.purgeEntry(id).catch(() => null);
-      if (!r) continue;
-      purged.push(id);
-      entryPaths.push(...r.entryPaths);
-    }
-    return { purged, entryPaths };
+      return at <= cutoff;
+    });
   }
 
   /** Empty the trash outright — `POST /api/trash/purge {"all":true}`. */
-  async purgeAll(): Promise<{ purged: string[]; entryPaths: string[] }> {
+  purgeAll(): Promise<{ purged: string[]; entryPaths: string[] }> {
+    return this.purgeWhere(() => true);
+  }
+
+  /** The one purge walk sweep() and purgeAll() share. */
+  private async purgeWhere(
+    take: (id: string) => boolean | Promise<boolean>
+  ): Promise<{ purged: string[]; entryPaths: string[] }> {
     const purged: string[] = [];
     const entryPaths: string[] = [];
     for (const id of await this.ids()) {
+      if (!(await take(id))) continue;
       const r = await this.purgeEntry(id).catch(() => null);
       if (!r) continue;
       purged.push(id);

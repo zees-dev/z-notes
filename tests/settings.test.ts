@@ -240,6 +240,9 @@ describe("settings.toml — the startup surface round-trips", () => {
       `clickToEdit = false`,
       `homeDoc = "architecture/event-pipeline.md"`,
       ``,
+      `[trash]`,
+      `retentionDays = 21`,
+      ``,
       `[git]`,
       `branch = "trunk"`,
       `autoSync = false`,
@@ -277,6 +280,7 @@ describe("settings.toml — the startup surface round-trips", () => {
       "editor.autosaveSeconds": 3,
       "editor.clickToEdit": false,
       "editor.homeDoc": "architecture/event-pipeline.md",
+      "trash.retentionDays": 21,
       "git.branch": "trunk",
       "git.autoSync": false,
       "git.autoSyncSeconds": 300,
@@ -311,13 +315,14 @@ describe("settings.toml — the startup surface round-trips", () => {
       theme: "minimal",
       density: "compact",
       editor: { autosaveSeconds: 7 },
+      trash: { retentionDays: 14 },
       secrets: { idleLockMinutes: 33 },
       ai: { maxOutputTokens: 9000 },
     });
     expect(put.status).toBe(200);
 
     const file = readVaultText(vault, SETTINGS_REL);
-    for (const line of [`theme = "minimal"`, `density = "compact"`, `autosaveSeconds = 7`, `idleLockMinutes = 33`, `maxOutputTokens = 9000`]) {
+    for (const line of [`theme = "minimal"`, `density = "compact"`, `autosaveSeconds = 7`, `retentionDays = 14`, `idleLockMinutes = 33`, `maxOutputTokens = 9000`]) {
       expect(`settings.toml contains \`${line}\`: ${file.includes(line)}`).toBe(
         `settings.toml contains \`${line}\`: true`
       );
@@ -330,6 +335,7 @@ describe("settings.toml — the startup surface round-trips", () => {
     expect(`theme after restart: ${back.theme}`).toBe("theme after restart: minimal");
     expect(`density after restart: ${back.density}`).toBe("density after restart: compact");
     expect(`autosaveSeconds after restart: ${back.editor.autosaveSeconds}`).toBe("autosaveSeconds after restart: 7");
+    expect(`retentionDays after restart: ${back.trash.retentionDays}`).toBe("retentionDays after restart: 14");
     expect(`idleLockMinutes after restart: ${back.secrets.idleLockMinutes}`).toBe("idleLockMinutes after restart: 33");
     expect(`maxOutputTokens after restart: ${back.ai.maxOutputTokens}`).toBe("maxOutputTokens after restart: 9000");
   }, 90000);

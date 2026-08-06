@@ -21,6 +21,7 @@ import { Reconciler, type ChangeHint, type ChangeHints, type ChangeReason, type 
 import {
   absOf,
   affectedTargets,
+  blockedByFile as vaultBlockedByFile,
   buildTree,
   dbPath,
   exists,
@@ -362,17 +363,8 @@ function canonicalDocPath(p: string): string {
 
 const isMd = (p: string) => /\.md$/i.test(p);
 
-/** `mkdir -p` through an existing FILE throws ENOTDIR out of the route; name
-    the real problem instead. Shared by POST /api/docs and the move. */
-async function blockedByFile(target: string): Promise<string | null> {
-  const segs = target.split("/");
-  let acc = "";
-  for (let i = 0; i < segs.length - 1; i++) {
-    acc = acc ? acc + "/" + segs[i] : segs[i];
-    if ((await exists(VAULT, acc)) === "file") return acc;
-  }
-  return null;
-}
+/** vault.ts blockedByFile, bound to this server's vault. */
+const blockedByFile = (target: string) => vaultBlockedByFile(VAULT, target);
 
 /**
  * PATCH /api/docs/{path} `{to}` and DELETE /api/docs/{path}.
@@ -1288,7 +1280,17 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
       // settings.toml is committed and hand-editable, so it can change under us
       // (a pull, another machine, an editor). Serve what is on disk, not a
       // boot-time snapshot — see Settings.reloadIfChanged.
-      await settings.reloadIfChanged();
+      const changed = await settings.reloadIfChanged();
+      /* A reload IS a settings change and gets the same fan-out a PUT does:
+         without it a pulled settings.toml altered behaviour (autoSync timer,
+         retention window) with no re-evaluation and no `settings-changed`
+         frame, so other tabs kept enforcing the old values indefinitely. */
+      if (changed) {
+        gitSync.applySettings();
+        ai.announce();
+        broadcast("settings-changed", settings.get());
+        sweepTrash("settings reloaded from disk").catch(() => {});
+      }
       return json(settings.get());
     }
     if (method === "PUT") {
@@ -1318,7 +1320,10 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
            must not wait on a git commit. */
         if (trash.retentionDays() !== retentionBefore) {
           sweepTrash("retention changed")
-            .then(() => announceTrash())
+            /* A sweep that removed entries already announced its final list.
+               With nothing expired, still announce so every client updates
+               the retention label and each entry's recalculated purgeAt. */
+            .then((purged) => (purged.length ? undefined : announceTrash()))
             .catch(() => {});
         }
         const after = endpoint();

@@ -161,41 +161,20 @@ export const deleteDoc = (path) => del("api/docs/" + encPath(path));
    scan excludes, so nothing in here is reachable by the tree, search or the
    link resolver — a trashed doc is out of the world, not merely hidden.
 
-   THE ENTRIES ARE NORMALISED ON THE WAY IN. Everything downstream reads one
-   shape — `{ id, path, kind, deletedAt, size, purgeAt }` — no matter which of
-   the near-synonyms the server chose to spell it with, and a missing field
-   arrives as null rather than as `undefined` leaking into a template. This is
-   the same defence `getTrash` owes any other route: the UI must not carry a
-   second vocabulary for the server's field names. */
-
-const trashEntry = (e) => {
-  const src = e || {};
-  const path = src.path || src.originalPath || src.from || "";
-  return {
-    /* the handle the restore/purge routes take. Servers that key the store by
-       original path (one trashed copy per path) never mint a separate id, so
-       the path is the fallback handle rather than an error. */
-    id: String(src.id != null ? src.id : src.trashId != null ? src.trashId : path),
-    path: path,
-    kind: src.kind === "folder" ? "folder" : "doc",
-    deletedAt: src.deletedAt || src.deletedOn || null,
-    size: typeof src.size === "number" ? src.size : null,
-    purgeAt: src.purgeAt || src.purgeAfter || src.expiresAt || null,
-  };
-};
-
-/* → { entries: [entry], retentionDays: number|null }
+   The entries are passed through as the server spells them (trash.ts
+   TrashEntry) — there is exactly one server, its shape is typed, and a second
+   client-side vocabulary of aliases it never emits was pure dead weight that
+   also DROPPED the fields it does send (`restorable`, `blockedBy`, `bytes`).
    `retentionDays` is what the delete confirmation quotes back to the user, so
    an absent one is null and NOT a guessed 30 — the dialog says less rather
    than promising a number this client made up. */
-export const getTrash = () =>
-  get("api/trash").then((r) => {
-    const list = Array.isArray(r) ? r : (r && r.entries) || [];
-    return {
-      entries: list.map(trashEntry),
-      retentionDays: r && typeof r.retentionDays === "number" ? r.retentionDays : null,
-    };
-  });
+
+const trashView = (r) => ({
+  entries: (r && r.entries) || [],
+  retentionDays: r && typeof r.retentionDays === "number" ? r.retentionDays : null,
+});
+
+export const getTrash = () => get("api/trash").then(trashView);
 
 /* Put it back where it came from, in one commit. → { path }
    409 `exists` when something now occupies the original path — the one error
@@ -277,23 +256,38 @@ export const newSession = () => post("api/ai/sessions", {});
    fetch closes the response body, which makes the server cancel its stream,
    which aborts the upstream request. Nothing keeps generating for a chat
    nobody is reading. */
-export async function sendMessageStream(content, docPath, handlers = {}) {
-  const path = "api/ai/messages";
+export function sendMessageStream(content, docPath, handlers = {}) {
+  return streamPost(
+    "api/ai/messages",
+    { content, docPath },
+    handlers,
+    { text: "onText", reasoning: "onReasoning", tool_args: "onToolArgs", command: "onCommand", error: "onError" },
+    "done",
+    { auth: false }
+  );
+}
+
+/* ---------------- the POST-SSE envelope, shared ----------------
+
+   The fetch, the pre-stream JSON-error path and the handler dispatch are one
+   implementation for the same reason `readSse` below is: the AI turn and the
+   two terminal streams are the same wire shape, and a second copy of the
+   error-body parsing was a second place for it to be subtly wrong.
+
+   `events` maps SSE event name → handler name; `finalEvent` is the frame whose
+   payload the promise resolves with (null if the stream ends without one). */
+async function streamPost(path, body, handlers, events, finalEvent, { auth } = {}) {
   let res;
+  const headers = { accept: "text/event-stream", "content-type": "application/json" };
+  if (auth && termToken) headers.authorization = "Bearer " + termToken;
   try {
-    res = await fetch(url(path), {
-      method: "POST",
-      signal: handlers.signal,
-      headers: { accept: "text/event-stream", "content-type": "application/json" },
-      body: JSON.stringify({ content, docPath }),
-    });
+    res = await fetch(url(path), { method: "POST", signal: handlers.signal, headers, body: JSON.stringify(body) });
   } catch (err) {
     if (err && err.name === "AbortError") throw err;
     throw new ApiError(0, { error: "network", message: "Cannot reach the z-notes backend." }, path);
   }
-
   /* an error before the stream opens is ordinary JSON (400 empty-message, a
-     server fault); only a 2xx carries events */
+     refusal, a server fault); only a 2xx carries events */
   if (!res.ok || !res.body) {
     const raw = await res.text().catch(() => "");
     let payload = null;
@@ -302,23 +296,21 @@ export async function sendMessageStream(content, docPath, handlers = {}) {
     } catch (e) {
       payload = { error: "bad-json", message: raw.slice(0, 200) };
     }
+    /* A rejected token is a locked terminal — drop it here so every caller
+       sees a consistent state instead of retrying with something dead. */
+    if (auth && res.status === 401) termToken = null;
     throw new ApiError(res.status, payload, path);
   }
-
   const call = (name, data) => {
     const fn = handlers[name];
     if (fn) fn(data);
   };
-  let done = null;
+  let final = null;
   await readSse(res, (event, data) => {
-    if (event === "text") call("onText", data);
-    else if (event === "reasoning") call("onReasoning", data);
-    else if (event === "tool_args") call("onToolArgs", data);
-    else if (event === "command") call("onCommand", data);
-    else if (event === "error") call("onError", data);
-    else if (event === "done") done = data;
+    if (event === finalEvent) final = data;
+    else if (events[event]) call(events[event], data);
   });
-  return done;
+  return final;
 }
 
 /* ---------------- the SSE reader, shared ----------------
@@ -413,13 +405,17 @@ export async function terminalUnlock(password) {
 }
 
 export async function terminalLock() {
-  const had = termToken;
-  termToken = null;
-  if (!had) return null;
+  if (!termToken) return null;
+  /* the token is dropped AFTER the request goes out, not before: `request`
+     reads `termToken` at send time, so nulling it first sent a bearer-less
+     POST the server answered 401 — the local lock worked and the server-side
+     session lived on until the idle timer got it */
   try {
     return await post("api/terminal/lock", {}, { auth: true });
   } catch (err) {
     return null; // the token is gone locally either way; that is what locking means
+  } finally {
+    termToken = null;
   }
 }
 
@@ -451,44 +447,15 @@ export const terminalRunCommand = (id, handlers) =>
   termStream("api/terminal/commands/" + encodeURIComponent(id) + "/run", {}, handlers);
 
 async function termStream(path, body, handlers = {}) {
-  let res;
-  const headers = { accept: "text/event-stream", "content-type": "application/json" };
-  if (termToken) headers.authorization = "Bearer " + termToken;
-  try {
-    res = await fetch(url(path), { method: "POST", signal: handlers.signal, headers, body: JSON.stringify(body) });
-  } catch (err) {
-    if (err && err.name === "AbortError") throw err;
-    throw new ApiError(0, { error: "network", message: "Cannot reach the z-notes backend." }, path);
-  }
-  /* Refusals (locked, disabled, busy, no command) arrive before the stream
-     opens and are ordinary JSON; only a 2xx carries events. */
-  if (!res.ok || !res.body) {
-    const raw = await res.text().catch(() => "");
-    let payload = null;
-    try {
-      payload = raw ? JSON.parse(raw) : null;
-    } catch (e) {
-      payload = { error: "bad-json", message: raw.slice(0, 200) };
-    }
-    /* A rejected token is a locked terminal — drop it here so every caller
-       sees a consistent state instead of retrying with something dead. */
-    if (res.status === 401) termToken = null;
-    throw new ApiError(res.status, payload, path);
-  }
-  const call = (name, data) => {
-    const fn = handlers[name];
-    if (fn) fn(data);
-  };
-  let exit = null;
-  await readSse(res, (event, data) => {
-    if (event === "start") call("onStart", data);
-    else if (event === "stdout") call("onStdout", data);
-    else if (event === "stderr") call("onStderr", data);
-    else if (event === "notice") call("onNotice", data);
-    else if (event === "error") call("onError", data);
-    else if (event === "exit") exit = data;
-  });
-  if (exit) call("onExit", exit);
+  const exit = await streamPost(
+    path,
+    body,
+    handlers,
+    { start: "onStart", stdout: "onStdout", stderr: "onStderr", notice: "onNotice", error: "onError" },
+    "exit",
+    { auth: true }
+  );
+  if (exit && handlers.onExit) handlers.onExit(exit);
   return exit;
 }
 
@@ -559,6 +526,8 @@ export function connectEvents(handlers = {}) {
   /* `{settings, meta}` — byte for byte what `GET /api/settings` serves, so the
      credentials are already masked. Nothing secret is representable here. */
   on("settings-changed", handlers.onSettingsChanged);
+  /* Same body as GET /api/trash, normalised through the same one reader. */
+  on("trash-changed", handlers.onTrashChanged ? (data, ev) => handlers.onTrashChanged(trashView(data), ev) : null);
   /* A NOTIFICATION, never content: `{id, state, source, at}`. The command
      string and its output come back over the bearer-gated
      `GET /api/terminal/commands`, because this stream is not behind the

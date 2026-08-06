@@ -413,6 +413,7 @@ describe("after a delete, the neighbour opens", () => {
         path: document.getElementById("stPath")!.textContent,
         url: location.pathname,
         len: history.length,
+        state: history.state && history.state.z,
       }));
     const before = await snap();
 
@@ -422,8 +423,10 @@ describe("after a delete, the neighbour opens", () => {
     const after = await snap();
     expect(`still on: ${after.path}`).toBe("still on: inbox.md");
     expect(`the address bar did not move: ${after.url === before.url}`).toBe("the address bar did not move: true");
-    expect(`and no history entry was minted: ${after.len === before.len}`).toBe(
-      "and no history entry was minted: true"
+    /* The confirm owns the one overlay-dismissal marker every modal owns
+       (routing.test.ts). The delete itself must not add a document entry. */
+    expect(`only the confirm marker was minted: ${after.len === before.len + 1 && after.state === "veil"}`).toBe(
+      "only the confirm marker was minted: true"
     );
   }, 90000);
 });

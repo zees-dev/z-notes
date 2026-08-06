@@ -99,11 +99,11 @@ const inTrackedDir = (p: string) => TRACKED_META_DIRS.some((d) => p.startsWith(d
 const TRACKED_META_DIR_SPECS = TRACKED_META_DIRS.map((d) => d.replace(/\/$/, ""));
 
 /** Overridable ONLY so a test can watch a hung git get killed in seconds. */
-export const GIT_TIMEOUT_MS = (() => {
+const GIT_TIMEOUT_MS = (() => {
   const raw = Number(process.env.ZNOTES_GIT_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
 })();
-export const DEFAULT_AUTOSYNC_SECONDS = 60;
+const DEFAULT_AUTOSYNC_SECONDS = 60;
 
 /* The sqlite index is a rebuildable cache AND the credential store, so it must
    never be committed (SPEC §5/§7). The rules go in `.git/info/exclude`, not in
@@ -127,15 +127,20 @@ const EXCLUDE_RULES = [
      `.znotes/tmp/` does not cover it: it is parked beside index.db, on purpose,
      because .recover wants the -wal sidecar next to its database. */
   ".znotes/index.db.corrupt-*",
+  /* the pre-migration copy db.ts parks on a schema bump — same file, same
+     credentials, same secrecy rule */
+  ".znotes/index.db.v*",
 ];
 /** Paths that must be ignored, whatever else the repo is configured to do. */
 const NEVER_COMMIT = [
   ".znotes/index.db",
   ".znotes/index.db-wal",
   ".znotes/index.db-shm",
-  /* a git PATHSPEC glob, matched by `ls-files` below — a parked corrupt index
-     carries the same credentials the live one does (db.ts parkCorruptIndex) */
+  /* git PATHSPEC globs, matched by `ls-files` below — a parked corrupt index
+     and a pre-migration park both carry the same credentials the live one
+     does (db.ts parkCorruptIndex / migrate) */
   ".znotes/index.db.corrupt-*",
+  ".znotes/index.db.v*",
 ];
 
 /* The helper git calls when it needs a username/password. $1 is the prompt
@@ -164,7 +169,7 @@ const nulList = (s: string) => String(s || "").split("\0").filter(Boolean);
 const listPaths = (paths: string[], max = 4) =>
   paths.slice(0, max).join(", ") + (paths.length > max ? ` (+${paths.length - max} more)` : "");
 
-export const MESSAGE_MAX = 300;
+const MESSAGE_MAX = 300;
 
 /* Progress chatter git writes to stderr on the way to the real failure. The
    first stderr line of a failed `pull --rebase` is `From <remote>` and the first
@@ -307,6 +312,12 @@ export class GitSync {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inflight: Promise<void> | null = null;
   private again = false;
+  /** Serialises every WRITER of the git index — the sync pipeline and every
+      targeted commit. Two writers to one index raced: a `commitPaths` running
+      concurrently with an auto-sync hit transient `index.lock` failures, or
+      swept the pipeline's staged set into the wrong commit. Read-only
+      observation (`status`/`refresh`) stays outside; it never takes the lock. */
+  private mutating: Promise<unknown> = Promise.resolve();
   private refreshing: Promise<void> | null = null;
   private observedAt = 0;
   private stopped = false;
@@ -451,7 +462,8 @@ export class GitSync {
       do {
         this.again = false;
         try {
-          await this.execute(kind);
+          // under the writer lock: a targeted commit mid-pipeline is the race
+          await this.withIndexLock(() => this.execute(kind));
         } catch (err) {
           // an unexpected throw must still leave a truthful status and, above
           // all, must still clear `inflight` — a stuck flag kills sync for good
@@ -470,6 +482,13 @@ export class GitSync {
       this.inflight = null;
     }
     return this.snapshot();
+  }
+
+  /** The writer lock. Chained like Reconciler.lock: failures do not break the chain. */
+  private withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.mutating.then(fn, fn);
+    this.mutating = next.catch(() => {});
+    return next;
   }
 
   /* ============================================================
@@ -787,21 +806,7 @@ export class GitSync {
       const obs = await this.observe();
       this.observedAt = Date.now();
       if (!obs.repo) {
-        this.publish({
-          state: "offline",
-          branch: obs.branch,
-          remote: null,
-          lastSyncAt: this.deps.index.getMeta("git.lastSyncAt"),
-          ahead: 0,
-          behind: 0,
-          message: obs.reason,
-        });
-        return;
-      }
-      // an error state stands until a sync clears it — a read-only refresh must
-      // not paper over a conflict the user still has to resolve
-      if (this.current.state === "error") {
-        this.publish({ ...this.current, branch: obs.branch, remote: obs.remote, ahead: obs.ahead, behind: obs.behind });
+        this.publish(this.offlineStatus(obs));
         return;
       }
       /* a vault parked mid-merge or on a detached HEAD is not "synced": the
@@ -810,6 +815,18 @@ export class GitSync {
       const blocked = this.blockedReason(obs);
       if (blocked) {
         this.fail(obs.branch, obs.remote, blocked);
+        return;
+      }
+      /* An error state stands only while its CAUSE does. Blocked states above
+         re-report themselves each pass; an error whose cause the observation
+         can no longer see (a conflict resolved in the vault, a network that
+         healed enough for read-only git) used to LATCH — refresh() republished
+         it untouched, and only a write or a manual Sync now could clear it, so
+         the statusbar stayed red over a repo that was fine. Push failures are
+         not observable read-only, so an error with commits still ahead is kept
+         rather than painted over; a clean, unblocked repo is not an error. */
+      if (this.current.state === "error" && obs.ahead > 0) {
+        this.publish({ ...this.current, branch: obs.branch, remote: obs.remote, ahead: obs.ahead, behind: obs.behind });
         return;
       }
       this.publish(this.describe(obs));
@@ -880,44 +897,13 @@ export class GitSync {
     this.observedAt = Date.now();
 
     if (!obs.repo) {
-      this.publish({
-        state: "offline",
-        branch: obs.branch,
-        remote: null,
-        lastSyncAt: this.deps.index.getMeta("git.lastSyncAt"),
-        ahead: 0,
-        behind: 0,
-        message: obs.reason,
-      });
+      this.publish(this.offlineStatus(obs));
       return;
     }
 
-    /* ---------- refuse to touch a repo the user is in the middle of ----------
-       staging over a conflicted index marks every conflicted path RESOLVED with
-       its `<<<<<<<` marker text as the content, and the commit would finish the
-       user's merge and push the corruption. SPEC §7: the app never auto-resolves
-       and never destroys either side. A detached HEAD is refused too — commits
-       made there are pushed nowhere and vanish on the next checkout. */
-    const blocked = this.blockedReason(obs);
-    if (blocked) {
-      this.fail(obs.branch, obs.remote, blocked);
-      return;
-    }
-
-    await this.ensureExcludes();
-    const dbGuard = await this.guardIndexDb();
-    if (dbGuard) {
-      this.fail(obs.branch, obs.remote, dbGuard);
-      return;
-    }
-    const credGuard = await this.settingsCanary();
-    if (credGuard) {
-      this.fail(obs.branch, obs.remote, credGuard);
-      return;
-    }
-    const keyGuard = await this.keyringCanary();
-    if (keyGuard) {
-      this.fail(obs.branch, obs.remote, keyGuard);
+    const guard = await this.writeGuards(obs);
+    if (guard) {
+      this.fail(obs.branch, obs.remote, guard);
       return;
     }
 
@@ -967,20 +953,44 @@ export class GitSync {
     const after = await this.observe();
     this.observedAt = Date.now();
     if (!after.repo) {
-      this.publish({
-        state: "offline",
-        branch: after.branch,
-        remote: null,
-        lastSyncAt: this.deps.index.getMeta("git.lastSyncAt"),
-        ahead: 0,
-        behind: 0,
-        message: after.reason,
-      });
+      this.publish(this.offlineStatus(after));
       return;
     }
     const at = new Date().toISOString();
     this.deps.index.setMeta("git.lastSyncAt", at);
     this.publish(this.describe(after));
+  }
+
+  /**
+   * Every reason NOT to write to this repo, in order — shared verbatim by the
+   * sync pipeline and commitPaths, which used to carry its own copy.
+   *
+   * Why each: staging over a conflicted index marks every conflicted path
+   * RESOLVED with its `<<<<<<<` marker text as the content, and the commit
+   * would finish the user's merge and push the corruption (SPEC §7: the app
+   * never auto-resolves and never destroys either side). A detached HEAD is
+   * refused too — commits made there are pushed nowhere and vanish on the next
+   * checkout. Then the three canaries: a tracked index.db (the credential
+   * store), a credential in settings.toml, and a half-replaced keyring.
+   */
+  private async writeGuards(obs: Observation): Promise<string | null> {
+    const blocked = this.blockedReason(obs);
+    if (blocked) return blocked;
+    await this.ensureExcludes();
+    return (await this.guardIndexDb()) ?? (await this.settingsCanary()) ?? (await this.keyringCanary());
+  }
+
+  /** The `offline` status shape, spelled once. */
+  private offlineStatus(obs: { branch: string; reason: string }): SyncStatus {
+    return {
+      state: "offline",
+      branch: obs.branch,
+      remote: null,
+      lastSyncAt: this.deps.index.getMeta("git.lastSyncAt"),
+      ahead: 0,
+      behind: 0,
+      message: obs.reason,
+    };
   }
 
   private fail(branch: string, remote: string | null, message: string) {
@@ -1178,6 +1188,14 @@ export class GitSync {
     if (!email.ok || !email.stdout.trim()) {
       prefix.push("-c", "user.name=z-notes", "-c", "user.email=z-notes@localhost");
     }
+    /* Deliberately a bare index commit, NOT `--only <paths>`: the pipeline's
+       contract is "the staged set IS the commit", and two of its own staged
+       changes are ones `--only` cannot express — guardIndexDb's `rm --cached`
+       repair (a staged REMOVAL of a file still on disk; `--only` would commit
+       the working-tree file right back) and the alias-rename respell. The cost
+       is that anything the user staged by hand rides along under the sync
+       message; the untrack-in-place repair the tests pin depends on exactly
+       that sweep. */
     const r = await this.git([...prefix, "commit", "--no-verify", "-m", message]);
     if (r.ok) return { ok: true };
     // a hook or a race can leave nothing to commit — not an error
@@ -1213,6 +1231,16 @@ export class GitSync {
     paths: string[],
     message: string
   ): Promise<{ committed: boolean; sha: string | null; reason: string }> {
+    /* Under the same writer lock as the pipeline: this method mutates the git
+       index (`rm --cached`, `add`, `commit`) and used to run concurrently with
+       a debounced sync doing the same — two writers, one index. */
+    return this.withIndexLock(() => this.commitPathsLocked(paths, message));
+  }
+
+  private async commitPathsLocked(
+    paths: string[],
+    message: string
+  ): Promise<{ committed: boolean; sha: string | null; reason: string }> {
     const skip = (reason: string) => ({ committed: false, sha: null, reason });
     if (this.stopped) return skip("server is shutting down");
     const wanted = [...new Set(paths.filter(Boolean))];
@@ -1227,16 +1255,8 @@ export class GitSync {
     this.observedAt = Date.now();
     if (!obs.repo) return skip(obs.reason);
 
-    const blocked = this.blockedReason(obs);
-    if (blocked) return skip(blocked);
-
-    await this.ensureExcludes();
-    const dbGuard = await this.guardIndexDb();
-    if (dbGuard) return skip(dbGuard);
-    const credGuard = await this.settingsCanary();
-    if (credGuard) return skip(credGuard);
-    const keyGuard = await this.keyringCanary();
-    if (keyGuard) return skip(keyGuard);
+    const guard = await this.writeGuards(obs);
+    if (guard) return skip(guard);
 
     /* an explicit pathspec that git ignores makes `add` exit 1 — the same trap
        the bulk stage() defends against, and the same fix */

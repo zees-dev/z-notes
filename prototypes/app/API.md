@@ -192,8 +192,10 @@ Emits the `doc-changed` pair described under [Events](#events) for every moved p
 
 ### `DELETE /api/docs/{path}` *(real backend — phase 5)*
 
-→ `204`, no body. Deletes a doc, or a folder and everything under it. One git commit
-(`delete: <path>`).
+→ `204`, no body. Moves a doc, or a folder and everything under it, to a
+self-describing entry below `.znotes/trash/<id>/`. The departure and retained copy land in
+one git commit (`delete: <path>`); the bytes are moved with `rename(2)`, not decoded or
+rewritten.
 
 **Human-only, structurally.** SPEC §8 gives the assistant no delete and no rename:
 `propose_edits` accepts exactly `replace | insert_after | create | rewrite`, and nothing in
@@ -201,11 +203,74 @@ the AI relay can reach this route. The UI additionally requires an explicit conf
 
 Backlinks to a deleted doc are **not** rewritten: they become broken links, which the
 preview flags with a create-doc affordance. Rewriting them would erase the only record that
-something used to be there.
+something used to be there. Restoring the entry makes those links resolve again.
 
 `404 not-found` when there is nothing at `{path}` (or it is a non-`.md` file);
 `500 delete-failed` if the removal itself fails. Emits `doc-changed` with
 `"reason":"deleted"` and `"removed":true` for every doc that left the vault.
+
+---
+
+## Trash *(real backend, additive)*
+
+The trash is outside the document namespace. Its payload lives under `.znotes/trash/`,
+which the vault scan, search, backlink graph and AI context all exclude. Each entry has an
+opaque id, a `meta.json` record, and a `files/` subtree mirroring its original vault path.
+
+### `GET /api/trash`
+
+```json
+{
+  "retentionDays": 7,
+  "entries": [
+    {
+      "id": "m7k2x9-4f1a8b3c",
+      "path": "projects/homelab.md",
+      "name": "homelab.md",
+      "kind": "doc",
+      "deletedAt": "2026-08-05T01:02:03.000Z",
+      "bytes": 812,
+      "docCount": 1,
+      "fileCount": 1,
+      "purgeAt": "2026-08-12T01:02:03.000Z",
+      "expired": false,
+      "complete": true,
+      "restorable": true,
+      "blockedBy": null
+    }
+  ]
+}
+```
+
+Newest deletion first. `retentionDays` is the live value of
+`settings.trash.retentionDays`; `purgeAt` is derived from it on every read. A path occupied
+since the deletion reports `restorable:false` and names that path in `blockedBy`.
+
+`GET /api/trash/{id}` returns one entry in the same shape or `404 not-found`.
+
+### `POST /api/trash/{id}/restore`
+
+Restores the exact payload to its original path, creating missing ancestor folders. It
+never overwrites: `409 restore-blocked` names the path occupying the destination (or an
+ancestor that is now a file), and the trash remains untouched. A folder restore brings its
+markdown and non-markdown payload back together. → `200` with the restored `path`, `kind`,
+doc paths, and doc metadata when the entry itself is a doc. Emits `doc-changed` with
+`"reason":"restored"` for every restored doc, then `trash-changed`.
+
+### `DELETE /api/trash/{id}`
+
+Permanently removes one retained entry. → `204`, no body. There is no restore or undo after
+this route. Emits `trash-changed`.
+
+### `POST /api/trash/purge`
+
+With no body (or `{}`), applies the retention policy now. With `{"all":true}`, permanently
+empties the trash including entries whose window has not expired. →
+`200 {"purged":["<id>",…],"retentionDays":7,"all":false|true}`.
+
+The same retention sweep runs at boot, after every delete, immediately after a retention
+change, and hourly while the server is alive. `trash.retentionDays` defaults to 7 and is
+bounded to 1–365 days; zero never means “delete immediately”.
 
 ---
 
@@ -340,6 +405,7 @@ An empty `q` returns every doc as `kind:"doc"`, unscored, path-ordered.
     "density": "comfy",
     "colorScheme": "system",
     "editor": { "autosaveSeconds": 10, "clickToEdit": true, "homeDoc": "index.md" },
+    "trash": { "retentionDays": 7 },
     "git": { "branch": "main", "autoSync": true, "autoSyncSeconds": 60,
              "tokenMasked": "ghp_9f3kx2Qm7Lp0" },
     "secrets": { "idleLockMinutes": 15, "hiddenLockMinutes": 5,
@@ -361,6 +427,7 @@ An empty `q` returns every doc as `kind:"doc"`, unscored, path-ordered.
     "homeDocDefault": "index.md",
     "numbers": {
       "editor.autosaveSeconds":        { "min": 1, "max": 3600, "step": 1, "unit": "seconds" },
+      "trash.retentionDays":           { "min": 1, "max": 365, "step": 1, "unit": "days" },
       "git.autoSyncSeconds":           { "min": 1, "max": 3600, "step": 1, "unit": "seconds" },
       "secrets.idleLockMinutes":       { "min": 1, "max": 480, "step": 1, "unit": "minutes" },
       "secrets.hiddenLockMinutes":     { "min": 1, "max": 480, "step": 1, "unit": "minutes" },
@@ -387,6 +454,11 @@ renders the field, its unit label and its bounds hint from this, clamps and snap
 identical clamp/snap on `PUT` and when reading `settings.toml`, so the value in the file,
 the value in the control and the value in use are always the same value. Adding a numeric
 setting is therefore a backend change only.
+
+`settings.trash.retentionDays` is the recoverable-delete window. The server applies a
+changed value live: shortening it schedules an immediate sweep, and subsequent list
+responses derive each entry's new `purgeAt` from it. The scheduled sweep uses the same
+value; a restart is not required.
 
 *Real backend, additive (SPEC §13):* `settings.terminal` configures the command runner.
 `shell` and `startupCwd` are absolute paths or `""` (meaning `$SHELL`, else `/bin/sh`; and
@@ -1157,6 +1229,9 @@ data: {"settings":{"theme":"minimal","density":"comfy", … ,
                    "git":{"branch":"main","tokenMasked":"ghp_…4f2a"}},
        "meta":{ … }}
 
+event: trash-changed
+data: {"retentionDays":7,"entries":[ … ]}
+
 event: heartbeat
 data: {"t":"2026-08-01T00:12:24.000Z"}
 ```
@@ -1165,6 +1240,10 @@ data: {"t":"2026-08-01T00:12:24.000Z"}
 `/events` is the app-wide stream and is not behind the terminal password, so the command
 string and its output are fetched over the bearer-gated `GET /api/terminal/commands` by
 clients that are actually unlocked. A locked client learns nothing from it.
+
+`trash-changed` carries exactly the body `GET /api/trash` serves. It is emitted after a
+delete, restore, permanent deletion or sweep, so clients repaint the disclosure from the
+server list rather than maintaining a second local trash index.
 
 `reason` ∈ `write | created | proposal-accepted | proposal-reverted | external | moved |
 deleted` — `external` is the real backend's fs-watch reconcile telling open editors the file
@@ -1274,8 +1353,8 @@ against whatever doc URL is in the address bar.
 
 The frontend's other routing space, and the same kind of thing as `/d/{path}`: Settings is a
 **page** in the editor pane, not a modal, so it has a real address that can be deep-linked,
-reloaded and walked back out of. `{section}` is one of `appearance`, `editing`, `git`,
-`secrets`, `ai`, `terminal` — the page opens scrolled to that group, which is what makes
+reloaded and walked back out of. `{section}` is one of `appearance`, `editing`, `trash`,
+`git`, `secrets`, `ai`, `terminal` — the page opens scrolled to that group, which is what makes
 "open Settings at the AI section" (the statusbar AI chip) a link and not a gesture. An
 unrecognised section is not an error: the client degrades it to the top of the page.
 

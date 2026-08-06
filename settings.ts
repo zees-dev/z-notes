@@ -32,8 +32,8 @@ import { dirname } from "node:path";
    values are exactly what a test or a scratch vault wants. Every other number
    here follows the same rule. */
 
-export const AUTOSYNC_MIN_SECONDS = 1;
-export const AUTOSYNC_MAX_SECONDS = 3600;
+const AUTOSYNC_MIN_SECONDS = 1;
+const AUTOSYNC_MAX_SECONDS = 3600;
 
 export type NumberSpec = {
   min: number;
@@ -46,6 +46,7 @@ export type NumberSpec = {
 
 export const NUMBERS: Record<string, NumberSpec> = {
   "editor.autosaveSeconds": { min: 1, max: 3600, step: 1, unit: "seconds" },
+  "trash.retentionDays": { min: 1, max: 365, step: 1, unit: "days", code: "bad-retention-days" },
   "git.autoSyncSeconds": {
     min: AUTOSYNC_MIN_SECONDS,
     max: AUTOSYNC_MAX_SECONDS,
@@ -76,7 +77,8 @@ export const BOOLEANS = [
  * the field's placeholder from the server's value and hard-codes no default of
  * its own, the same rule `meta.themes` and `meta.numbers` already follow.
  */
-export const HOME_DOC_DEFAULT = "index.md";
+const HOME_DOC_DEFAULT = "index.md";
+export const TRASH_RETENTION_DEFAULT_DAYS = 7;
 
 export const META = {
   themes: [
@@ -100,6 +102,7 @@ export const DEFAULTS = {
   density: "comfy",
   colorScheme: "system",
   editor: { autosaveSeconds: 10, clickToEdit: true, homeDoc: HOME_DOC_DEFAULT },
+  trash: { retentionDays: TRASH_RETENTION_DEFAULT_DAYS },
   git: { branch: "main", autoSync: true, autoSyncSeconds: 60 },
   /* Browser-side auto-lock policy (research §5.2 / §7.2). It lives here rather
      than as a constant in crypto-worker.js for the same reason the autosave
@@ -308,10 +311,27 @@ export class Settings {
     // another machine carrying anything at all. PUT validates; the file must be
     // held to the same standard before git.ts is handed a branch name — or
     // before ai.ts fires the AI credential at whatever `ai.baseUrl` says.
-    // healSections runs FIRST: everything below assumes its group is an object.
-    // every heal runs — `.some` on an already-evaluated array, never `||`, so
-    // that a section healed early does not short-circuit the ones after it
-    const healed = [
+    const healed = this.healAll();
+    // absorb BEFORE any persist(): a persist while a raw token is still in
+    // this.data would write the credential straight back into the committed file
+    const absorbed = [this.absorbCredentials(this.data), this.absorbTerminalPassword(this.data)].some(Boolean);
+    // prune AFTER absorb: the credential keys are the one thing that belongs in
+    // the file but not in DEFAULTS, and absorb is what removes them
+    const pruned = this.pruneUnknown();
+    // write back if the file carried credentials, needed healing or pruning, or is absent
+    if (absorbed || healed || pruned || !(await file.exists())) await this.persist();
+  }
+
+  /**
+   * Every heal, in order. healSections runs FIRST: everything below assumes
+   * its group is an object. Every heal runs — `.some` on an already-evaluated
+   * array, never `||`, so a section healed early does not short-circuit the
+   * ones after it. Shared by load() and put(): the two used to disagree, so a
+   * PUT could persist a value (an untrimmed terminal.shell, a section replaced
+   * by a scalar) that the next boot rejected and silently reset.
+   */
+  private healAll(): boolean {
+    return [
       this.healSections(),
       this.healEditor(),
       this.healGit(),
@@ -321,14 +341,6 @@ export class Settings {
       this.healEnums(),
       this.healTerminal(),
     ].some(Boolean);
-    // absorb BEFORE any persist(): a persist while a raw token is still in
-    // this.data would write the credential straight back into the committed file
-    const absorbed = [this.absorbCredentials(this.data), this.absorbTerminalPassword(this.data)].some(Boolean);
-    // prune AFTER absorb: the credential keys are the one thing that belongs in
-    // the file but not in DEFAULTS, and absorb is what removes them
-    const pruned = this.pruneUnknown();
-    // write back if the file carried credentials, needed healing or pruning, or is absent
-    if (absorbed || healed || pruned || !(await file.exists())) await this.persist();
   }
 
   /**
@@ -649,8 +661,13 @@ export class Settings {
            which meant one Backspace in the field stored the truncated mask AS
            the credential: the real key gone from sqlite and already stripped
            from disk, unrecoverable, with the relay then authenticating as
-           `••••••••`. Anything still carrying a mask glyph is the mask. */
-        if (field === maskedField && looksMasked(value, mask(this.index.getCredential(credKey)))) continue;
+           `••••••••`. Anything still carrying a mask glyph is the mask.
+
+           EMPTY is not the mask, it is the one deliberate gesture the field
+           has: clear it and save ⇒ delete the stored credential. It used to be
+           swallowed by the subsequence test ("" is a subsequence of anything),
+           which made a stored token literally unremovable from the API. */
+        if (field === maskedField && value && looksMasked(value, mask(this.index.getCredential(credKey)))) continue;
         this.index.setCredential(credKey, value);
       }
     }
@@ -754,6 +771,15 @@ export class Settings {
     this.absorbCredentials(clean);
     this.absorbTerminalPassword(clean);
     this.data = mergeOneLevel(this.data, clean);
+    /* The same standard load() holds the file to, applied to what a PUT can
+       produce. Without it a PUT could replace a whole section with a scalar
+       (`{"secrets":"off"}` → every consumer of that group reads its fallback),
+       or park an untrimmed terminal.shell that the next boot rejects — and
+       whatever it parked was merged, served AND persisted into the committed
+       settings.toml until then. pruneUnknown drops the arbitrary top-level
+       keys mergeOneLevel would otherwise carry through. */
+    this.healAll();
+    this.pruneUnknown();
     await this.persist();
     return this.get();
   }
@@ -925,7 +951,7 @@ function mergeOneLevel(base: Json, patch: Json): Json {
 }
 
 const SCALAR_ORDER = ["theme", "density", "colorScheme"];
-const SECTION_ORDER = ["editor", "git", "secrets", "ai", "terminal"];
+const SECTION_ORDER = ["editor", "trash", "git", "secrets", "ai", "terminal"];
 
 /* ---------- the file is the STARTUP surface, so it documents itself ----------
    settings.toml is how a fresh install is configured before anything has a UI:
@@ -937,6 +963,7 @@ const SECTION_ORDER = ["editor", "git", "secrets", "ai", "terminal"];
 
 const SECTION_DOC: Record<string, string> = {
   editor: "Editor behaviour.",
+  trash: "Recoverable-delete retention. Expired entries are permanently removed by the scheduled sweep.",
   git: "Git sync. The remote itself is ordinary git config (`git remote add origin …`).",
   secrets: "Browser-side auto-lock policy for encrypted blocks. Applied by the crypto worker.",
   ai: "AI relay. The browser never talks to the endpoint; the server does.",
@@ -952,8 +979,9 @@ const KEY_DOC: Record<string, string> = {
   "editor.clickToEdit": "Clicking rendered text jumps to that line in Raw.",
   "editor.homeDoc":
     "Doc the vault button (top left) opens. Vault-relative path; empty means the first doc.",
+  "trash.retentionDays": "Keep deleted docs this long before the scheduled permanent purge.",
   "git.branch": "Branch every sync commits to.",
-  "git.autoSync": "Commit + push after each autosave, pull on focus.",
+  "git.autoSync": "Commit + push after saves settle; a rejected push pulls --rebase and retries.",
   "git.autoSyncSeconds": "Debounce: sync this long after the last change settles.",
   "secrets.idleLockMinutes": "Lock the vault after this much inactivity.",
   "secrets.hiddenLockMinutes": "Lock the vault after the tab has been hidden this long.",
