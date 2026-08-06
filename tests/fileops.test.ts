@@ -972,7 +972,7 @@ describe("the AI cannot rename or delete (SPEC §8)", () => {
        comments go; a trailing `//` is left alone so a URL inside a string can
        never swallow real code. */
     const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^[ \t]*\/\/.*$/gm, " ");
-    const src = stripComments(readFileSync(join(REPO_ROOT, "ai.ts"), "utf8"));
+    const src = stripComments(readFileSync(join(REPO_ROOT, "server", "ai.ts"), "utf8"));
 
     /* no destructive tool name is defined or referenced */
     for (const verb of ["delete_doc", "rename_doc", "move_doc", "remove_doc", "delete_folder"]) {

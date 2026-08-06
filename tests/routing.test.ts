@@ -27,7 +27,7 @@ import {
 } from "./browser";
 /* the shipped default, not a copy of it — index.html's initial <link> and the
    backend default have to name the same stylesheet or a fresh boot flashes */
-import { DEFAULTS } from "../settings";
+import { DEFAULTS } from "../server/settings";
 
 /* A is the doc `firstRealDoc` boots into (the tree is alphabetical inside a
    folder, and `architecture/` sorts first), so every test starts on it. */

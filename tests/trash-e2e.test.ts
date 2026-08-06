@@ -11,7 +11,7 @@
         runs against the real server with no stubbing whatsoever.
 
      2. THE TRASH DRAWER. Its list/restore/purge routes are served here rather
-        than by server.ts, because that half of the contract is landing in
+        than by server/index.ts, because that half of the contract is landing in
         parallel. This is NOT a fake of the effect: RESTORE re-creates the doc
         through the app's own `POST /api/docs`, so the git commit, the sqlite
         index, the SSE announcement and the 409-on-a-taken-path are all the

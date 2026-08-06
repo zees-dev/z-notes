@@ -50,7 +50,7 @@ import {
   type AppDriver,
 } from "./browser";
 import { reply, startMockUpstream, type MockUpstream } from "./mock-upstream";
-import { DEFAULTS, NUMBERS } from "../settings";
+import { DEFAULTS, NUMBERS } from "../server/settings";
 
 const KEY = "sk-mock-integration-000000000004321";
 

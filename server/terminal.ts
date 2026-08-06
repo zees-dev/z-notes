@@ -489,7 +489,7 @@ export class Terminal {
    *
    * A cookie is ambient authority: the browser attaches it to every same-origin
    * request whether or not the page meant to make one, so anything that got a
-   * request through the `Sec-Fetch-Site` guard in server.ts would be
+   * request through the `Sec-Fetch-Site` guard in server/index.ts would be
    * authenticated for free. A bearer token sits in one JS variable in api.js
    * and has to be attached deliberately, so a cross-site request cannot carry
    * it even if the CSRF guard is ever bypassed. It is also never written to

@@ -4,7 +4,7 @@
    Nothing in here knows anything about the backend's internals. It only
    knows the fixed conventions:
 
-     - `bun server.ts` at the repo root, env ZNOTES_VAULT / ZNOTES_PORT
+     - `bun server/index.ts` at the repo root, env ZNOTES_VAULT / ZNOTES_PORT
      - one ready line on stdout: "z-notes listening on http://localhost:<port>"
      - clean exit on SIGTERM
      - HTTP contract per docs/API.md + SPEC.md §3 deltas
@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 
 export const REPO_ROOT = resolve(import.meta.dir, "..");
-export const SERVER_ENTRY = join(REPO_ROOT, "server.ts");
+export const SERVER_ENTRY = join(REPO_ROOT, "server", "index.ts");
 
 /* ------------------------------------------------------------------
    vault fixtures
@@ -435,7 +435,7 @@ export interface StartOptions {
 export async function startServer(opts: StartOptions = {}): Promise<TestServer> {
   if (!existsSync(SERVER_ENTRY)) {
     throw new Error(
-      `server.ts not found at ${SERVER_ENTRY}. The backend entrypoint is a fixed convention — ` +
+      `server/index.ts not found at ${SERVER_ENTRY}. The backend entrypoint is a fixed convention — ` +
         `phase-1 tests cannot run until it exists.`
     );
   }
@@ -443,7 +443,7 @@ export async function startServer(opts: StartOptions = {}): Promise<TestServer> 
   const vault = opts.vault ?? makeVault(opts.seed ?? {});
   const port = await freePort();
 
-  const proc = Bun.spawn(["bun", "server.ts"], {
+  const proc = Bun.spawn(["bun", "server/index.ts"], {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
@@ -489,7 +489,7 @@ export async function startServer(opts: StartOptions = {}): Promise<TestServer> 
     } catch {}
     if (!opts.vault && !opts.keepVault) dropVault(vault);
     throw new Error(
-      `bun server.ts never announced readiness (${result.why}).\n` +
+      `bun server/index.ts never announced readiness (${result.why}).\n` +
         `expected stdout line: "z-notes listening on http://localhost:${port}"\n` +
         `stdout:\n${stdoutLines.join("\n") || "(empty)"}\n` +
         `stderr:\n${stderrLines.join("\n") || "(empty)"}`

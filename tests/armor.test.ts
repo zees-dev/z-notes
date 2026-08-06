@@ -25,7 +25,7 @@
 import { describe, test, expect } from "bun:test";
 import * as age from "age-encryption";
 import { dedentArmor, indentArmor, isArmorShape, ARMOR_BEGIN, ARMOR_END } from "../app/armor.js";
-import { isArmor } from "../vault";
+import { isArmor } from "../server/vault";
 
 const REAL = [ARMOR_BEGIN, "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBxSzl4", "Zt2wPmVFJk3XN8LQvR5tYcAeD7hHnUuBsWgO1iM4E6f9rTKp", ARMOR_END].join("\n");
 

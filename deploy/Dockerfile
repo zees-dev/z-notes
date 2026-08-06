@@ -10,7 +10,7 @@
 # image that ships.
 #
 # NO FRONTEND BUILD STEP — deliberately.
-#   `server.ts` serves the frontend as plain files out of `APP_DIR = <repo>/app`
+#   `server/index.ts` serves the frontend as plain files out of `APP_DIR = <repo>/app`
 #   (see serveStatic()); app/index.html links ./themes/*.css and inlines its own
 #   ES module. Running `bun build ./app/index.html --outdir=dist` would emit a
 #   *different* tree (content-hashed asset names, rewritten tags) at a path the
@@ -23,10 +23,10 @@
 #   point APP_DIR at it in the same change.
 #
 # NOT `bun build --compile`: the compiled binary reports import.meta.dir as
-#   /$bunfs/root (research §5), and server.ts derives APP_DIR, VENDOR_ENTRY and
-#   LOCKFILE from import.meta.dir. The vault and DB are already immune (they come
-#   from $ZNOTES_VAULT), but the app/vendor paths are not. Plain `bun server.ts`
-#   keeps import.meta.dir honest.
+#   /$bunfs/root (research §5), and server/index.ts derives APP_DIR, VENDOR_ENTRY
+#   and LOCKFILE from import.meta.dir. The vault and DB are already immune (they
+#   come from $ZNOTES_VAULT), but the app paths are not. Plain `bun
+#   server/index.ts` keeps import.meta.dir honest.
 # =============================================================================
 
 # --- stage 1: production dependencies only ----------------------------------
@@ -40,31 +40,28 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 
 
 # --- stage 2: sources, with the import graph proven at build time ------------
-# This stage exists because the previous revision of this file shipped a
+# This stage exists because an early revision of this file shipped a
 # hand-maintained COPY list that silently went stale: sse.ts, terminal.ts and
 # trash.ts were added to the repo and the list was not updated, which would
 # have produced an image that dies at boot with "Cannot find module". Two
 # defences now:
 #
-#   1. `COPY *.ts` — every backend module lives flat at the repo root, so the
-#      glob IS the module set and cannot drift. (.dockerignore plus the repo's
-#      own hygiene keep stray .ts files out of the root; tests/, docs/
-#      and deploy/ are directories and don't match.)
-#   2. `bun build --target=bun server.ts` — resolves the ENTIRE static import
-#      graph from the real entrypoint. A missing module (say, a future
-#      lib/foo.ts that the glob doesn't cover) fails the BUILD, not the deploy.
-#      The bundle it emits is thrown away; only the resolution matters.
+#   1. The backend is ONE directory — `COPY server ./server` cannot drift the
+#      way a file list can.
+#   2. `bun build --target=bun server/index.ts` — resolves the ENTIRE static
+#      import graph from the real entrypoint. A module that somehow escapes the
+#      directory copy fails the BUILD, not the deploy. The bundle it emits is
+#      thrown away; only the resolution matters.
 #
 # node_modules is borrowed from `deps` for the graph check, then removed, so
 # the `COPY --from=src /src/ ./` in the runtime stage carries sources only.
 FROM oven/bun:1.3.14-slim AS src
 WORKDIR /src
 COPY package.json bun.lock ./
-COPY *.ts ./
+COPY server ./server
 COPY app ./app
-COPY vendor ./vendor
 COPY --from=deps /src/node_modules ./node_modules
-RUN bun build --target=bun --outdir=/tmp/graph server.ts > /dev/null \
+RUN bun build --target=bun --outdir=/tmp/graph server/index.ts > /dev/null \
  && rm -rf /tmp/graph node_modules
 
 
@@ -94,8 +91,8 @@ WORKDIR /app
 COPY --from=deps --chown=bun:bun /src/node_modules ./node_modules
 
 # Everything else comes from the verified `src` stage in one copy: package.json,
-# bun.lock, the ten backend modules, app/, vendor/. bun.lock is NOT optional at
-# runtime: server.ts hashes it into the /vendor/age.<hash>.js cache key.
+# bun.lock, server/, app/. bun.lock is NOT optional at runtime: the server
+# hashes it into the /vendor/age.<hash>.js cache key.
 COPY --from=src --chown=bun:bun /src/ ./
 
 # The vault is a MOUNT POINT, never baked in. It is created empty and owned by
@@ -122,8 +119,8 @@ EXPOSE 4700
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD bun -e "fetch('http://127.0.0.1:4700/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# `bun server.ts` — NOT `bun --hot` and NOT `bun run dev`. Bun.serve is already
-# pinned to development:false in server.ts, so no dev runtime or HMR client can
+# `bun server/index.ts` — NOT `bun --hot` and NOT `bun run dev`. Bun.serve is
+# already pinned to development:false, so no dev runtime or HMR client can
 # reach the browser. Exec form: bun is PID 1 and receives SIGTERM directly,
-# which is what server.ts's shutdown() handler is waiting for.
-CMD ["bun", "server.ts"]
+# which is what the server's shutdown() handler is waiting for.
+CMD ["bun", "server/index.ts"]

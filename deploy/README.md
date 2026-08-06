@@ -8,7 +8,7 @@ Traefik (bundled with k3s) ── TLS from cert-manager's private CA
    ▼
 Service znotes (ClusterIP :80)
    ▼
-Deployment znotes — ONE replica, bun server.ts, :4700
+Deployment znotes — ONE replica, bun server/index.ts, :4700
    └── PVC znotes-vault mounted at /vault
         ├── *.md                      the notes (source of truth)
         └── .znotes/
@@ -56,13 +56,13 @@ is right for a Raspberry Pi node and wrong for an x86 box. Be explicit:
 docker buildx build --platform linux/arm64 -f deploy/Dockerfile -t z-notes:0.1.0 --load .
 ```
 
-There is **no frontend build step**, on purpose. `server.ts` serves `app/` as
+There is **no frontend build step**, on purpose. `server/index.ts` serves `app/` as
 plain files (`APP_DIR = <repo>/app`), and the one thing that needs bundling —
 the `age-encryption` browser module — is bundled by the server itself at boot,
 in memory, at `/vendor/age.<hash>.js`. Running
 `bun build ./app/index.html --outdir=dist` would emit a content-hashed tree at a
 path the server never reads. `--compile` is also avoided: it reports
-`import.meta.dir` as `/$bunfs/root`, which `server.ts` uses to locate `app/`,
+`import.meta.dir` as `/$bunfs/root`, which `server/index.ts` uses to locate `app/`,
 `vendor/` and `bun.lock`. (The vault and DB are already immune — they come from
 `$ZNOTES_VAULT`.)
 
@@ -188,7 +188,7 @@ public internet.
 
 ```sh
 bun install
-ZNOTES_VAULT="$HOME/notes-vault" bun server.ts     # http://localhost:4700
+ZNOTES_VAULT="$HOME/notes-vault" bun server/index.ts     # http://localhost:4700
 ```
 
 `http://localhost` is a *trustworthy origin*, so WebCrypto works and secrets are
@@ -212,7 +212,7 @@ image never runs as root.
 
 ## Operating notes
 
-**Health.** `GET /healthz` was added to `server.ts` for this: no disk, no
+**Health.** `GET /healthz` was added to `server/index.ts` for this: no disk, no
 sqlite, no git — it answers only "is this process still serving HTTP". It also
 serves as readiness, because `Bun.serve` is called *after* the boot-time full
 reconcile, so the port does not open until the index is warm; and it flips to
@@ -261,7 +261,7 @@ live updates silently stop while every request still returns 200.
 
 Verified on this machine:
 
-- **`/healthz` end to end** — added to `server.ts`, server started against a
+- **`/healthz` end to end** — added to `server/index.ts`, server started against a
   temp vault: `GET → 200 {"status":"ok"}`, `HEAD → 200`, `POST → 405`.
 - **Full test suite still green** — `bun test`: **382 pass, 0 fail**, 19 files.
 - **The Dockerfile's install step**, run natively with the real `package.json`
@@ -273,10 +273,10 @@ Verified on this machine:
   **uid/gid 1000** and home `/home/bun`, and presets
   `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` — which is what makes
   `readOnlyRootFilesystem: true` safe. Its entrypoint script was extracted and
-  read: it ends in `exec "$@"`, so with `CMD ["bun","server.ts"]` **bun is PID 1
+  read: it ends in `exec "$@"`, so with `CMD ["bun","server/index.ts"]` **bun is PID 1
   and receives SIGTERM directly**.
 - **How the frontend is served today** — read `serveStatic()`/`buildVendor()` in
-  `server.ts` and confirmed prod serves `app/` verbatim with an in-memory vendor
+  `server/index.ts` and confirmed prod serves `app/` verbatim with an in-memory vendor
   bundle. That is why the image ships no `dist/`.
 - **`kubectl kustomize deploy/k3s`** renders cleanly; the image tag override
   lands, and `labels`/`includeSelectors:false` leaves `selector.matchLabels`

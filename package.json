@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot server.ts",
-    "start": "bun server.ts",
+    "dev": "bun --hot server/index.ts",
+    "start": "bun server/index.ts",
     "test": "bun test",
     "gates": "bun test tests/roundtrip.test.ts tests/reconcile.test.ts tests/ai.test.ts tests/leak.test.ts tests/e2e.test.ts"
   },

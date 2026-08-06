@@ -54,9 +54,9 @@ import { rm } from "node:fs/promises";
 
 const VAULT = resolve(process.env.ZNOTES_VAULT || "./vault");
 const PORT = Number(process.env.ZNOTES_PORT || 4700);
-const APP_DIR = resolve(import.meta.dir, "app");
-const VENDOR_ENTRY = resolve(import.meta.dir, "vendor", "age-entry.js");
-const LOCKFILE = resolve(import.meta.dir, "bun.lock");
+const APP_DIR = resolve(import.meta.dir, "..", "app");
+const VENDOR_ENTRY = resolve(import.meta.dir, "age-entry.js");
+const LOCKFILE = resolve(import.meta.dir, "..", "bun.lock");
 const HEARTBEAT_MS = 20_000;
 
 /* ============================================================

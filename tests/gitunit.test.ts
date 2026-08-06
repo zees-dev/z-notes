@@ -16,7 +16,7 @@
 import { describe, test, expect, afterAll } from "bun:test";
 import { existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { GitSync, gitMessage, sanitizeRemote } from "../git.ts";
+import { GitSync, gitMessage, sanitizeRemote } from "../server/git";
 import { dropVault, makeVault } from "./helpers";
 
 const trash: string[] = [];

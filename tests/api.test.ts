@@ -826,7 +826,7 @@ describe("/api/settings", () => {
    * of which PUT rejects. Heal, do not throw: a bad line must not stop boot.
    */
   test("a hostile ai.baseUrl in settings.toml is healed on load, exactly as PUT would reject it", async () => {
-    const { DEFAULTS } = await import("../settings");
+    const { DEFAULTS } = await import("../server/settings");
 
     for (const bad of ["file:///etc/passwd", "gopher://evil.example:70/", "not a url at all"]) {
       const toml = ['theme = "modern"', "", "[ai]", `baseUrl = ${JSON.stringify(bad)}`, ""].join("\n");
@@ -1543,7 +1543,7 @@ describe("request bodies are bounded", () => {
    ============================================================ */
 describe("index projections", () => {
   test("allFileMeta() is allFiles() minus the bodies — same rows, no text", async () => {
-    const { Index } = await import("../db");
+    const { Index } = await import("../server/db");
     const dir = mkdtempSync(join(tmpdir(), "znotes-projection-"));
     const idx = new Index(join(dir, "index.db"));
     try {

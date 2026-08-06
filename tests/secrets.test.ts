@@ -603,12 +603,12 @@ describe("secrets — the server has no plaintext surface (SPEC §3 delta 1, §6
 
   test("no backend module imports the crypto library — the server cannot decrypt", async () => {
     const glob = new Bun.Glob("*.ts");
-    const files = [...glob.scanSync({ cwd: REPO_ROOT, onlyFiles: true })].filter((f) => !f.endsWith(".d.ts"));
-    expect(files.length).toBeGreaterThan(3); // server.ts, vault.ts, db.ts, … really were found
+    const files = [...glob.scanSync({ cwd: join(REPO_ROOT, "server"), onlyFiles: true })].filter((f) => !f.endsWith(".d.ts"));
+    expect(files.length).toBeGreaterThan(3); // index.ts, vault.ts, db.ts, … really were found
 
     const offenders: string[] = [];
     for (const f of files) {
-      const src = stripComments(readFileSync(join(REPO_ROOT, f), "utf8"));
+      const src = stripComments(readFileSync(join(REPO_ROOT, "server", f), "utf8"));
       const imports =
         /\bfrom\s*["']age-encryption["']/.test(src) ||
         /\brequire\(\s*["']age-encryption["']\s*\)/.test(src) ||
@@ -616,7 +616,7 @@ describe("secrets — the server has no plaintext surface (SPEC §3 delta 1, §6
       const decrypts = /\bnew\s+Decrypter\b/.test(src) || /\.addPassphrase\s*\(/.test(src) || /\.addIdentity\s*\(/.test(src);
       if (imports || decrypts) offenders.push(f);
     }
-    /* Bundling typage for /vendor/age.js goes through a tiny vendor ENTRY file
+    /* Bundling typage for /vendor/age.js goes through a tiny entry file (server/age-entry.js)
        fed to Bun.build — the backend's own module graph must stay crypto-free,
        which is what makes "the server never sees a passphrase" structural. */
     expect(offenders).toEqual([]);
@@ -704,7 +704,7 @@ describe("secrets — the typage bundle is served, cached and immutable", () => 
    ============================================================ */
 describe("secrets — writeVaultKeys never destroys the only key it holds", () => {
   test("a first write leaves exactly the pair, with no temp or backup residue", async () => {
-    const { writeVaultKeys, readVaultKeys, PREV_IDENTITY } = await import("../vault");
+    const { writeVaultKeys, readVaultKeys, PREV_IDENTITY } = await import("../server/vault");
     const vault = tempVault();
     await writeVaultKeys(vault, wrappedIdentity, recipient);
 
@@ -716,7 +716,7 @@ describe("secrets — writeVaultKeys never destroys the only key it holds", () =
   }, 30000);
 
   test("a replace parks the old identity and only removes it once the new pair is whole", async () => {
-    const { writeVaultKeys, readVaultKeys, PREV_IDENTITY } = await import("../vault");
+    const { writeVaultKeys, readVaultKeys, PREV_IDENTITY } = await import("../server/vault");
     const vault = tempVault();
     await writeVaultKeys(vault, wrappedIdentity, recipient);
 
@@ -741,7 +741,7 @@ describe("secrets — writeVaultKeys never destroys the only key it holds", () =
   }, 30000);
 
   test("rewriting the SAME identity (the vault.pub repair path) parks nothing", async () => {
-    const { writeVaultKeys, readVaultKeys, PREV_IDENTITY } = await import("../vault");
+    const { writeVaultKeys, readVaultKeys, PREV_IDENTITY } = await import("../server/vault");
     const vault = tempVault();
     await writeVaultKeys(vault, wrappedIdentity, recipient);
     /* the repair path re-declares the identity byte for byte to rebuild a lost
@@ -754,8 +754,8 @@ describe("secrets — writeVaultKeys never destroys the only key it holds", () =
   }, 30000);
 
   test("the parked identity is never committed (git.ts exclude rules)", async () => {
-    const { PREV_IDENTITY } = await import("../vault");
-    const git = await Bun.file(join(REPO_ROOT, "git.ts")).text();
+    const { PREV_IDENTITY } = await import("../server/vault");
+    const git = await Bun.file(join(REPO_ROOT, "server", "git.ts")).text();
     expect(git).toContain(".znotes/" + PREV_IDENTITY);
     /* …and it is not in the tracked set either */
     const tracked = /TRACKED_META = \[([\s\S]*?)\]/.exec(git)?.[1] ?? "";
