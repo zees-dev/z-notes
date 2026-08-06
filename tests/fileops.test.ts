@@ -936,40 +936,49 @@ describe("the AI cannot rename or delete (SPEC §8)", () => {
     }
   }, 90000);
 
-  test("ai.ts has no route to the rename/delete machinery at all", async () => {
-    /* comments are allowed to *discuss* the restriction (and ai.ts does); code
-       is not allowed to implement it. Block comments and whole-line `//`
+  test("the AI relay modules have no route to the rename/delete machinery at all", async () => {
+    /* comments are allowed to *discuss* the restriction (and these files do);
+       code is not allowed to implement it. Block comments and whole-line `//`
        comments go; a trailing `//` is left alone so a URL inside a string can
-       never swallow real code. */
-    const src = stripComments(readFileSync(join(REPO_ROOT, "server", "ai.ts"), "utf8"));
+       never swallow real code.
 
-    /* no destructive tool name is defined or referenced */
-    for (const verb of ["delete_doc", "rename_doc", "move_doc", "remove_doc", "delete_folder"]) {
-      expect(`ai.ts references ${verb}: ${new RegExp(`\\b${verb}\\b`).test(src)}`).toBe(
-        `ai.ts references ${verb}: false`
-      );
+       The relay is three modules: ai.ts (orchestration), ai-edits.ts (the pure
+       edit engine, which now owns the OPS set) and ai-endpoint.ts (endpoint
+       health). Every check below runs against each of them. */
+    const relayModules = ["ai.ts", "ai-edits.ts", "ai-endpoint.ts"];
+    for (const name of relayModules) {
+      const src = stripComments(readFileSync(join(REPO_ROOT, "server", name), "utf8"));
+
+      /* no destructive tool name is defined or referenced */
+      for (const verb of ["delete_doc", "rename_doc", "move_doc", "remove_doc", "delete_folder"]) {
+        expect(`${name} references ${verb}: ${new RegExp(`\\b${verb}\\b`).test(src)}`).toBe(
+          `${name} references ${verb}: false`
+        );
+      }
+
+      /* and it never calls the HTTP file-op surface either */
+      expect(`${name} mentions /api/docs: ${src.includes("/api/docs")}`).toBe(`${name} mentions /api/docs: false`);
+
+      /* whatever module ends up owning move/rename, the relay must not import it */
+      const imports = [...src.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+["'][^"']+["']/g)]
+        .map((m) => m[1])
+        .join(",");
+      for (const fn of ["moveDoc", "renameDoc", "deleteDoc", "removeDoc", "movePath", "renamePath"]) {
+        expect(`${name} imports ${fn}: ${new RegExp(`\\b${fn}\\b`).test(imports)}`).toBe(`${name} imports ${fn}: false`);
+      }
     }
 
-    /* the op set is a closed literal of exactly the four SPEC §8 ops */
-    const opsLine = /new Set\(\[([^\]]*)\]\)/.exec(src.slice(src.indexOf("OPS")));
-    expect(`ai.ts declares an OPS set: ${!!opsLine}`).toBe("ai.ts declares an OPS set: true");
+    /* the op set is a closed literal of exactly the four SPEC §8 ops —
+       declared in ai-edits.ts, the pure edit engine under ai.ts */
+    const editsSrc = stripComments(readFileSync(join(REPO_ROOT, "server", "ai-edits.ts"), "utf8"));
+    const opsLine = /new Set\(\[([^\]]*)\]\)/.exec(editsSrc.slice(editsSrc.indexOf("OPS")));
+    expect(`ai-edits.ts declares an OPS set: ${!!opsLine}`).toBe("ai-edits.ts declares an OPS set: true");
     const declared = (opsLine?.[1] ?? "")
       .split(",")
       .map((s) => s.trim().replace(/^["']|["']$/g, ""))
       .filter(Boolean)
       .sort();
     expect(declared).toEqual(["create", "insert_after", "replace", "rewrite"]);
-
-    /* and it never calls the HTTP file-op surface either */
-    expect(`ai.ts mentions /api/docs: ${src.includes("/api/docs")}`).toBe("ai.ts mentions /api/docs: false");
-
-    /* whatever module ends up owning move/rename, ai.ts must not import it */
-    const imports = [...src.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+["'][^"']+["']/g)]
-      .map((m) => m[1])
-      .join(",");
-    for (const fn of ["moveDoc", "renameDoc", "deleteDoc", "removeDoc", "movePath", "renamePath"]) {
-      expect(`ai.ts imports ${fn}: ${new RegExp(`\\b${fn}\\b`).test(imports)}`).toBe(`ai.ts imports ${fn}: false`);
-    }
   }, 20000);
 });
 
