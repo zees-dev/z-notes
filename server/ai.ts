@@ -34,7 +34,7 @@ import { structuredPatch } from "diff";
 import { encode } from "gpt-tokenizer/encoding/o200k_base";
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import type { Index, ProposalRow } from "./db.ts";
+import type { type AiIndex, ProposalRow } from "./db.ts";
 import type { GitSync } from "./git.ts";
 import type { Settings } from "./settings.ts";
 import { parseSseFrame, sseBlocks, sseResponse } from "./sse.ts";
@@ -443,8 +443,8 @@ interface DocBody {
 
 interface AiDeps {
   vault: Vault;
-  settings: Settings;
-  index: Index;
+  settings: Pick<Settings, "value" | "credential" | "setMetaProvider">;
+  index: AiIndex;
   git: Pick<GitSync, "commitPaths">;
   recon: {
     lock<T>(fn: () => Promise<T>): Promise<T>;

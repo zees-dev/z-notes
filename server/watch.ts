@@ -15,7 +15,7 @@
    ============================================================ */
 
 import { watch, type FSWatcher } from "node:fs";
-import type { Index, FileRow } from "./db.ts";
+import type { type WatchIndex, FileRow } from "./db.ts";
 import { byteLength,
   extractLinks,
   hasSecrets,
@@ -94,7 +94,7 @@ export class Reconciler {
 
   constructor(
     private readonly vault: Vault,
-    private readonly index: Index,
+    private readonly index: WatchIndex,
     private readonly emit: (change: DocChange) => void
   ) {}
 
