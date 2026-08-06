@@ -47,6 +47,8 @@ import { settingAt } from "./settings.js";
    ============================================================ */
 export const vault = {
   state: "unknown",
+  /* which flavour the passphrase modal is showing: "unlock" | "create" | "change" */
+  ppMode: "unlock",
   reason: "",
   recipient: null,
   /* the recipient the worker DERIVED from identity.age this session, or null.
@@ -496,7 +498,6 @@ export async function changeVaultPassphrase() {
 
 /* ---------- passphrase modal (the prototype's #ppVeil, both modes) ---------- */
 
-export let ppMode = "unlock";
 let ppResolve = null;
 /* Bumped every time the modal opens or closes. scrypt at logN=18 runs for ~1s
    AFTER the user can press Esc, and a dismissed modal whose security-relevant
@@ -521,7 +522,7 @@ export function closePP() {
 
 function openPP(mode) {
   ppEpoch++;
-  ppMode = mode;
+  vault.ppMode = mode;
   const create = mode === "create";
   $("#ppTitle").textContent = create ? "Create vault identity" : "Unlock secret block";
   $("#ppPath").textContent = create ? ".znotes/identity.age" : vault.recipient || "age identity";
@@ -557,7 +558,7 @@ function askCreate() {
 
 export async function doPassphraseOk() {
   const pass = $("#ppInput").value;
-  if (ppMode === "create") return createIdentity(pass, $("#ppConfirm").value);
+  if (vault.ppMode === "create") return createIdentity(pass, $("#ppConfirm").value);
   if (!pass) {
     ppHint("Enter the vault passphrase.", true);
     return;

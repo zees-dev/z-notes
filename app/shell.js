@@ -10,7 +10,8 @@
 import * as api from "./api.js";
 import { state } from "./state.js";
 import { $, $$, apiFail, dirname, toast } from "./ui.js";
-import { closeConfirm, closeConflict, closeCtx, confirmDialog, loadTree, renderTree, revealFolder } from "./tree.js";
+import { closeCtx, loadTree, renderTree, revealFolder } from "./tree.js";
+import { closeConfirm, closeConflict, confirmDialog } from "./dialogs.js";
 import { adoptTrash, refreshTrash } from "./trash.js";
 import { closeExitGuard, guardRawExit, navGate, openDoc, rawExitDiff, renderDoc, saveDoc, setBaseline, setMode, syncRaw, viewedPath } from "./editor.js";
 import { closePP } from "./secrets.js";
@@ -735,7 +736,6 @@ export const canPopBack = (st) => (((st && st.i) || 0) > 1);
  *
  * Only `leaveSettings` reads it.
  */
-export let settingsExit = "open";
 
 /**
  * Record the doc on screen. Called from openDoc AFTER the fetch resolved, so a
@@ -785,20 +785,20 @@ export function routeSettings(section, replace) {
   const cur = history.state || {};
   if (cur.z === "veil" && VEILS.some(isOpen)) {
     /* a marker is always PUSHED, so an app entry sits under this one */
-    settingsExit = "back";
+    state.settingsExit = "back";
     history.replaceState({ z: "veil", i: cur.i }, "", settingsUrl(section));
     return;
   }
   const reuse = !!replace || cur.z === "veil" || cur.z === "settings";
   const st = { z: "settings", section: section || "", i: reuse && cur.i != null ? cur.i : ++histSeq };
   histAt = st.i;
-  /* `settingsExit` is about the ARRIVAL, so a rail click — which replaces the
+  /* `state.settingsExit` is about the ARRIVAL, so a rail click — which replaces the
      settings entry we are already standing on — must not rewrite what the
      arrival recorded. Everything else does: a push lands on the entry we came
      from, a recycled overlay marker was itself pushed over one, and replacing
      the entry the browser handed us leaves nothing underneath at all. */
-  if (!reuse || cur.z === "veil") settingsExit = "back";
-  else if (cur.z !== "settings") settingsExit = "open";
+  if (!reuse || cur.z === "veil") state.settingsExit = "back";
+  else if (cur.z !== "settings") state.settingsExit = "open";
   history[reuse ? "replaceState" : "pushState"](st, "", settingsUrl(section));
 }
 
@@ -815,7 +815,7 @@ export function routeVeil() {
   if ((history.state || {}).z === "veil") return;
   /* pushing truncates whatever was ahead, so a settings entry that meant to
      leave by spending a FORWARD entry no longer has one to spend */
-  if (settingsExit === "forward") settingsExit = "open";
+  if (state.settingsExit === "forward") state.settingsExit = "open";
   histAt = ++histSeq;
   history.pushState({ z: "veil", i: histAt }, "", location.href);
 }
@@ -899,7 +899,7 @@ export function onPop(e) {
     /* How Back leaves is decided by the entry we LAND on, never by the last
        arrival: walking back means the entry we came from is still ahead, and
        walking forward means the one we came from is still underneath. */
-    settingsExit = back ? "forward" : "back";
+    state.settingsExit = back ? "forward" : "back";
     if (state.view === "settings") {
       /* Two settings entries can only ever be ADJACENT because an overlay
          marker over the page was recycled into one — the rail replaces, so a

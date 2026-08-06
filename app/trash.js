@@ -10,7 +10,8 @@
 import * as api from "./api.js";
 import { state } from "./state.js";
 import { $, apiFail, el, esc, toast } from "./ui.js";
-import { confirmDialog, loadTree } from "./tree.js";
+import { loadTree } from "./tree.js";
+import { confirmDialog } from "./dialogs.js";
 import { openDoc } from "./editor.js";
 import { revealInTree } from "./shell.js";
 

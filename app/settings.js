@@ -14,7 +14,7 @@ import { refreshTrash } from "./trash.js";
 import { autoGrow, guardRawExit, openDoc, syncRaw } from "./editor.js";
 import { applyLockPolicy, clearKeyFields, clearTerminalSecretFields, initSecrets, paintVaultKey } from "./secrets.js";
 import { updateSessionUI } from "./chat.js";
-import { SETTINGS_SECTIONS, app, canPopBack, closeNav, homeTarget, isDrawer, isTriPane, paintHome, routeSettings, settingsExit, toggleChat } from "./shell.js";
+import { SETTINGS_SECTIONS, app, canPopBack, closeNav, homeTarget, isDrawer, isTriPane, paintHome, routeSettings, toggleChat } from "./shell.js";
 import { paintTerminal, refreshTerminalStatus } from "./terminal.js";
 
 /* ============================================================
@@ -465,7 +465,7 @@ export function exitSettings() {
  * The Back button, and the only place that decides how leaving Settings meets
  * the history stack. It spends an entry that already exists whenever one does,
  * so a doc → Settings → Back round trip leaves the stack exactly as it found
- * it and FORWARD still gets you back to Settings — `settingsExit` says which
+ * it and FORWARD still gets you back to Settings — `state.settingsExit` says which
  * side of this entry that entry is on. Only when there is neither (a deep
  * link, a reload: Settings IS the entry the browser handed us) does leaving
  * navigate to the doc the pane kept and let that push.
@@ -475,11 +475,11 @@ export function exitSettings() {
  */
 export function leaveSettings() {
   if (state.view !== "settings") return;
-  if (settingsExit === "back" && canPopBack(history.state)) {
+  if (state.settingsExit === "back" && canPopBack(history.state)) {
     history.back();
     return;
   }
-  if (settingsExit === "forward") {
+  if (state.settingsExit === "forward") {
     history.forward();
     return;
   }
@@ -603,7 +603,7 @@ export async function pushSettings(patch) {
    ============================================================ */
 
 /** dotted path → pending value. Empty object ⟺ no diff ⟺ Save disabled. */
-export let settingsDraft = Object.create(null);
+let settingsDraft = Object.create(null);
 
 /** The value the SERVER has, for any path — including the three top-level ones
     (`theme`, `density`, `colorScheme`) that `settingAt` cannot address. */
@@ -617,6 +617,9 @@ function draftValue(path) {
   return path in settingsDraft ? settingsDraft[path] : savedValue(path);
 }
 
+export function clearDraft(path) {
+  delete settingsDraft[path];
+}
 export const settingsDirty = () => Object.keys(settingsDraft).length > 0;
 
 /**

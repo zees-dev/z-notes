@@ -10,7 +10,7 @@
 import * as api from "./api.js";
 import { state } from "./state.js";
 import { $, $$, I, apiFail, el, esc, toast } from "./ui.js";
-import { confirmDialog } from "./tree.js";
+import { confirmDialog } from "./dialogs.js";
 import { openSettings, paintDraftFields, showSettings } from "./settings.js";
 
 /* ============================================================

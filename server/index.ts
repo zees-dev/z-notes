@@ -104,6 +104,11 @@ const recon = new Reconciler(vault, index, (change) => {
 });
 
 const GIT_LOG = process.env.ZNOTES_GIT_LOG === "1";
+/* one logger shape for every module: GIT_LOG is the master switch, each
+   module gets its own env var on top */
+const logFor = (env: string) => (line: string) => {
+  if (GIT_LOG || process.env[env] === "1") process.stdout.write(`[z-notes] ${line}\n`);
+};
 
 /* ============================================================
    Trash (SPEC §5) — a delete is recoverable.
@@ -116,9 +121,7 @@ const GIT_LOG = process.env.ZNOTES_GIT_LOG === "1";
 const trash = new Trash({
   vault,
   settings,
-  log: (line) => {
-    if (GIT_LOG || process.env.ZNOTES_TRASH_LOG === "1") process.stdout.write(`[z-notes] ${line}\n`);
-  },
+  log: logFor("ZNOTES_TRASH_LOG"),
 });
 
 /** How often the retention sweep runs while the server is up. */
@@ -215,9 +218,7 @@ const terminal = new Terminal({
   vault,
   settings,
   index,
-  log: (line) => {
-    if (GIT_LOG || process.env.ZNOTES_TERMINAL_LOG === "1") process.stdout.write(`[z-notes] ${line}\n`);
-  },
+  log: logFor("ZNOTES_TERMINAL_LOG"),
   /* NOTIFICATION ONLY. `/events` is the app-wide bus and is not behind the
      terminal password, so it carries an id and a state and never a command
      string or a byte of output — the panel fetches those over the bearer-gated
@@ -234,9 +235,7 @@ const ai = new AI({
   docBody: (p: string) => docs.docBody(p),
   terminal,
   contextWindow: META.contextWindow,
-  log: (line) => {
-    if (GIT_LOG || process.env.ZNOTES_AI_LOG === "1") process.stdout.write(`[z-notes] ${line}\n`);
-  },
+  log: logFor("ZNOTES_AI_LOG"),
   /* The statusbar's AI item is driven by this, exactly like the git chip is
      driven by `sync-status`: pushed on real change, never polled. */
   onStatus: (s) => broadcast("ai-status", s),
