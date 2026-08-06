@@ -176,6 +176,32 @@ function parkCorruptIndex(file: string): string | null {
   return moved;
 }
 
+/* Per-consumer slices of Index. Each module is handed only the methods it
+   owns — the type system now enforces what convention used to: ai.ts cannot
+   reach the terminal command table, terminal.ts cannot reach the proposal
+   stack, watch.ts sees only the file rows. (docs.ts and index.ts hold the
+   full Index: the entrypoint wires it, the doc store spans files+folders.)
+
+   The `meta` KV table is one namespace with agreed key ownership:
+     vaultEpoch            index.ts   (bumped per doc change)
+     git.*                 git.ts
+     ai.*, msgSeq, propSeq ai.ts
+     terminal.*            terminal.ts
+   getMeta/setMeta appear in a slice only when that module owns keys. */
+
+export type WatchIndex = Pick<Index, "allFileMeta" | "upsertFile" | "removeFile">;
+export type AiIndex = Pick<
+  Index,
+  | "getMeta" | "setMeta" | "nextSeq"
+  | "file" | "allFiles" | "allFileMeta"
+  | "activeSession" | "createSession" | "setSessionContext" | "messages" | "addMessage"
+  | "addProposal" | "proposal" | "proposals" | "stack" | "updateProposal"
+>;
+export type TerminalIndex = Pick<
+  Index,
+  "getMeta" | "setMeta" | "addCommand" | "command" | "commands" | "updateCommand"
+>;
+
 export class Index {
   readonly db: Database;
 

@@ -52,11 +52,11 @@
    mints a bearer token held in the browser's memory only.
    ============================================================ */
 
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { CommandRow, Index } from "./db.ts";
+import type { CommandRow, type TerminalIndex } from "./db.ts";
 import type { Settings } from "./settings.ts";
 import { sseResponse } from "./sse.ts";
 import { ARMOR_BEGIN, ARMOR_CANARY, ARMOR_END, hasSecrets, type Vault } from "./vault.ts";
@@ -65,92 +65,6 @@ import { ARMOR_BEGIN, ARMOR_CANARY, ARMOR_END, hasSecrets, type Vault } from "./
    Password — scrypt, mirroring the vault's crypto posture
    ============================================================ */
 
-/**
- * The vault identity is passphrase-wrapped with scrypt logN=18 (SPEC §6). This
- * is the same primitive one notch down, and the notch is deliberate: logN=18 is
- * 256 MiB per derivation and this one runs SERVER-side on an endpoint an
- * attacker can call in a loop, so the memory cost is also a self-inflicted
- * denial of service. logN=17 is 128 MiB and ~150 ms on this machine — far past
- * what a guessing rig wants to pay per attempt — and the rate limiter below,
- * not the KDF, is what actually bounds the attempt rate.
- *
- * `node:crypto` rather than `Bun.password`: Bun.password is argon2id/bcrypt and
- * would introduce a third KDF into a project that already has exactly one, and
- * rather than `@noble/hashes` (reachable through age-encryption) because that
- * dependency is the BROWSER's crypto and importing it server-side would blur
- * the one boundary SPEC §6 cares about. scrypt with explicit, stored parameters
- * is the smallest thing that is honest about what it is.
- */
-const SCRYPT_LOG_N = 17;
-const SCRYPT_R = 8;
-const SCRYPT_P = 1;
-const SCRYPT_LEN = 32;
-
-/** sqlite credential key. Never in settings.toml, never served, never logged. */
-export const TERMINAL_PASSWORD_KEY = "terminal.passwordHash";
-
-const scryptOpts = (logN: number, r: number, p: number) => ({
-  N: 1 << logN,
-  r,
-  p,
-  // node refuses when maxmem < 128*N*r; give it headroom rather than tracking it
-  maxmem: 192 * 1024 * 1024,
-});
-
-/** `scrypt$logN$r$p$saltB64$hashB64` — self-describing, so params can move. */
-export function hashTerminalPassword(password: string): string {
-  const salt = randomBytes(16);
-  const hash = scryptSync(password, salt, SCRYPT_LEN, scryptOpts(SCRYPT_LOG_N, SCRYPT_R, SCRYPT_P));
-  return ["scrypt", SCRYPT_LOG_N, SCRYPT_R, SCRYPT_P, salt.toString("base64"), hash.toString("base64")].join("$");
-}
-
-/* A decoy record so an unconfigured terminal burns the same work, and the same
-   wall-clock, as a configured one with a wrong password. Without it, `POST
-   /api/terminal/unlock` answers instantly when no password is set and slowly
-   when one is — which is an oracle for "does this vault have a terminal
-   password", answered to anyone who can reach the port.
-
-   Built on first use, not at import: a derivation at module load would put
-   ~150 ms on every server boot for a code path most vaults never touch, and
-   settings.ts imports this module.
-
-   BUT lazy-on-the-hot-path is its own oracle, and a louder one: the first
-   unlock against a vault with NO password paid two derivations (build the
-   decoy, then verify against it) where a configured vault paid one — measured
-   2.0x, with no overlap between the two sets, so a single request answered the
-   question the decoy exists to refuse. `warmDecoy()` below builds it off the
-   request path instead, and only for the vaults that can ever need it. */
-let decoy: string | null = null;
-const decoyRecord = () => (decoy ??= hashTerminalPassword(randomBytes(32).toString("hex")));
-/** True once the decoy exists — the warm-up's own idempotence check. */
-const decoyWarm = () => decoy !== null;
-
-/**
- * Constant-time verify. Returns false for every failure shape — malformed
- * record, unknown algorithm, wrong password — and burns a full derivation in
- * all of them, including when `stored` is null.
- */
-function verifyTerminalPassword(stored: string | null | undefined, password: string): boolean {
-  const record = stored || decoyRecord();
-  const parts = record.split("$");
-  let ok = parts.length === 6 && parts[0] === "scrypt";
-  const logN = ok ? Number(parts[1]) : SCRYPT_LOG_N;
-  const r = ok ? Number(parts[2]) : SCRYPT_R;
-  const p = ok ? Number(parts[3]) : SCRYPT_P;
-  if (!Number.isInteger(logN) || logN < 8 || logN > 20 || !Number.isInteger(r) || !Number.isInteger(p)) ok = false;
-  const salt = ok ? Buffer.from(parts[4], "base64") : Buffer.alloc(16);
-  const want = ok ? Buffer.from(parts[5], "base64") : Buffer.alloc(SCRYPT_LEN);
-  let got: Buffer;
-  try {
-    got = scryptSync(password, salt, want.length || SCRYPT_LEN, scryptOpts(ok ? logN : SCRYPT_LOG_N, r, p));
-  } catch {
-    return false;
-  }
-  // length-equal by construction above; timingSafeEqual throws otherwise
-  const same = got.length === want.length && timingSafeEqual(got, want);
-  // `stored == null` still reaches here, having paid the same cost, and loses
-  return ok && same && !!stored;
-}
 
 /* ============================================================
    Limits
@@ -249,8 +163,8 @@ interface Running {
 
 interface TerminalDeps {
   vault: Vault;
-  settings: Settings;
-  index: Index;
+  settings: Pick<Settings, "value" | "terminalPasswordSet" | "setTerminalPassword" | "verifyTerminalPassword" | "warmPasswordDecoy">;
+  index: TerminalIndex;
   log: (line: string) => void;
   /** Fired when an AI-originated command record changes — a NOTIFICATION only:
       it carries an id, never a command string and never output, because
@@ -308,10 +222,10 @@ export class Terminal {
    * charged to boot either — the listener is up first.
    */
   private warmDecoy() {
-    if (decoyWarm() || !this.enabled() || this.configured()) return;
+    if (!this.enabled() || this.configured()) return;
     const t = setTimeout(() => {
       try {
-        decoyRecord();
+        this.deps.settings.warmPasswordDecoy();
       } catch {}
     }, 0);
     // a warm-up must never be the reason a process stays alive
@@ -356,7 +270,7 @@ export class Terminal {
   }
 
   configured(): boolean {
-    return !!this.deps.index.getCredential(TERMINAL_PASSWORD_KEY);
+    return this.deps.settings.terminalPasswordSet();
   }
 
   allowAiAutoRun(): boolean {
@@ -386,8 +300,7 @@ export class Terminal {
       const viaSession = !!this.session(token);
       if (!viaSession) {
         this.assertNotBlocked(caller);
-        const stored = this.deps.index.getCredential(TERMINAL_PASSWORD_KEY);
-        if (!verifyTerminalPassword(stored, String(current ?? ""))) {
+        if (!this.deps.settings.verifyTerminalPassword(String(current ?? ""))) {
           this.noteFailure(caller);
           throw new TerminalError("bad-password", "The current terminal password is wrong.", 401);
         }
@@ -396,7 +309,7 @@ export class Terminal {
     }
     const value = typeof next === "string" ? next : "";
     if (!value) {
-      this.deps.index.setCredential(TERMINAL_PASSWORD_KEY, "");
+      this.deps.settings.setTerminalPassword("");
       this.lockAll();
       this.deps.log("terminal: password cleared — the terminal is disabled");
       /* the vault is now one an unlock has to answer with the decoy */
@@ -404,7 +317,7 @@ export class Terminal {
       return { configured: false };
     }
     if (value.length < 8) throw new TerminalError("weak-password", "The terminal password must be at least 8 characters.");
-    this.deps.index.setCredential(TERMINAL_PASSWORD_KEY, hashTerminalPassword(value));
+    this.deps.settings.setTerminalPassword(value);
     /* Every existing session dies with the old password: a session minted under
        a password the user has just revoked is exactly what "changed the
        password" is supposed to end. */
@@ -505,13 +418,12 @@ export class Terminal {
   unlock(password: unknown, caller?: string | null): { token: string; expiresAt: string; idleLockMinutes: number } {
     if (!this.enabled()) throw new TerminalError("terminal-disabled", "The terminal is switched off in Settings.", 403);
     this.assertNotBlocked(caller);
-    const stored = this.deps.index.getCredential(TERMINAL_PASSWORD_KEY);
     /* Deliberately the SAME answer, with the same work behind it, whether or
        not a password is set: this endpoint must not be an oracle for "is there
        a terminal password on this vault". `GET /api/terminal/status` tells the
        app `configured:false` so the panel can say the terminal is disabled —
        that is a same-origin read for the user, not a probe result. */
-    if (!verifyTerminalPassword(stored, typeof password === "string" ? password : "")) {
+    if (!this.deps.settings.verifyTerminalPassword(typeof password === "string" ? password : "")) {
       this.noteFailure(caller);
       throw new TerminalError("bad-password", "Wrong terminal password.", 401, {
         retryAfterMs: this.retryAfterMs(caller),

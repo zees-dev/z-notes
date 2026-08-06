@@ -10,8 +10,8 @@
    every segmented control from it and hard-codes none of the option lists.
    ============================================================ */
 
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { Index } from "./db.ts";
-import { TERMINAL_PASSWORD_KEY, hashTerminalPassword } from "./terminal.ts";
 import type { Vault } from "./vault.ts";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -264,6 +264,93 @@ function isSubsequence(small: string, big: string): boolean {
  */
 const looksMasked = (v: string, current: string): boolean =>
   v.includes("…") || v.includes("•") || (!!current && isSubsequence(v, current));
+
+/**
+ * The vault identity is passphrase-wrapped with scrypt logN=18 (SPEC §6). This
+ * is the same primitive one notch down, and the notch is deliberate: logN=18 is
+ * 256 MiB per derivation and this one runs SERVER-side on an endpoint an
+ * attacker can call in a loop, so the memory cost is also a self-inflicted
+ * denial of service. logN=17 is 128 MiB and ~150 ms on this machine — far past
+ * what a guessing rig wants to pay per attempt — and the rate limiter below,
+ * not the KDF, is what actually bounds the attempt rate.
+ *
+ * `node:crypto` rather than `Bun.password`: Bun.password is argon2id/bcrypt and
+ * would introduce a third KDF into a project that already has exactly one, and
+ * rather than `@noble/hashes` (reachable through age-encryption) because that
+ * dependency is the BROWSER's crypto and importing it server-side would blur
+ * the one boundary SPEC §6 cares about. scrypt with explicit, stored parameters
+ * is the smallest thing that is honest about what it is.
+ */
+const SCRYPT_LOG_N = 17;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_LEN = 32;
+
+/** sqlite credential key. Never in settings.toml, never served, never logged. */
+const TERMINAL_PASSWORD_KEY = "terminal.passwordHash";
+
+const scryptOpts = (logN: number, r: number, p: number) => ({
+  N: 1 << logN,
+  r,
+  p,
+  // node refuses when maxmem < 128*N*r; give it headroom rather than tracking it
+  maxmem: 192 * 1024 * 1024,
+});
+
+/** `scrypt$logN$r$p$saltB64$hashB64` — self-describing, so params can move. */
+function hashTerminalPassword(password: string): string {
+  const salt = randomBytes(16);
+  const hash = scryptSync(password, salt, SCRYPT_LEN, scryptOpts(SCRYPT_LOG_N, SCRYPT_R, SCRYPT_P));
+  return ["scrypt", SCRYPT_LOG_N, SCRYPT_R, SCRYPT_P, salt.toString("base64"), hash.toString("base64")].join("$");
+}
+
+/* A decoy record so an unconfigured terminal burns the same work, and the same
+   wall-clock, as a configured one with a wrong password. Without it, `POST
+   /api/terminal/unlock` answers instantly when no password is set and slowly
+   when one is — which is an oracle for "does this vault have a terminal
+   password", answered to anyone who can reach the port.
+
+   Built on first use, not at import: a derivation at module load would put
+   ~150 ms on every server boot for a code path most vaults never touch, and
+   this module owns it now.
+
+   BUT lazy-on-the-hot-path is its own oracle, and a louder one: the first
+   unlock against a vault with NO password paid two derivations (build the
+   decoy, then verify against it) where a configured vault paid one — measured
+   2.0x, with no overlap between the two sets, so a single request answered the
+   question the decoy exists to refuse. `warmDecoy()` below builds it off the
+   request path instead, and only for the vaults that can ever need it. */
+let decoy: string | null = null;
+const decoyRecord = () => (decoy ??= hashTerminalPassword(randomBytes(32).toString("hex")));
+/** True once the decoy exists — the warm-up's own idempotence check. */
+const decoyWarm = () => decoy !== null;
+
+/**
+ * Constant-time verify. Returns false for every failure shape — malformed
+ * record, unknown algorithm, wrong password — and burns a full derivation in
+ * all of them, including when `stored` is null.
+ */
+function verifyTerminalPassword(stored: string | null | undefined, password: string): boolean {
+  const record = stored || decoyRecord();
+  const parts = record.split("$");
+  let ok = parts.length === 6 && parts[0] === "scrypt";
+  const logN = ok ? Number(parts[1]) : SCRYPT_LOG_N;
+  const r = ok ? Number(parts[2]) : SCRYPT_R;
+  const p = ok ? Number(parts[3]) : SCRYPT_P;
+  if (!Number.isInteger(logN) || logN < 8 || logN > 20 || !Number.isInteger(r) || !Number.isInteger(p)) ok = false;
+  const salt = ok ? Buffer.from(parts[4], "base64") : Buffer.alloc(16);
+  const want = ok ? Buffer.from(parts[5], "base64") : Buffer.alloc(SCRYPT_LEN);
+  let got: Buffer;
+  try {
+    got = scryptSync(password, salt, want.length || SCRYPT_LEN, scryptOpts(ok ? logN : SCRYPT_LOG_N, r, p));
+  } catch {
+    return false;
+  }
+  // length-equal by construction above; timingSafeEqual throws otherwise
+  const same = got.length === want.length && timingSafeEqual(got, want);
+  // `stored == null` still reaches here, having paid the same cost, and loses
+  return ok && same && !!stored;
+}
 
 export interface SettingsFanout {
   applyGit(): void;
@@ -807,6 +894,25 @@ export class Settings {
       passwordSet: !!this.index.getCredential(TERMINAL_PASSWORD_KEY),
     };
     return { settings, meta: this.meta() };
+  }
+
+  /* The credentials table has ONE owner: this class. The terminal's password
+     hash is a credential like the git token and the AI key, so its reads and
+     writes come through here too — terminal.ts holds no table access. */
+  terminalPasswordSet(): boolean {
+    return !!this.index.getCredential(TERMINAL_PASSWORD_KEY);
+  }
+  /** Hashes here — plaintext never lands in sqlite. Empty string clears. */
+  setTerminalPassword(plain: string): void {
+    this.index.setCredential(TERMINAL_PASSWORD_KEY, plain ? hashTerminalPassword(plain) : "");
+  }
+  /** Constant-time, decoy-backed: same work whether or not a hash is stored. */
+  verifyTerminalPassword(password: string): boolean {
+    return verifyTerminalPassword(this.index.getCredential(TERMINAL_PASSWORD_KEY), password);
+  }
+  /** Pre-build the decoy off the request path (see decoyRecord above). */
+  warmPasswordDecoy(): void {
+    decoyRecord();
   }
 
   /** Raw credential, for server-side use only (git/ai relays in later phases). */
