@@ -1,6 +1,6 @@
 /* ============================================================
    secrets.test.ts — PHASE 3 gate, bun side (SPEC §6, §11; the crypto design is
-   fixed in wayfinder/research/secrets-crypto.md and is NOT re-derived here).
+   fixed in docs/secrets-crypto.md and is NOT re-derived here).
 
    What this file measures, and nothing else:
 
