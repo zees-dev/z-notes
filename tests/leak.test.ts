@@ -62,7 +62,7 @@ const SEED = {
 
   /* ---- prefixes the RENDERER accepts and the server's probe did not ----
 
-     app/app.js opens a fence on /^\s*```/ and JS `\s` is far wider than the
+     app/markdown.js opens a fence on /^\s*```/ and JS `\s` is far wider than the
      `[ \t>]` the server used: a no-break space, a form feed, an ideographic
      space or a BOM in front of the fence made a block that the browser paints
      as "Secret block · Locked" and offers to unlock, while `redact()` never
@@ -199,14 +199,14 @@ describe("leak canary (SPEC §11)", () => {
    construction" — but the construction only ever compared the server's two
    probes with each other. The reader that actually decides whether a user
    BELIEVES a block is encrypted is the renderer, and its opener is
-   `/^\s*```/` (app/app.js RE_FENCE). A server probe narrower than that is a
+   `/^\s*```/` (app/markdown.js RE_FENCE). A server probe narrower than that is a
    fence the browser paints as a secret and the indexer swallows whole.
 
    Direction matters and only one direction is a leak: the server may be WIDER
    (it then over-redacts, which costs search recall, never confidentiality).
    ============================================================ */
 describe("fence grammar — the server is never narrower than the renderer", () => {
-  /* the renderer's own opener, verbatim from app/app.js */
+  /* the renderer's own opener, verbatim from app/markdown.js */
   const RE_FENCE = /^\s*```/;
 
   const PREFIXES = [
@@ -287,7 +287,7 @@ describe("fence grammar — the server is never narrower than the renderer", () 
     ["> ``` age", "blockquoted, space after the ticks", false],
   ];
 
-  /** the renderer's own classifier, verbatim from app/app.js:409-420 */
+  /** the renderer's own classifier, verbatim from app/markdown.js (the lang === "age" test in renderPreview) */
   const rendererSaysSecret = (line: string) =>
     RE_FENCE.test(line) && line.replace(RE_FENCE, "").trim() === "age";
 

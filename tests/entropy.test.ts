@@ -5,7 +5,7 @@
    by the adversary: everything protecting the vault's long-lived key is
    scrypt(2^18) × the entropy of one passphrase. §5.4 therefore says the app
    must "refuse anything under ~60 bits of estimated entropy", and
-   `createIdentity` (app/app.js) plus the live meter next to the field are the
+   `createIdentity` (app/secrets.js) plus the live meter next to the field are the
    only places that check.
 
    The estimator used to be length × charset with per-CHARACTER run collapsing,

@@ -1,0 +1,230 @@
+/* ============================================================
+   ui.js — icons + tiny DOM/text helpers shared by every panel.
+
+   Split from the original single-file app.js along its own section markers;
+   behaviour is unchanged. See that file's history for each section's full
+   design rationale.
+   ============================================================ */
+"use strict";
+
+import { state } from "./state.js";
+
+/* ============================================================
+   ICONS
+   ============================================================ */
+export const I = {
+  chev: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
+  folder: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.4h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg>',
+  file: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+  key: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="8" cy="13" r="4"/><path d="m11 11 8-8M17 5l2 2M15 7l2 2"/></svg>',
+  check: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>',
+  link: '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9.5 14.5 14.5 9.5"/><path d="M12.5 6.5 14 5a4.2 4.2 0 0 1 6 6l-1.5 1.5M11.5 17.5 10 19a4.2 4.2 0 0 1-6-6l1.5-1.5"/></svg>',
+  lock: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>',
+  unlock: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 7.6-1.8"/></svg>',
+  copy: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>',
+  note: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M8.5 13h7M8.5 16.5h4"/></svg>',
+  search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>',
+  tick: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>',
+  undo: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h11a5 5 0 0 1 0 10h-4"/><path d="m7 6-4 4 4 4"/></svg>',
+  doc: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+  pencil: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9a2.5 2.5 0 0 0-3.5-3.5L4.5 16.5z"/><path d="m14.5 6.5 3.5 3.5"/></svg>',
+  trash: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 7V5h4v2M6.5 7l.8 12.1A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.9L17.5 7"/></svg>',
+  /* a broken [[link]]: the chain, snapped. Click it to create the doc. */
+  linkbroken:
+    '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12.5 6.5 14 5a4.2 4.2 0 0 1 6 6l-1.5 1.5M11.5 17.5 10 19a4.2 4.2 0 0 1-6-6l1.5-1.5"/><path d="M4 4l16 16" stroke-width="2"/></svg>',
+  alert:
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5 21 20H3z"/><path d="M12 10v4M12 17.2v.1"/></svg>',
+};
+
+/* ============================================================
+   TINY HELPERS
+   ============================================================ */
+export const $ = (s, r) => (r || document).querySelector(s);
+export const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll(s));
+export const el = (tag, cls, html) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html != null) n.innerHTML = html;
+  return n;
+};
+/* quotes are escaped too: half the call sites interpolate into an attribute
+   (data-link, title, …) and a doc is allowed to contain any byte at all */
+export const esc = (s) =>
+  String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+export const dirname = (p) => (p.indexOf("/") < 0 ? "" : p.slice(0, p.lastIndexOf("/")));
+
+let toastT;
+/**
+ * `opts.sticky` keeps the notice up until something dismisses it.
+ *
+ * Reserved for the one class of message where 1.9 seconds is a lie: the ground
+ * moved under an UNSAVED buffer (the doc was deleted elsewhere, or moved). The
+ * user may be mid-sentence, may be looking at the keyboard, may be in another
+ * window — and the next thing they do, ⌘S, will now behave differently. A
+ * notice about that has to still be there when they look up.
+ *
+ * Deliberately NOT extended to "Reloaded from disk": SPEC §5 fixes that one as
+ * a blip, and it describes something that already finished harmlessly.
+ */
+export function toast(msg, opts) {
+  const sticky = !!(opts && opts.sticky);
+  $("#toastTxt").textContent = msg;
+  const t = $("#toast");
+  t.classList.toggle("sticky", sticky);
+  t.classList.add("show");
+  const glyph = t.querySelector(".ok");
+  if (glyph) glyph.textContent = sticky ? "!" : "✓";
+  clearTimeout(toastT);
+  if (!sticky) toastT = setTimeout(() => t.classList.remove("show"), 1900);
+}
+
+/** Take a sticky notice down — on a click, or once the thing it warned about
+    has been dealt with. A no-op for the ordinary self-expiring kind. */
+export function clearStickyToast() {
+  const t = $("#toast");
+  if (!t || !t.classList.contains("sticky")) return;
+  t.classList.remove("show", "sticky");
+}
+
+export function copyText(t) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).catch(() => {});
+    else {
+      const ta = el("textarea");
+      ta.value = t;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+  } catch (e) {}
+  toast("Copied to clipboard");
+}
+
+export function apiFail(err, what) {
+  if (err && err.name === "AbortError") return;
+  console.error(what, err);
+  toast((err && err.message) || what || "Request failed");
+}
+
+/* the inverse of esc(), for the one place that has to look at escaped text
+   again — &amp; LAST or "&amp;lt;" would decode twice */
+const unesc = (s) =>
+  String(s)
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+
+/* ---------- [[link]] resolution (SPEC §5) ----------
+
+   The client's rule is the SERVER's rule, restated: `[[slug]]` resolves by
+   unique filename slug vault-wide, `[[path/slug]]` is the disambiguating form,
+   and a slug carried by two docs resolves to NEITHER. Rendering an ambiguous
+   link as if it pointed somewhere would be the one behaviour a file-backed
+   vault must never have, so it is flagged exactly like a missing one. */
+export const normTarget = (t) =>
+  String(t == null ? "" : t)
+    .trim()
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "")
+    .replace(/\.md$/i, "");
+
+/** → { state: "ok" | "ambiguous" | "missing", path, candidates } */
+export function lookupLink(target) {
+  const t = normTarget(target);
+  if (!t) return { state: "missing", path: null, candidates: [] };
+  if (t.indexOf("/") >= 0) {
+    const p = t + ".md";
+    return state.docPaths.has(p)
+      ? { state: "ok", path: p, candidates: [p] }
+      : { state: "missing", path: null, candidates: [] };
+  }
+  const hits = state.slugs.get(t) || [];
+  if (hits.length === 1) return { state: "ok", path: hits[0], candidates: hits };
+  if (hits.length > 1) return { state: "ambiguous", path: null, candidates: hits };
+  return { state: "missing", path: null, candidates: [] };
+}
+
+/* inline markdown: `code`, **bold**, *em*, [[wikilink]] — used for docs AND
+   for assistant messages, which arrive as markdown, never as HTML */
+export function inline(s) {
+  let h = esc(s);
+  h = h.replace(/`([^`]+)`/g, (m, c) => '<code class="ic">' + c + "</code>");
+  /* bold/em carry the same code-span alternation the wikilink pass below does,
+     and for the same reason: `h` already contains the emitted <code> spans, so
+     a bare .replace would render `**bold**` INSIDE backticks — text the fence
+     promises stays literal. Skip the spans; style everything else. */
+  const CODE_SPAN = /(<code class="ic">[\s\S]*?<\/code>)/;
+  h = h.replace(new RegExp(CODE_SPAN.source + "|\\*\\*([^*]+)\\*\\*", "g"), (m, code, b) =>
+    code ? code : "<strong>" + b + "</strong>"
+  );
+  h = h.replace(new RegExp(CODE_SPAN.source + "|(^|[\\s(])\\*([^*\\n]+)\\*", "g"), (m, code, pre, e) =>
+    code ? code : pre + "<em>" + e + "</em>"
+  );
+  /* `h` is already escaped, so `name` must not be escaped a second time.
+     The alternation carries the already-emitted inline-code spans so a
+     `[[link]]` written inside backticks stays literal text — which is exactly
+     what the server promises too: it never rewrites a link inside code, so the
+     renderer must never turn one into a pill that could go stale. */
+  h = h.replace(/(<code class="ic">[\s\S]*?<\/code>)|\[\[([^\]]+)\]\]/g, (m, code, name) => {
+    if (code) return code;
+    const hit = lookupLink(unesc(name));
+    if (hit.state === "ok") {
+      return '<a class="wl" data-link="' + name + '" title="Open ' + name + '">' + I.link + name + "</a>";
+    }
+    const why =
+      hit.state === "ambiguous"
+        ? "Ambiguous — " + hit.candidates.length + " docs share this name; qualify it as [[folder/name]]"
+        : "No doc named " + name + " — click to create it";
+    return (
+      '<a class="wl broken" data-link="' +
+      name +
+      '" data-broken="' +
+      hit.state +
+      '" title="' +
+      esc(why) +
+      '">' +
+      I.linkbroken +
+      name +
+      "</a>"
+    );
+  });
+  return h;
+}
+
+/* toy js/ts highlighter for fenced js|ts blocks — pattern-based only, so it
+   knows nothing about any particular document's contents */
+/* One pass, one regex: successive .replace() calls would re-scan the markup
+   they just emitted (a `class` keyword inside class="tk-str" and so on). */
+const HL_RE = /("[^"\n]*"|'[^'\n]*'|`[^`\n]*`)|(\/\/[^\n]*)|\b(const|let|var|function|return|await|async|import|export|from|new|class|extends|type|interface|enum|if|else|for|while|try|catch|throw|typeof|instanceof|null|undefined|true|false)\b|\b([A-Z][A-Za-z0-9_$]*)(?=[.(])|\b(\d+(?:\.\d+)?[a-z]*)\b/g;
+
+export function hl(src) {
+  const s = String(src);
+  let out = "";
+  let last = 0;
+  s.replace(HL_RE, (m, str, com, kw, fn, num, off) => {
+    out += esc(s.slice(last, off));
+    const cls = str ? "tk-str" : com ? "tk-com" : kw ? "tk-key" : fn ? "tk-fn" : "tk-num";
+    out += '<span class="' + cls + '">' + esc(m) + "</span>";
+    last = off + m.length;
+    return m;
+  });
+  return out + esc(s.slice(last));
+}
+
+export const activeDoc = () => state.docs.get(state.active);
+
+export function countWords(md) {
+  return String(md || "")
+    .replace(/```[\s\S]*?(```|$)/g, " ")
+    .replace(/[#>*`|[\]]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
