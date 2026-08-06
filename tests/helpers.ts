@@ -665,42 +665,13 @@ export function findChromium(): string {
 }
 
 /* ------------------------------------------------------------------
-   reference fuzzy scorer — ported verbatim from the retired prototype mock.
-
-   The gate is not "the server produced some numbers": the frontend's
-   highlighter paints `matches` straight onto `text`, so the offsets have to be
-   the ones this algorithm produces (leftmost-greedy subsequence). Scores are
-   the server's business; the offsets are the contract.
+   fuzzy offsets oracle. The frontend's highlighter paints `matches` straight
+   onto `text`, so the offsets the API returns must be exactly what the
+   scorer produces. Re-exported from db.ts so the assertion checks the wire,
+   not a hand-maintained twin that could drift.
    ------------------------------------------------------------------ */
 
-export function refFuzzy(q: string, hay: string): { score: number; idx: number[] } | null {
-  if (!q) return { score: 0, idx: [] };
-  const n = q.toLowerCase();
-  const h = hay.toLowerCase();
-  const idx: number[] = [];
-  let from = 0,
-    score = 0,
-    prev = -2;
-  for (let i = 0; i < n.length; i++) {
-    const c = n[i];
-    if (c === " ") {
-      prev = -2;
-      continue;
-    }
-    const at = h.indexOf(c, from);
-    if (at < 0) return null;
-    idx.push(at);
-    if (at === prev + 1) score += 7;
-    else score += 1;
-    if (at === 0 || /[\s/\-_.,:|[\]()]/.test(h.charAt(at - 1))) score += 5;
-    prev = at;
-    from = at + 1;
-  }
-  if (h.indexOf(n.replace(/\s+/g, "")) >= 0) score += 22;
-  score -= idx[0] * 0.08;
-  score -= Math.max(0, hay.length - 60) * 0.01;
-  return { score, idx };
-}
+export { fuzzy as refFuzzy } from "../server/db";
 
 /* ------------------------------------------------------------------
    git in a test repo. One copy of the spawn plumbing: argv only, prompts

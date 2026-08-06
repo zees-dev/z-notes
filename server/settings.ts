@@ -265,6 +265,18 @@ function isSubsequence(small: string, big: string): boolean {
 const looksMasked = (v: string, current: string): boolean =>
   v.includes("…") || v.includes("•") || (!!current && isSubsequence(v, current));
 
+export interface SettingsFanout {
+  applyGit(): void;
+  scheduleSync(): void;
+  aiSettingsSaved(): Promise<unknown>;
+  aiEffortChanged(): void;
+  aiAnnounce(): void;
+  broadcast(event: string, data: unknown): void;
+  retentionDays(): number;
+  sweepTrash(why: string): Promise<string[]>;
+  announceTrash(): Promise<void>;
+}
+
 export class Settings {
   private data: Json = structuredClone(DEFAULTS);
   /** Extra server-declared capability merged into `meta` — see setMetaProvider. */
@@ -274,6 +286,84 @@ export class Settings {
   private onDisk: string | null = null;
 
   constructor(private readonly vault: Vault, private readonly index: Index) {}
+
+  /* Late-bound collaborators (same pattern as setMetaProvider): Settings is
+     constructed before gitSync/ai/trash/docs exist, but a settings change
+     fans out to all of them. index.ts wires this once at boot. */
+  private fanout!: SettingsFanout;
+  wire(f: SettingsFanout) {
+    this.fanout = f;
+  }
+
+  /** GET /api/settings — serve DISK, and give a reload the same fan-out a PUT gets. */
+  async getRoute(): Promise<{ status: number; body: unknown }> {
+    // settings.toml is committed and hand-editable, so it can change under us
+    // (a pull, another machine, an editor). Serve what is on disk, not a
+    // boot-time snapshot — see reloadIfChanged.
+    const changed = await this.reloadIfChanged();
+    /* A reload IS a settings change: without the fan-out a pulled settings.toml
+       altered behaviour (autoSync timer, retention window) with no
+       re-evaluation and no `settings-changed` frame. */
+    if (changed) {
+      this.fanout.applyGit();
+      this.fanout.aiAnnounce();
+      this.fanout.broadcast("settings-changed", this.get());
+      this.fanout.sweepTrash("settings reloaded from disk").catch(() => {});
+    }
+    return { status: 200, body: this.get() };
+  }
+
+  /** PUT /api/settings — the write plus every live-apply the write implies. */
+  async putRoute(patch: unknown): Promise<{ status: number; body: unknown }> {
+    try {
+      const endpoint = () =>
+        JSON.stringify([this.value("ai.baseUrl", ""), this.value("ai.model", ""), this.credential("ai.apiKey")]);
+      const before = endpoint();
+      const retentionBefore = this.fanout.retentionDays();
+      /* Whether the patch NAMES ai.effort, not whether the stored value moved:
+         the ladder downgrades behind the configured value, so the case that
+         has to be caught is a user re-picking the effort they already had. */
+      const picksEffort =
+        !!patch && typeof patch === "object" && !Array.isArray(patch) &&
+        !!(patch as any).ai && typeof (patch as any).ai === "object" && !Array.isArray((patch as any).ai) &&
+        (patch as any).ai.effort != null;
+      const out = await this.put(patch);
+      this.fanout.applyGit(); // autoSync / autoSyncSeconds / branch apply live
+      /* LIVE-APPLY for the retention window: a SHORTENED window has to be acted
+         on now rather than at the next hourly tick. Not awaited: a settings
+         save must not wait on a git commit. */
+      if (this.fanout.retentionDays() !== retentionBefore) {
+        this.fanout.sweepTrash("retention changed")
+          /* A sweep that removed entries already announced its final list. With
+             nothing expired, still announce so every client updates the
+             retention label and each entry's recalculated purgeAt. */
+          .then((purged) => (purged.length ? undefined : this.fanout.announceTrash()))
+          .catch(() => {});
+      }
+      const after = endpoint();
+      /* Capability probe at settings-save (research §7). Deliberately NOT
+         awaited, and gated on the endpoint TRIPLE — only those three can change
+         what the endpoint is capable of. */
+      if (before !== after) this.fanout.aiSettingsSaved().catch(() => {});
+      /* The ladder is wider than the probe: re-picking an effort must reset the
+         degradation walk even when the endpoint did not change. */
+      else if (picksEffort) this.fanout.aiEffortChanged();
+      /* The derived STATUS is wider still. announce() is itself the "only when
+         it changed" mechanism, keyed on the whole verdict. */
+      this.fanout.aiAnnounce();
+      /* SETTINGS ARE VAULT STATE and move between clients like it: `out` is
+         exactly the body GET serves, credentials already masked, so it is safe
+         on a stream that is not behind the terminal password. */
+      this.fanout.broadcast("settings-changed", out);
+      /* settings.toml is a COMMITTED file; a write to a tracked file schedules
+         its own sync, like every other write in this server does. */
+      this.fanout.scheduleSync();
+      return { status: 200, body: out };
+    } catch (err) {
+      if (err instanceof SettingsError) return { status: err.status, body: { error: err.code, message: err.message } };
+      throw err; // reaches Bun's error() → 500 server-fault, as before
+    }
+  }
 
   /**
    * `meta` is server-declared capability, not user state (API.md § Settings).
