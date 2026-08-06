@@ -592,44 +592,6 @@ async function pumpLines(
 }
 
 /* ------------------------------------------------------------------
-   reference fuzzy scorer — ported verbatim from the retired prototype mock.
-
-   The gate is not "the server produced some numbers": the frontend's
-   highlighter paints `matches` straight onto `text`, so the offsets have to be
-   the ones this algorithm produces (leftmost-greedy subsequence). Scores are
-   the server's business; the offsets are the contract.
-   ------------------------------------------------------------------ */
-
-export function refFuzzy(q: string, hay: string): { score: number; idx: number[] } | null {
-  if (!q) return { score: 0, idx: [] };
-  const n = q.toLowerCase();
-  const h = hay.toLowerCase();
-  const idx: number[] = [];
-  let from = 0,
-    score = 0,
-    prev = -2;
-  for (let i = 0; i < n.length; i++) {
-    const c = n[i];
-    if (c === " ") {
-      prev = -2;
-      continue;
-    }
-    const at = h.indexOf(c, from);
-    if (at < 0) return null;
-    idx.push(at);
-    if (at === prev + 1) score += 7;
-    else score += 1;
-    if (at === 0 || /[\s/\-_.,:|[\]()]/.test(h.charAt(at - 1))) score += 5;
-    prev = at;
-    from = at + 1;
-  }
-  if (h.indexOf(n.replace(/\s+/g, "")) >= 0) score += 22;
-  score -= idx[0] * 0.08;
-  score -= Math.max(0, hay.length - 60) * 0.01;
-  return { score, idx };
-}
-
-/* ------------------------------------------------------------------
    headless chromium discovery (shared by the e2e gate)
    ------------------------------------------------------------------ */
 
@@ -715,4 +677,84 @@ export function findChromium(): string {
       CHROMIUM_SYSTEM_PATHS.map((p) => `  ${p}`).join("\n") +
       "\nInstall one with:  bunx playwright install chromium --only-shell"
   );
+}
+
+/* ------------------------------------------------------------------
+   reference fuzzy scorer — ported verbatim from the retired prototype mock.
+
+   The gate is not "the server produced some numbers": the frontend's
+   highlighter paints `matches` straight onto `text`, so the offsets have to be
+   the ones this algorithm produces (leftmost-greedy subsequence). Scores are
+   the server's business; the offsets are the contract.
+   ------------------------------------------------------------------ */
+
+export function refFuzzy(q: string, hay: string): { score: number; idx: number[] } | null {
+  if (!q) return { score: 0, idx: [] };
+  const n = q.toLowerCase();
+  const h = hay.toLowerCase();
+  const idx: number[] = [];
+  let from = 0,
+    score = 0,
+    prev = -2;
+  for (let i = 0; i < n.length; i++) {
+    const c = n[i];
+    if (c === " ") {
+      prev = -2;
+      continue;
+    }
+    const at = h.indexOf(c, from);
+    if (at < 0) return null;
+    idx.push(at);
+    if (at === prev + 1) score += 7;
+    else score += 1;
+    if (at === 0 || /[\s/\-_.,:|[\]()]/.test(h.charAt(at - 1))) score += 5;
+    prev = at;
+    from = at + 1;
+  }
+  if (h.indexOf(n.replace(/\s+/g, "")) >= 0) score += 22;
+  score -= idx[0] * 0.08;
+  score -= Math.max(0, hay.length - 60) * 0.01;
+  return { score, idx };
+}
+
+/* ------------------------------------------------------------------
+   git in a test repo. One copy of the spawn plumbing: argv only, prompts
+   off, system config off, a pinned identity so commits are deterministic.
+   Five test files used to carry this verbatim.
+   ------------------------------------------------------------------ */
+
+export async function git(cwd: string, ...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  const p = Bun.spawn(["git", ...args], {
+    cwd,
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "z-notes test",
+      GIT_AUTHOR_EMAIL: "test@z-notes.invalid",
+      GIT_COMMITTER_NAME: "z-notes test",
+      GIT_COMMITTER_EMAIL: "test@z-notes.invalid",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    timeout: 30_000,
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(p.stdout).text(),
+    new Response(p.stderr).text(),
+    p.exited,
+  ]);
+  return { code: typeof code === "number" ? code : -1, stdout, stderr };
+}
+
+export async function gitOk(cwd: string, ...args: string[]): Promise<string> {
+  const r = await git(cwd, ...args);
+  if (r.code !== 0) throw new Error(`git ${args.join(" ")} failed (${r.code})\n${r.stderr || r.stdout}`);
+  return r.stdout;
+}
+
+/** crude but sufficient: block + line comments out, `://` left alone */
+export function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
 }

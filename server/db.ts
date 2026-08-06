@@ -37,7 +37,7 @@ export interface FileRow {
 }
 
 /** A FileRow with the (potentially very large) `body` column left behind. */
-export type FileRowMeta = Omit<FileRow, "body">;
+type FileRowMeta = Omit<FileRow, "body">;
 
 const META_COLUMNS = "path, rev, hash, size, mtimeMs, title, slug, hasSecrets, empty";
 

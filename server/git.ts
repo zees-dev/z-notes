@@ -40,9 +40,9 @@ import { scanDocs, znotesDir } from "./vault.ts";
 
 /* ---------- contract (docs/API.md § Sync) ---------- */
 
-export type SyncState = "synced" | "syncing" | "offline" | "error";
+type SyncState = "synced" | "syncing" | "offline" | "error";
 
-export interface SyncStatus {
+interface SyncStatus {
   state: SyncState;
   branch: string;
   /** origin's host + path ONLY — never a scheme, never credentials. */
@@ -67,7 +67,7 @@ const CREDENTIAL_KEY_RE = new RegExp(
 );
 
 /** Committed alongside the notes (SPEC §7). `.znotes/index.db` is NOT here. */
-export const TRACKED_META = [
+const TRACKED_META = [
   ".znotes/settings.toml",
   ".znotes/vault.pub",
   ".znotes/identity.age",
@@ -91,7 +91,7 @@ export const TRACKED_META = [
  * same bytes it had in the vault — the move is one `rename(2)`, so an age block
  * keeps its armor byte-identical and is stored exactly as it already was.
  */
-export const TRACKED_META_DIRS = [".znotes/trash/"];
+const TRACKED_META_DIRS = [".znotes/trash/"];
 
 const inTrackedDir = (p: string) => TRACKED_META_DIRS.some((d) => p.startsWith(d));
 
@@ -247,7 +247,7 @@ function relTime(iso: string | null): string {
 
 /* ---------- spawn result ---------- */
 
-export interface GitResult {
+interface GitResult {
   code: number;
   ok: boolean;
   stdout: string;
@@ -259,7 +259,7 @@ export interface GitResult {
 
 /* ---------- deps (structural: keeps git.ts testable without the server) ---------- */
 
-export interface GitSyncDeps {
+interface GitSyncDeps {
   vault: string;
   settings: {
     value<T>(path: string, fallback: T): T;

@@ -73,14 +73,14 @@ function newId(): string {
 }
 
 /** Absolute directory for an entry, or null if the id is not one we minted. */
-export function trashEntryDir(vault: string, id: string): string | null {
+function trashEntryDir(vault: string, id: string): string | null {
   if (!isTrashId(id)) return null;
   return resolve(trashDir(vault), id);
 }
 
 /* ---------- the on-disk record ---------- */
 
-export interface TrashMeta {
+interface TrashMeta {
   /** schema of this file; bumped only if the layout changes incompatibly */
   v: 1;
   id: string;
@@ -97,7 +97,7 @@ export interface TrashMeta {
 }
 
 /** A `TrashMeta` plus everything derived from the live vault + settings. */
-export interface TrashEntry {
+interface TrashEntry {
   id: string;
   path: string;
   name: string;
@@ -194,7 +194,7 @@ function parseMeta(id: string, raw: unknown): TrashMeta | null {
    Trash
    ============================================================ */
 
-export interface TrashDeps {
+interface TrashDeps {
   vault: string;
   settings: { value<T>(path: string, fallback: T): T };
   log?: (line: string) => void;

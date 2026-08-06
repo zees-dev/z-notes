@@ -153,7 +153,7 @@ function isRun(low) {
 }
 
 /** Bits for ONE whitespace-delimited token, capped by every view that applies. */
-export function tokenBits(tok) {
+function tokenBits(tok) {
   const low = tok.toLowerCase();
   /* every test below runs against the collapsed form too: "hunter2hunter2" is
      "hunter2" said twice, and it must not escape the checks "hunter2" fails */
