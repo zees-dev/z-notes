@@ -25,6 +25,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
+import { parseSseFrame } from "../server/sse";
 
 export const REPO_ROOT = resolve(import.meta.dir, "..");
 export const SERVER_ENTRY = join(REPO_ROOT, "server", "index.ts");
@@ -362,33 +363,17 @@ export class SSEClient {
 }
 
 function parseFrame(block: string): SSEEvent | null {
-  const lines = block.split(/\r?\n/);
-  let event = "message";
-  let id: string | undefined;
-  const dataLines: string[] = [];
-  for (const line of lines) {
-    if (!line || line.startsWith(":")) continue;
-    const i = line.indexOf(":");
-    const field = i < 0 ? line : line.slice(0, i);
-    let value = i < 0 ? "" : line.slice(i + 1);
-    if (value.startsWith(" ")) value = value.slice(1);
-    if (field === "event") event = value;
-    else if (field === "data") dataLines.push(value);
-    else if (field === "id") id = value;
-  }
-  /* per the SSE spec a block with no data field dispatches nothing — that is
-     what keeps the standalone `retry: 1000` preamble out of `all` */
-  if (dataLines.length === 0) return null;
-  const rawData = dataLines.join("\n");
+  const f = parseSseFrame(block); // null when no data line — keeps `retry:` preambles out of `all`
+  if (!f) return null;
   let data: any = null;
-  if (rawData) {
+  if (f.data) {
     try {
-      data = JSON.parse(rawData);
+      data = JSON.parse(f.data);
     } catch {
-      data = rawData;
+      data = f.data;
     }
   }
-  return { event, data, id, raw: block, at: Date.now() };
+  return { event: f.event, data, id: f.id, raw: block, at: Date.now() };
 }
 
 /* ------------------------------------------------------------------

@@ -18,6 +18,7 @@ import { META, Settings, SettingsError } from "./settings.ts";
 import { Terminal, TerminalError, bearerOf } from "./terminal.ts";
 import { Trash, TrashError, isTrashId } from "./trash.ts";
 import { Reconciler, type ChangeHint, type ChangeHints, type ChangeReason, type DocChange } from "./watch.ts";
+import { SSE_HEADERS, sseFrame } from "./sse.ts";
 import {
   absOf,
   affectedTargets,
@@ -221,7 +222,7 @@ interface SseClient {
 const enc = new TextEncoder();
 
 function frame(event: string, data: unknown): Uint8Array {
-  return enc.encode(`id: ${++eventSeq}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  return enc.encode(sseFrame(event, data, ++eventSeq));
 }
 
 function broadcast(event: string, data: unknown) {
@@ -260,15 +261,7 @@ function openStream(): Response {
       if (self_) clients.delete(self_);
     },
   });
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-    },
-  });
+  return new Response(stream, { status: 200, headers: SSE_HEADERS });
 }
 
 /* ============================================================
