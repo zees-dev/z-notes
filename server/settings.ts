@@ -35,7 +35,7 @@ import { dirname } from "node:path";
 const AUTOSYNC_MIN_SECONDS = 1;
 const AUTOSYNC_MAX_SECONDS = 3600;
 
-export type NumberSpec = {
+type NumberSpec = {
   min: number;
   max: number;
   step: number;
@@ -214,7 +214,7 @@ function defaultAt(path: string): any {
  * to the shipped default rather than to a bound — 0 means "I got this wrong",
  * not "the fastest possible".
  */
-export function coerceNumber(path: string, raw: unknown): number {
+function coerceNumber(path: string, raw: unknown): number {
   const spec = NUMBERS[path];
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return Number(defaultAt(path));
@@ -235,7 +235,7 @@ export function coerceNumber(path: string, raw: unknown): number {
  * mock that does no masking, not a masked value. The prose is normative and
  * sw.js ranks below it, so the fixture token now comes back as `ghp_…7Lp0`.)
  */
-export function mask(value: string | null | undefined): string {
+function mask(value: string | null | undefined): string {
   const v = String(value ?? "");
   if (!v) return "";
   if (v.length < 16) return "•".repeat(8);
@@ -1020,7 +1020,7 @@ function tomlValue(v: unknown): string {
   return JSON.stringify(String(v));
 }
 
-export function serializeToml(data: Json): string {
+function serializeToml(data: Json): string {
   const scalars = Object.keys(data).filter((k) => !isPlainObject(data[k]));
   const sections = Object.keys(data).filter((k) => isPlainObject(data[k]));
   const order = (known: string[], keys: string[]) => [

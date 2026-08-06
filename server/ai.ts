@@ -75,7 +75,7 @@ const LINKED_DOC_TOKEN_CAP = 1_500;
 const MAX_TOOL_RETRIES = 2;
 const MAX_DIFF_LINES = 300;
 /** Upstream connect/read budget. A model turn can legitimately be slow. */
-export const UPSTREAM_TIMEOUT_MS = 300_000;
+const UPSTREAM_TIMEOUT_MS = 300_000;
 const PROBE_TIMEOUT_MS = 12_000;
 
 /**
@@ -159,7 +159,7 @@ const RUN_COMMAND_TOOL = {
   },
 } as const;
 
-export const OPS = new Set(["replace", "insert_after", "create", "rewrite"]);
+const OPS = new Set(["replace", "insert_after", "create", "rewrite"]);
 
 /* Appended to INSTRUCTIONS only when the terminal is available — an assistant
    that has no terminal must not be told about one, or it will offer to use it. */
@@ -200,7 +200,7 @@ const INSTRUCTIONS = [
    ============================================================ */
 
 /** Raised INSTEAD of sending. The payload never reaches the network. */
-export class CanaryError extends Error {
+class CanaryError extends Error {
   constructor(readonly where: string) {
     super(
       `refusing to send: the upstream payload contains age armor (${where}). No request was made. This is the SPEC §6 leak canary — redaction is broken, not the endpoint.`
@@ -209,7 +209,7 @@ export class CanaryError extends Error {
   }
 }
 
-export class AiError extends Error {
+class AiError extends Error {
   constructor(message: string, readonly code = "ai-error", readonly status = 502) {
     super(message);
     this.name = "AiError";
@@ -221,7 +221,7 @@ export class AiError extends Error {
    ============================================================ */
 
 /** o200k_base, the tokenizer gpt-5.6-* uses (research §1). Pure JS, no addon. */
-export function countTokens(text: string): number {
+function countTokens(text: string): number {
   if (!text) return 0;
   try {
     return encode(text).length;
@@ -318,7 +318,7 @@ function normalizeTrailingWs(src: string): Normalized {
 const needleEol = (s: string) => s.replace(/\r\n/g, "\n");
 const needleTrailingWs = (s: string) => needleEol(s).replace(/[ \t]+(?=\n)/g, "").replace(/[ \t]+$/, "");
 
-export interface AnchorMatch {
+interface AnchorMatch {
   start: number;
   end: number;
   pass: 1 | 2 | 3;
@@ -329,7 +329,7 @@ export interface AnchorMatch {
  * first pass that finds any. Overlapping occurrences are counted separately —
  * ambiguity detection must be pessimistic.
  */
-export function findAnchor(hay: string, needle: string): { matches: AnchorMatch[]; pass: 1 | 2 | 3 } {
+function findAnchor(hay: string, needle: string): { matches: AnchorMatch[]; pass: 1 | 2 | 3 } {
   if (!needle) return { matches: [], pass: 1 };
 
   const scan = (h: string, n: string): Array<[number, number]> => {
@@ -383,7 +383,7 @@ const toEol = (s: string, eol: "\r\n" | "\n") =>
    ============================================================ */
 
 /** The UI-facing edit list — ALSO the re-apply spec used by accept. */
-export interface EditSpec {
+interface EditSpec {
   op: "replace" | "insert_after" | "create" | "rewrite";
   path: string;
   /** the `find` anchor; null for create/rewrite */
@@ -401,7 +401,7 @@ interface FileImage {
   existed: boolean;
 }
 
-export interface Rejection {
+interface Rejection {
   status: "rejected";
   reason: string;
   path?: string;
@@ -418,7 +418,7 @@ interface ApplyFail {
   fail: Rejection;
 }
 
-export interface ProposalOut {
+interface ProposalOut {
   id: string;
   target: string;
   label: string;
@@ -438,7 +438,7 @@ export interface ProposalOut {
    Deps
    ============================================================ */
 
-export interface DocBody {
+interface DocBody {
   path: string;
   rev: string;
   markdown: string;
@@ -447,7 +447,7 @@ export interface DocBody {
   [k: string]: unknown;
 }
 
-export interface AiDeps {
+interface AiDeps {
   vault: string;
   settings: Settings;
   index: Index;
@@ -502,9 +502,9 @@ export interface AiDeps {
                        versa: a turn that just worked outranks a stale failure.
    ============================================================ */
 
-export type AiState = "ok" | "degraded" | "unreachable" | "unconfigured" | "unknown";
+type AiState = "ok" | "degraded" | "unreachable" | "unconfigured" | "unknown";
 
-export interface AiStatus {
+interface AiStatus {
   state: AiState;
   /** the configured model, verbatim — never a guess */
   model: string;
@@ -534,7 +534,7 @@ interface LastCall {
    Normalized app events (research §3.2)
    ============================================================ */
 
-export type AppEvent =
+type AppEvent =
   | { event: "text"; data: { delta: string } }
   | { event: "reasoning"; data: { delta: string } }
   | { event: "tool_args"; data: { delta: string } }
@@ -650,7 +650,7 @@ const LADDER = [
   "reasoning",
   "chat-completions",
 ] as const;
-export type Rung = (typeof LADDER)[number];
+type Rung = (typeof LADDER)[number];
 
 const RUNG_LABEL: Record<Rung, string> = {
   "reasoning.summary": "reasoning summaries are off — no “thinking” affordance",

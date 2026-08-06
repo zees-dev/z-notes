@@ -21,7 +21,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, type Page } from "puppeteer-core";
 import * as age from "age-encryption";
-import { dropVault, encPath, makeVault, startServer, sleep, waitUntil, type TestServer } from "./helpers";
+import { dropVault, encPath, makeVault, startServer, sleep, waitUntil, type TestServer, git as gitIn } from "./helpers";
 import { proposeEdits, reply, startMockUpstream, turn, type MockUpstream } from "./mock-upstream";
 /* Phase 6 drives a REAL browser: vault-wide reveal means the plaintext of every
    block is live in a tab, and the only way to assert that it stays there is to
@@ -479,30 +479,6 @@ describe("fence grammar — the server is never narrower than the renderer", () 
 const PT_CANARY = "PLAINTEXTCANARYWHICHMUSTNEVERESCAPE";
 const REAL_PLAINTEXT = `AWS_SECRET_ACCESS_KEY=${PT_CANARY}\nregion=euwest\n`;
 
-async function gitIn(cwd: string, ...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  const p = Bun.spawn(["git", ...args], {
-    cwd,
-    env: {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_AUTHOR_NAME: "z-notes test",
-      GIT_AUTHOR_EMAIL: "test@z-notes.invalid",
-      GIT_COMMITTER_NAME: "z-notes test",
-      GIT_COMMITTER_EMAIL: "test@z-notes.invalid",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-    timeout: 30_000,
-  });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(p.stdout).text(),
-    new Response(p.stderr).text(),
-    p.exited,
-  ]);
-  return { code: typeof code === "number" ? code : -1, stdout, stderr };
-}
 
 async function gitMust(cwd: string, ...args: string[]): Promise<string> {
   const r = await gitIn(cwd, ...args);

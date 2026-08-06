@@ -81,7 +81,7 @@ import { ARMOR_BEGIN, ARMOR_CANARY, ARMOR_END, hasSecrets } from "./vault.ts";
  * the one boundary SPEC §6 cares about. scrypt with explicit, stored parameters
  * is the smallest thing that is honest about what it is.
  */
-export const SCRYPT_LOG_N = 17;
+const SCRYPT_LOG_N = 17;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SCRYPT_LEN = 32;
@@ -130,7 +130,7 @@ const decoyWarm = () => decoy !== null;
  * record, unknown algorithm, wrong password — and burns a full derivation in
  * all of them, including when `stored` is null.
  */
-export function verifyTerminalPassword(stored: string | null | undefined, password: string): boolean {
+function verifyTerminalPassword(stored: string | null | undefined, password: string): boolean {
   const record = stored || decoyRecord();
   const parts = record.split("$");
   let ok = parts.length === 6 && parts[0] === "scrypt";
@@ -168,7 +168,7 @@ const KILL_GRACE_MS = 4000;
 /** Longest command string accepted. */
 const MAX_COMMAND_CHARS = 8000;
 /** Failed unlocks before the backoff starts biting. */
-export const FREE_ATTEMPTS = 3;
+const FREE_ATTEMPTS = 3;
 const MAX_BACKOFF_MS = 60_000;
 /** Callers the backoff table remembers at once — see `bucketOf`. */
 const MAX_ATTEMPT_BUCKETS = 256;
@@ -185,7 +185,7 @@ export const MAX_AI_COMMANDS_PER_TURN = 4;
    Types
    ============================================================ */
 
-export type TermEvent =
+type TermEvent =
   | { event: "start"; data: { id: string; command: string; cwd: string; at: string; source: string } }
   | { event: "stdout"; data: { chunk: string } }
   | { event: "stderr"; data: { chunk: string } }
@@ -193,9 +193,9 @@ export type TermEvent =
   | { event: "exit"; data: { id: string; code: number | null; signal: string | null; cwd: string; ms: number; truncated: boolean } }
   | { event: "error"; data: { error: string; message: string } };
 
-export type TermEmit = (e: TermEvent) => void;
+type TermEmit = (e: TermEvent) => void;
 
-export interface TerminalStatus {
+interface TerminalStatus {
   /** The `terminal.enabled` switch. */
   enabled: boolean;
   /** Is a password set? (`false` ⇒ the terminal is disabled and says so.) */
@@ -247,7 +247,7 @@ interface Running {
   killed: boolean;
 }
 
-export interface TerminalDeps {
+interface TerminalDeps {
   vault: string;
   settings: Settings;
   index: Index;

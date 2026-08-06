@@ -296,7 +296,7 @@ export function extractLinks(markdown: string): string[] {
    ============================================================ */
 
 /** `./a/b.md`, `a/b`, `  a/b  ` → `a/b`. The extension is optional in a link. */
-export function normalizeTarget(target: string): string {
+function normalizeTarget(target: string): string {
   return String(target ?? "")
     .trim()
     .replace(/^\.\//, "")
@@ -304,14 +304,14 @@ export function normalizeTarget(target: string): string {
     .replace(/\.md$/i, "");
 }
 
-export interface LinkIndex {
+interface LinkIndex {
   /** every doc path, exactly as it is on disk */
   paths: Set<string>;
   /** filename slug → every doc carrying it (length > 1 ⇒ collision) */
   bySlug: Map<string, string[]>;
 }
 
-export function linkIndex(paths: Iterable<string>): LinkIndex {
+function linkIndex(paths: Iterable<string>): LinkIndex {
   const set = new Set<string>();
   const bySlug = new Map<string, string[]>();
   for (const p of paths) {
@@ -326,7 +326,7 @@ export function linkIndex(paths: Iterable<string>): LinkIndex {
 }
 
 /** The doc a `[[target]]` points at, or null when it is broken OR ambiguous. */
-export function resolveTarget(target: string, idx: LinkIndex): string | null {
+function resolveTarget(target: string, idx: LinkIndex): string | null {
   const t = normalizeTarget(target);
   if (!t) return null;
   if (t.includes("/")) return idx.paths.has(t + ".md") ? t + ".md" : null;
@@ -336,7 +336,7 @@ export function resolveTarget(target: string, idx: LinkIndex): string | null {
 
 /** The SHORTEST spelling that resolves to `dest` in `idx` — bare slug when the
     slug is unique there, the path-qualified form when it is not. */
-export function preferredTarget(dest: string, idx: LinkIndex): string {
+function preferredTarget(dest: string, idx: LinkIndex): string {
   const slug = slugOf(dest);
   const hits = idx.bySlug.get(slug);
   if (hits && hits.length === 1 && hits[0] === dest) return slug;
@@ -361,7 +361,7 @@ const INLINE_CODE = /`[^`\n]+`/g;
 const LINK_RE = /\[\[([^\]\n]+)\]\]/g;
 
 /** One `[[link]]` occurrence: its character span and the raw target. */
-export interface LinkRef {
+interface LinkRef {
   start: number;
   end: number;
   target: string;
@@ -375,7 +375,7 @@ export interface LinkRef {
  * note that documents its own link syntax in a code block must survive a rename
  * of the doc it names, byte for byte.
  */
-export function linkRefs(markdown: string): LinkRef[] {
+function linkRefs(markdown: string): LinkRef[] {
   const text = String(markdown);
   const age = ageFenceRanges(text);
   const inAge = (at: number) => age.some((r) => at >= r.start && at < r.end);
@@ -451,7 +451,7 @@ export function linkSafeTarget(target: string): boolean {
  * replacement, or null/undefined to leave the occurrence exactly as written —
  * including its whitespace, which is only ever discarded on a real rewrite.
  */
-export function rewriteLinks(
+function rewriteLinks(
   markdown: string,
   map: (target: string) => string | null | undefined
 ): { text: string; count: number } {
@@ -496,13 +496,13 @@ export function rewriteLinks(
  *   - the inverse, rename `a/foo.md` → `a/baz.md`: `[[a/foo]]` becomes
  *     `[[baz]]`, while `[[c/foo]]` still resolves and is left untouched.
  */
-export interface RewriteCandidate {
+interface RewriteCandidate {
   /** the path the doc will have AFTER the move (where the text gets written) */
   path: string;
   markdown: string;
 }
 
-export interface LinkRewrite {
+interface LinkRewrite {
   path: string;
   markdown: string;
   /** how many occurrences changed */
@@ -572,7 +572,7 @@ export const byteLength = (text: string) => Buffer.byteLength(text, "utf8");
     written back verbatim on the first edit and destroy the original byte. */
 const UTF8 = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true });
 
-export interface DiskDoc {
+interface DiskDoc {
   path: string;
   markdown: string;
   size: number;
@@ -707,7 +707,7 @@ export function isRecipient(s: unknown): s is string {
   return typeof s === "string" && /^age1[02-9ac-hj-np-z]{20,120}$/.test(s.trim());
 }
 
-export interface VaultKeys {
+interface VaultKeys {
   identity: string | null;
   recipient: string | null;
 }
@@ -857,7 +857,7 @@ export async function moveNode(vault: string, from: string, to: string): Promise
 }
 
 /** Delete a doc, or a folder and everything under it. */
-export async function removeNode(vault: string, rel: string): Promise<void> {
+async function removeNode(vault: string, rel: string): Promise<void> {
   const abs = absOf(vault, rel);
   if (!abs) throw new Error("bad-path");
   await rm(abs, { recursive: true, force: true });
@@ -944,7 +944,7 @@ export interface FileMeta {
   hasSecrets: boolean;
 }
 
-export interface FolderNode {
+interface FolderNode {
   type: "folder";
   path: string;
   name: string;
@@ -952,7 +952,7 @@ export interface FolderNode {
   children: TreeNode[];
 }
 
-export type TreeNode = FileMeta | FolderNode;
+type TreeNode = FileMeta | FolderNode;
 
 /**
  * Folders first, then files, each alphabetical — a deterministic order the

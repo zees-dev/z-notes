@@ -45,44 +45,14 @@ import {
   waitUntil,
   writeVaultFile,
   type SeedMap,
-  type TestServer,
-} from "./helpers";
+  type TestServer, git } from "./helpers";
 
 /* ------------------------------------------------------------------
    git plumbing for the fixtures (never for the source repo — every call
    takes an explicit cwd that is a temp directory we made ourselves)
    ------------------------------------------------------------------ */
 
-interface GitResult {
-  code: number;
-  stdout: string;
-  stderr: string;
-}
 
-async function git(cwd: string, ...args: string[]): Promise<GitResult> {
-  const p = Bun.spawn(["git", ...args], {
-    cwd,
-    env: {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_AUTHOR_NAME: "z-notes test",
-      GIT_AUTHOR_EMAIL: "test@z-notes.invalid",
-      GIT_COMMITTER_NAME: "z-notes test",
-      GIT_COMMITTER_EMAIL: "test@z-notes.invalid",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-    timeout: 30_000,
-  });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(p.stdout).text(),
-    new Response(p.stderr).text(),
-    p.exited,
-  ]);
-  return { code: typeof code === "number" ? code : -1, stdout, stderr };
-}
 
 async function gitOk(cwd: string, ...args: string[]): Promise<string> {
   const r = await git(cwd, ...args);

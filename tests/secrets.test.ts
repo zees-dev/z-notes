@@ -43,8 +43,7 @@ import {
   writeVaultFile,
   type ApiResult,
   type SeedMap,
-  type TestServer,
-} from "./helpers";
+  type TestServer, git, gitOk, stripComments } from "./helpers";
 
 /* ------------------------------------------------------------------
    fixed conventions of the phase (SPEC §6/§7, research §5.1)
@@ -455,36 +454,7 @@ describe("secrets — PUT /api/vault/identity validates shapes and nothing else"
    3. GIT — the two files join the phase-2 tracked set (SPEC §7)
    ============================================================ */
 
-async function git(cwd: string, ...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  const p = Bun.spawn(["git", ...args], {
-    cwd,
-    env: {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_AUTHOR_NAME: "z-notes test",
-      GIT_AUTHOR_EMAIL: "test@z-notes.invalid",
-      GIT_COMMITTER_NAME: "z-notes test",
-      GIT_COMMITTER_EMAIL: "test@z-notes.invalid",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-    timeout: 30_000,
-  });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(p.stdout).text(),
-    new Response(p.stderr).text(),
-    p.exited,
-  ]);
-  return { code: typeof code === "number" ? code : -1, stdout, stderr };
-}
 
-async function gitOk(cwd: string, ...args: string[]): Promise<string> {
-  const r = await git(cwd, ...args);
-  if (r.code !== 0) throw new Error(`git ${args.join(" ")} failed (${r.code})\n${r.stderr || r.stdout}`);
-  return r.stdout;
-}
 
 describe("secrets — identity.age and vault.pub are committed (SPEC §7)", () => {
   test("a sync after PUT /api/vault/identity commits both files", async () => {
@@ -623,10 +593,6 @@ describe("secrets — the server has no plaintext surface (SPEC §3 delta 1, §6
   });
 });
 
-/** crude but sufficient: block + line comments out, `://` left alone */
-function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
-}
 
 /** every regular file under `dir` (vault-relative path → latin1 text) */
 function vaultFiles(dir: string): Array<[string, string]> {

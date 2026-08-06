@@ -82,7 +82,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
  * bound was Bun's 128 MiB default. Refused with 413 and the limit named, the
  * same shape as the identity route.
  */
-export const MAX_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
 async function readJsonBody(req: Request): Promise<any | typeof BAD_JSON | typeof TOO_LARGE> {
   /* The body is drained BEFORE the size is judged, deliberately: answering
