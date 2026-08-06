@@ -41,20 +41,14 @@ import { parseSseFrame, sseBlocks, sseResponse } from "./sse.ts";
 import type { CommandRecord, TerminalError } from "./terminal.ts";
 import { MAX_AI_COMMANDS_PER_TURN } from "./terminal.ts";
 import type { ChangeReason } from "./watch.ts";
-import {
-  ARMOR_BEGIN,
+import { ARMOR_BEGIN,
   ARMOR_CANARY,
   AI_SECRET_PLACEHOLDER,
-  absOf,
-  exists,
   extractLinks,
   hasSecrets,
   intersectsAgeFence,
-  readDoc,
   redactForAi,
-  safePath,
-  writeDocAtomic,
-} from "./vault.ts";
+  safePath, type Vault } from "./vault.ts";
 
 /* ============================================================
    Constants
@@ -448,7 +442,7 @@ interface DocBody {
 }
 
 interface AiDeps {
-  vault: string;
+  vault: Vault;
   settings: Settings;
   index: Index;
   git: Pick<GitSync, "commitPaths">;
@@ -1276,7 +1270,7 @@ export class AI {
         files.find((f) => f.path.toLowerCase() === (want + ".md").toLowerCase());
       if (!row || seen.has(row.path)) continue;
       seen.add(row.path);
-      const disk = await readDoc(this.deps.vault, row.path);
+      const disk = await this.deps.vault.readDoc(row.path);
       if (!disk) continue;
       const { text } = clampToTokens(redactForAi(disk.markdown), LINKED_DOC_TOKEN_CAP);
       out.push(`## ${row.path}\n\n${text}\n`);
@@ -1299,7 +1293,7 @@ export class AI {
     const budget = this.cfg().budget;
     let current = "";
     if (docPath) {
-      const disk = await readDoc(this.deps.vault, docPath);
+      const disk = await this.deps.vault.readDoc(docPath);
       if (disk) {
         current = `# Current document — ${docPath}\n\n<<<DOC ${docPath}>>>\n${redactForAi(disk.markdown)}\n<<<END DOC>>>\n`;
       }
@@ -1876,7 +1870,7 @@ export class AI {
          request to write outside the vault by writing SOMEWHERE ELSE instead of
          refusing, and the model would never learn its path was wrong. */
       const path = safePath(raw);
-      if (!path || !/\.md$/i.test(path) || !absOf(this.deps.vault, path)) {
+      if (!path || !/\.md$/i.test(path) || !this.deps.vault.abs(path)) {
         return {
           ok: false,
           fail: {
@@ -1930,7 +1924,7 @@ export class AI {
     let acc = "";
     for (let i = 0; i < segs.length - 1; i++) {
       acc = acc ? acc + "/" + segs[i] : segs[i];
-      if ((await exists(this.deps.vault, acc)) === "file") return acc;
+      if ((await this.deps.vault.exists(acc)) === "file") return acc;
     }
     return null;
   }
@@ -1941,7 +1935,7 @@ export class AI {
 
     for (const e of edits) {
       // 1. path confinement (already checked at parse; re-checked at accept)
-      if (!safePath(e.path) || !absOf(this.deps.vault, e.path)) {
+      if (!safePath(e.path) || !this.deps.vault.abs(e.path)) {
         return reject({ status: "rejected", reason: "path_denied", path: e.path, message: `${e.path} escapes the vault` });
       }
       // no armor may be INTRODUCED either — a model that echoed a fence back
@@ -1957,7 +1951,7 @@ export class AI {
 
       let img = files.get(e.path) ?? null;
       if (!img) {
-        const disk = await readDoc(this.deps.vault, e.path);
+        const disk = await this.deps.vault.readDoc(e.path);
         if (e.op === "create") {
           /* `readDoc` answers null for FIVE reasons and only one of them is
              "absent": a latin-1 note, an unreadable file, a directory and a
@@ -1969,7 +1963,7 @@ export class AI {
              question goes to the same stat-based `exists()` the human create
              path uses (server/index.ts POST /api/docs), and a null read on an
              occupied path is a hard rejection, never `existed:false`. */
-          const occupant = await exists(this.deps.vault, e.path);
+          const occupant = await this.deps.vault.exists(e.path);
           if (disk || occupant) {
             return reject({ status: "rejected", reason: "exists", path: e.path, message: `${e.path} already exists — use replace or rewrite` });
           }
@@ -2151,7 +2145,7 @@ export class AI {
     }
     return files.every((f) => {
       if (!f.existed) return true; // a create; revert removes it, absent is fine
-      const abs = absOf(this.deps.vault, f.path);
+      const abs = this.deps.vault.abs(f.path);
       return !!abs && existsSync(abs);
     });
   }
@@ -2237,7 +2231,7 @@ export class AI {
       const written: FileImage[] = [];
       try {
         for (const f of applied.files) {
-          await writeDocAtomic(this.deps.vault, f.path, f.post);
+          await this.deps.vault.writeDocAtomic(f.path, f.post);
           written.push(f);
           hints.set(f.path, "proposal-accepted");
         }
@@ -2246,9 +2240,9 @@ export class AI {
         const failedAt = applied.files[written.length]?.path ?? "an unknown file";
         for (const f of written.reverse()) {
           try {
-            if (f.existed) await writeDocAtomic(this.deps.vault, f.path, f.pre);
+            if (f.existed) await this.deps.vault.writeDocAtomic(f.path, f.pre);
             else {
-              const abs = absOf(this.deps.vault, f.path);
+              const abs = this.deps.vault.abs(f.path);
               if (abs) await rm(abs, { force: true });
             }
           } catch (rollbackErr) {
@@ -2333,7 +2327,7 @@ export class AI {
          proposal wrote. Anything else and restoring the pre-image would destroy
          work this app never made. */
       for (const f of files) {
-        const disk = await readDoc(this.deps.vault, f.path);
+        const disk = await this.deps.vault.readDoc(f.path);
         /* ABSENT is not EMPTY. Reading a vanished file as "" made the guard
            answer two different wrongs: a doc the human deleted after an
            emptying `rewrite` matched `post === ""` and was RESURRECTED by an
@@ -2341,7 +2335,7 @@ export class AI {
            claiming a file that no longer exists had "changed". A create this
            proposal made is the one honest exception — the revert would remove
            it anyway, so an already-absent file is already reverted. */
-        if (!disk && (await exists(this.deps.vault, f.path)) === null) {
+        if (!disk && (await this.deps.vault.exists(f.path)) === null) {
           if (!f.existed) continue;
           return {
             status: 409,
@@ -2389,10 +2383,10 @@ export class AI {
                structural rather than merely intended: nothing in ai.ts can reach
                the trash module, exactly as nothing in it can reach `moveNode` or
                the DELETE route. The absence is the guarantee. */
-            const abs = absOf(this.deps.vault, f.path);
+            const abs = this.deps.vault.abs(f.path);
             if (abs) await rm(abs, { force: true });
           } else {
-            await writeDocAtomic(this.deps.vault, f.path, f.pre);
+            await this.deps.vault.writeDocAtomic(f.path, f.pre);
           }
           reverted.push(f);
           hints.set(f.path, "proposal-reverted");
@@ -2402,7 +2396,7 @@ export class AI {
         const failedAt = files[reverted.length]?.path ?? "an unknown file";
         for (const f of reverted.reverse()) {
           try {
-            await writeDocAtomic(this.deps.vault, f.path, f.post);
+            await this.deps.vault.writeDocAtomic(f.path, f.post);
           } catch (rollbackErr) {
             this.log(`ai: revert rollback FAILED for ${f.path} — ${String((rollbackErr as Error)?.message || rollbackErr)}`);
           }

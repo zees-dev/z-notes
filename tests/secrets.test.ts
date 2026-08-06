@@ -670,11 +670,11 @@ describe("secrets — the typage bundle is served, cached and immutable", () => 
    ============================================================ */
 describe("secrets — writeVaultKeys never destroys the only key it holds", () => {
   test("a first write leaves exactly the pair, with no temp or backup residue", async () => {
-    const { writeVaultKeys, readVaultKeys, PREV_IDENTITY } = await import("../server/vault");
+    const { Vault, PREV_IDENTITY } = await import("../server/vault");
     const vault = tempVault();
-    await writeVaultKeys(vault, wrappedIdentity, recipient);
+    await new Vault(vault).writeKeys(wrappedIdentity, recipient);
 
-    const keys = await readVaultKeys(vault);
+    const keys = await new Vault(vault).readKeys();
     expect(keys.identity).toBe(wrappedIdentity.trim());
     expect(keys.recipient).toBe(recipient);
     expect(vaultHas(vault, ".znotes/" + PREV_IDENTITY)).toBe(false);
@@ -682,9 +682,9 @@ describe("secrets — writeVaultKeys never destroys the only key it holds", () =
   }, 30000);
 
   test("a replace parks the old identity and only removes it once the new pair is whole", async () => {
-    const { writeVaultKeys, readVaultKeys, PREV_IDENTITY } = await import("../server/vault");
+    const { Vault, PREV_IDENTITY } = await import("../server/vault");
     const vault = tempVault();
-    await writeVaultKeys(vault, wrappedIdentity, recipient);
+    await new Vault(vault).writeKeys(wrappedIdentity, recipient);
 
     const other = await age.generateIdentity();
     const otherRec = await age.identityToRecipient(other);
@@ -693,9 +693,9 @@ describe("secrets — writeVaultKeys never destroys the only key it holds", () =
     w.setScryptWorkFactor(10); // shape is what this endpoint validates
     const otherWrapped = age.armor.encode(await w.encrypt(other));
 
-    await writeVaultKeys(vault, otherWrapped, otherRec);
+    await new Vault(vault).writeKeys(otherWrapped, otherRec);
 
-    const keys = await readVaultKeys(vault);
+    const keys = await new Vault(vault).readKeys();
     expect(keys.identity).toBe(otherWrapped.trim());
     expect(keys.recipient).toBe(otherRec);
     /* the pair is CONSISTENT: the recipient on disk is derivable from the
@@ -707,13 +707,13 @@ describe("secrets — writeVaultKeys never destroys the only key it holds", () =
   }, 30000);
 
   test("rewriting the SAME identity (the vault.pub repair path) parks nothing", async () => {
-    const { writeVaultKeys, readVaultKeys, PREV_IDENTITY } = await import("../server/vault");
+    const { Vault, PREV_IDENTITY } = await import("../server/vault");
     const vault = tempVault();
-    await writeVaultKeys(vault, wrappedIdentity, recipient);
+    await new Vault(vault).writeKeys(wrappedIdentity, recipient);
     /* the repair path re-declares the identity byte for byte to rebuild a lost
        vault.pub — it must not churn a backup file into the vault */
-    await writeVaultKeys(vault, wrappedIdentity, recipient);
-    const keys = await readVaultKeys(vault);
+    await new Vault(vault).writeKeys(wrappedIdentity, recipient);
+    const keys = await new Vault(vault).readKeys();
     expect(keys.identity).toBe(wrappedIdentity.trim());
     expect(keys.recipient).toBe(recipient);
     expect(vaultHas(vault, ".znotes/" + PREV_IDENTITY)).toBe(false);

@@ -16,19 +16,14 @@
 
 import { watch, type FSWatcher } from "node:fs";
 import type { Index, FileRow } from "./db.ts";
-import {
-  byteLength,
+import { byteLength,
   extractLinks,
   hasSecrets,
   hashOf,
-  readDoc,
   redact,
   revOf,
-  scanDocs,
   slugOf,
-  statDoc,
-  titleOf,
-} from "./vault.ts";
+  titleOf, type Vault } from "./vault.ts";
 
 export type ChangeReason =
   | "write"
@@ -98,7 +93,7 @@ export class Reconciler {
   private stopped = false;
 
   constructor(
-    private readonly vault: string,
+    private readonly vault: Vault,
     private readonly index: Index,
     private readonly emit: (change: DocChange) => void
   ) {}
@@ -114,7 +109,7 @@ export class Reconciler {
     if (this.watcher) return;
     try {
       // ONE recursive watcher on the root (macOS caps watched paths near 4096)
-      this.watcher = watch(this.vault, { recursive: true }, () => this.ring());
+      this.watcher = watch(this.vault.root, { recursive: true }, () => this.ring());
       this.watcher.on("error", () => {});
     } catch (err) {
       process.stderr.write(`[z-notes] fs.watch unavailable: ${String(err)}\n`);
@@ -158,7 +153,7 @@ export class Reconciler {
   }
 
   private async pass(hints?: ChangeHints): Promise<DocChange[]> {
-    const onDisk = await scanDocs(this.vault);
+    const onDisk = await this.vault.scanDocs();
     const rows = new Map(this.index.allFileMeta().map((r) => [r.path, r]));
     /* Two lists, not one: API.md § Events is normative about the ORDER of a
        `moved` pair — the old path (`removed:true` + `to`) first, THEN the new
@@ -174,12 +169,12 @@ export class Reconciler {
          The gate exists so an unchanged doc costs a stat and nothing else;
          reading before it pulled the whole corpus through JS on every pass,
          under the reconcile lock every write awaits. */
-      const st = await statDoc(this.vault, path);
+      const st = await this.vault.statDoc(path);
       if (!st) continue; // vanished between scan and stat
       // cheap gate: identical (size, mtimeMs) ⇒ nothing to hash
       if (prev && prev.size === st.size && prev.mtimeMs === st.mtimeMs && !hints?.has(path)) continue;
 
-      const doc = await readDoc(this.vault, path);
+      const doc = await this.vault.readDoc(path);
       if (!doc) continue; // vanished between stat and read
 
       const rev = revOf(doc.markdown);

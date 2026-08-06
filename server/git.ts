@@ -36,7 +36,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { CREDENTIAL_FILE_KEYS } from "./settings.ts";
 import { trashGitPaths } from "./trash.ts";
-import { scanDocs, znotesDir } from "./vault.ts";
+import type { Vault } from "./vault.ts";
 
 /* ---------- contract (docs/API.md § Sync) ---------- */
 
@@ -260,7 +260,7 @@ interface GitResult {
 /* ---------- deps (structural: keeps git.ts testable without the server) ---------- */
 
 interface GitSyncDeps {
-  vault: string;
+  vault: Vault;
   settings: {
     value<T>(path: string, fallback: T): T;
     credential(key: "git.token" | "ai.apiKey"): string | null;
@@ -301,6 +301,7 @@ interface Observation {
 
 export class GitSync {
   private readonly vault: string;
+  private readonly vaultHandle: Vault;
   /** vault path as the filesystem reports it — /var vs /private/var on macOS */
   private readonly vaultReal: string;
   private askpass: string | null = null;
@@ -326,7 +327,8 @@ export class GitSync {
   private current: SyncStatus;
 
   constructor(private readonly deps: GitSyncDeps) {
-    this.vault = resolve(deps.vault);
+    this.vault = deps.vault.root;
+    this.vaultHandle = deps.vault;
     this.vaultReal = (() => {
       try {
         return realpathSync(this.vault);
@@ -510,7 +512,7 @@ export class GitSync {
    */
   private async ensureAskpass(): Promise<string> {
     if (this.askpass && existsSync(this.askpass)) return this.askpass;
-    const dir = resolve(znotesDir(this.vault), "tmp");
+    const dir = resolve(this.vaultHandle.znotesDir, "tmp");
     await mkdir(dir, { recursive: true });
     const file = resolve(dir, "askpass.sh");
     const tmp = resolve(dir, `askpass.${process.pid}.tmp`);
@@ -1118,7 +1120,7 @@ export class GitSync {
   private async stage(unborn: boolean): Promise<{ ok: true; paths: string[] } | { ok: false; message: string }> {
     let disk: string[] = [];
     try {
-      disk = await scanDocs(this.vault);
+      disk = await this.vaultHandle.scanDocs();
     } catch (err) {
       return { ok: false, message: `cannot scan the vault: ${String((err as Error)?.message || err)}` };
     }

@@ -50,7 +50,7 @@
 
 import { dirname, resolve } from "node:path";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
-import { absOf, blockedByFile, exists, safePath, znotesDir } from "./vault.ts";
+import { safePath, znotesDir, type Vault } from "./vault.ts";
 import { TRASH_RETENTION_DEFAULT_DAYS } from "./settings.ts";
 
 /** Vault-relative, POSIX, for git pathspecs and log lines. */
@@ -195,7 +195,7 @@ function parseMeta(id: string, raw: unknown): TrashMeta | null {
    ============================================================ */
 
 interface TrashDeps {
-  vault: string;
+  vault: Vault;
   settings: { value<T>(path: string, fallback: T): T };
   log?: (line: string) => void;
 }
@@ -203,10 +203,10 @@ interface TrashDeps {
 const DEFAULT_RETENTION_DAYS = TRASH_RETENTION_DEFAULT_DAYS;
 
 export class Trash {
-  private readonly vault: string;
+  private readonly vault: Vault;
 
   constructor(private readonly deps: TrashDeps) {
-    this.vault = resolve(deps.vault);
+    this.vault = deps.vault;
   }
 
   /** Live, never cached: the setting is editable in Settings and in the file. */
@@ -232,7 +232,7 @@ export class Trash {
   /* ---------- read ---------- */
 
   private async readMeta(id: string): Promise<TrashMeta | null> {
-    const dir = trashEntryDir(this.vault, id);
+    const dir = trashEntryDir(this.vault.root, id);
     if (!dir) return null;
     try {
       return parseMeta(id, JSON.parse(await Bun.file(resolve(dir, "meta.json")).text()));
@@ -245,7 +245,7 @@ export class Trash {
   private async ids(): Promise<string[]> {
     let entries;
     try {
-      entries = await readdir(trashDir(this.vault), { withFileTypes: true });
+      entries = await readdir(trashDir(this.vault.root), { withFileTypes: true });
     } catch {
       return [];
     }
@@ -260,7 +260,7 @@ export class Trash {
   }
 
   private async decorate(meta: TrashMeta): Promise<TrashEntry> {
-    const dir = trashEntryDir(this.vault, meta.id)!;
+    const dir = trashEntryDir(this.vault.root, meta.id)!;
     const payload = resolve(dir, "files", meta.path);
     const complete = await Bun.file(payload)
       .stat()
@@ -291,8 +291,8 @@ export class Trash {
    * a folder (vault.ts blockedByFile). Null when the way is clear.
    */
   private async blocker(path: string): Promise<string | null> {
-    if (await exists(this.vault, path)) return path;
-    return blockedByFile(this.vault, path);
+    if (await this.vault.exists(path)) return path;
+    return this.vault.blockedByFile(path);
   }
 
   /** Every entry, newest deletion first — the order the panel shows them in. */
@@ -326,14 +326,14 @@ export class Trash {
    * @param files every file the move carries, vault-relative (`.md` or not)
    */
   async put(rel: string, kind: "doc" | "folder", files: string[]): Promise<TrashMeta> {
-    const src = absOf(this.vault, rel);
+    const src = this.vault.abs(rel);
     if (!src) throw new TrashError("bad-path", `${rel} is not a vault path.`, 400);
     const id = newId();
-    const dir = trashEntryDir(this.vault, id)!;
+    const dir = trashEntryDir(this.vault.root, id)!;
 
     let bytes = 0;
     for (const f of files) {
-      const abs = absOf(this.vault, f);
+      const abs = this.vault.abs(f);
       if (abs) bytes += await sizeOf(abs);
     }
 
@@ -376,7 +376,7 @@ export class Trash {
     const found = await this.entry(id);
     if (!found) throw new TrashError("not-found", `No trash entry ${id}.`, 404);
     const { meta } = found;
-    const dir = trashEntryDir(this.vault, id)!;
+    const dir = trashEntryDir(this.vault.root, id)!;
     const payload = resolve(dir, "files", meta.path);
     if (!(await Bun.file(payload).stat().then(() => true).catch(() => false))) {
       throw new TrashError(
@@ -398,7 +398,7 @@ export class Trash {
       );
     }
 
-    const dest = absOf(this.vault, meta.path);
+    const dest = this.vault.abs(meta.path);
     if (!dest) throw new TrashError("bad-path", `${meta.path} is not a vault path any more.`, 400);
     // node returns the TOPMOST directory it had to create, which is exactly the
     // scaffolding to remove again if the rename then fails
@@ -420,7 +420,7 @@ export class Trash {
    * just stopped existing, so the caller can commit the removal.
    */
   async purgeEntry(id: string): Promise<{ meta: TrashMeta | null; entryPaths: string[] }> {
-    const dir = trashEntryDir(this.vault, id);
+    const dir = trashEntryDir(this.vault.root, id);
     if (!dir) throw new TrashError("bad-id", "Malformed trash id.", 400);
     const meta = await this.readMeta(id);
     /* `meta.files` is the authority when the record is readable, but the dir is
@@ -452,7 +452,7 @@ export class Trash {
       let at: number;
       if (meta) at = Date.parse(meta.deletedAt);
       else {
-        const dir = trashEntryDir(this.vault, id)!;
+        const dir = trashEntryDir(this.vault.root, id)!;
         at = await Bun.file(resolve(dir, "meta.json"))
           .stat()
           .then((s) => s.mtimeMs)

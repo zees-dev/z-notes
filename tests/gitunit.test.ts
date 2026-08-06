@@ -17,6 +17,7 @@ import { describe, test, expect, afterAll } from "bun:test";
 import { existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { GitSync, gitMessage, sanitizeRemote } from "../server/git";
+import { Vault } from "../server/vault";
 import { dropVault, makeVault } from "./helpers";
 
 const trash: string[] = [];
@@ -102,7 +103,7 @@ describe("gitMessage", () => {
 describe("the GIT_ASKPASS helper", () => {
   function sync(vault: string): GitSync {
     return new GitSync({
-      vault,
+      vault: new Vault(vault),
       settings: { value: <T,>(_p: string, fb: T) => fb, credential: () => null },
       index: { getMeta: () => null, setMeta: () => {} },
     });
