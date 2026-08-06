@@ -39,7 +39,7 @@ import {
   saveSettings,
   waitSettings as waitForSettings,
 } from "./browser";
-import { DEFAULTS } from "../settings";
+import { DEFAULTS } from "../server/settings";
 
 const THEMES = ["modern", "minimal", "terminal"] as const;
 const SCHEMES = ["dark", "light"] as const;

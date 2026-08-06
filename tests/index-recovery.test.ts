@@ -25,7 +25,7 @@ import { describe, test, expect } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Index } from "../db";
+import { Index } from "../server/db";
 import { dropVault, startServer, waitUntil, SEED_VAULT } from "./helpers";
 
 const PAGE = 4096;

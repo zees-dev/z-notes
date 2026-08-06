@@ -41,7 +41,7 @@ import {
   type TestServer,
 } from "./helpers";
 import { startMockUpstream, reply, type MockUpstream } from "./mock-upstream";
-import { DEFAULTS, NUMBERS, BOOLEANS, META } from "../settings";
+import { DEFAULTS, NUMBERS, BOOLEANS, META } from "../server/settings";
 
 const KEY = "sk-mock-settings-0000000000006789";
 const SETTINGS_REL = ".znotes/settings.toml";

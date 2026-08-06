@@ -32,7 +32,7 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 └────────────────────────────────────────────────────┘
 ```
 
-- Backend: one entrypoint plus small modules (not one literal file) — `server.ts`, `vault.ts`, `watch.ts`, `git.ts`, `ai.ts`, `db.ts`. Dev: `bun --hot server.ts` (zero build); prod: `bun build` HTML entrypoint, optionally `--compile` single executable. ([Bun capabilities](bun-capabilities.md))
+- Backend: one entrypoint plus small modules under `server/` — `index.ts`, `vault.ts`, `watch.ts`, `git.ts`, `ai.ts`, `db.ts`. Dev: `bun --hot server/index.ts` (zero build); prod: `bun build` HTML entrypoint, optionally `--compile` single executable. ([Bun capabilities](bun-capabilities.md))
 - `Bun.serve` traps: `idleTimeout: 0` + ~20s heartbeat or SSE dies at 10s; `Bun.file` responses carry no ETag — add cache headers manually.
 - macOS `fs.watch` is a contentless doorbell (eventType always "rename"; atomic saves name only the temp file): never trust the payload — debounce 120ms, then reconcile `Bun.Glob` → `stat` → `Bun.hash` against sqlite, emit `doc-changed` on real differences only.
 - Git via `Bun.spawn` argv arrays (token never enters a shell string).

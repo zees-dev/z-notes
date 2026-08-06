@@ -224,7 +224,7 @@ describe("fence grammar — the server is never narrower than the renderer", () 
   ] as const;
 
   test("every opener the renderer treats as ```age is a secret block server-side", async () => {
-    const { hasSecrets } = await import("../vault");
+    const { hasSecrets } = await import("../server/vault");
     for (const [prefix, label] of PREFIXES) {
       const line = prefix + "```age";
       /* precondition: this really is a fence to the renderer */
@@ -237,7 +237,7 @@ describe("fence grammar — the server is never narrower than the renderer", () 
   });
 
   test("…and its armor is blanked by redact(), so nothing reaches sqlite or FTS", async () => {
-    const { redact } = await import("../vault");
+    const { redact } = await import("../server/vault");
     for (const [prefix, label] of PREFIXES) {
       const md =
         "# doc\n\nBEFOREMARKER\n\n" +
@@ -292,7 +292,7 @@ describe("fence grammar — the server is never narrower than the renderer", () 
     RE_FENCE.test(line) && line.replace(RE_FENCE, "").trim() === "age";
 
   test("the info string is parsed as the renderer parses it, not pattern-matched", async () => {
-    const { hasSecrets, redact, redactForAi, ageFenceRanges, intersectsAgeFence } = await import("../vault");
+    const { hasSecrets, redact, redactForAi, ageFenceRanges, intersectsAgeFence } = await import("../server/vault");
 
     for (const [opener, label, rendered] of OPENERS) {
       const md = "# doc\n\nBEFOREMARKER\n\n" + opener + "\n" + ARMOR_HEAD + "\n" + ARMOR_B64_1 + "\n" + ARMOR_TAIL + "\n```\n\nAFTERMARKER\n";
@@ -343,7 +343,7 @@ describe("fence grammar — the server is never narrower than the renderer", () 
   ];
 
   test("a close the renderer does not honour never ends the server's redaction", async () => {
-    const { redact, redactForAi, ageFenceRanges } = await import("../vault");
+    const { redact, redactForAi, ageFenceRanges } = await import("../server/vault");
     const LEAKED = ["ZZZZLEAKEDLINE", "QQQQALSOLEAKED"];
 
     for (const [closer, label] of CLOSERS) {
@@ -390,7 +390,7 @@ describe("fence grammar — the server is never narrower than the renderer", () 
      after it — and its close is blockquoted too. Refusing `>` there would
      blank the rest of the file. */
   test("a blockquoted fence — invisible to the renderer — still closes on its blockquoted fence", async () => {
-    const { redact } = await import("../vault");
+    const { redact } = await import("../server/vault");
     const md =
       "# doc\n\n> ```age\n> " + ARMOR_HEAD + "\n> " + ARMOR_B64_1 + "\n> " + ARMOR_TAIL + "\n> ```\n\nQUOTEDTAILMARKER\n";
     expect(`the renderer opens a fence there: ${RE_FENCE.test("> ```age")}`).toBe(

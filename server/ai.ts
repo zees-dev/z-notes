@@ -456,7 +456,7 @@ export interface AiDeps {
     lock<T>(fn: () => Promise<T>): Promise<T>;
     reconcileHeld(hints?: Map<string, ChangeReason>): Promise<unknown>;
   };
-  /** server.ts's docBody — one definition of the doc response shape. */
+  /** server/index.ts's docBody — one definition of the doc response shape. */
   docBody(path: string): Promise<DocBody | null>;
   contextWindow: number;
   /**
@@ -480,7 +480,7 @@ export interface AiDeps {
   log?(line: string): void;
   /**
    * Fired whenever the DERIVED endpoint status changes (a probe finished, a
-   * relay call succeeded or failed, a rung was taken). server.ts broadcasts it
+   * relay call succeeded or failed, a rung was taken). server/index.ts broadcasts it
    * on /events so the statusbar tells the truth without polling.
    */
   onStatus?(status: AiStatus): void;
@@ -968,7 +968,7 @@ export class AI {
      Capability probe (research §7, "run on settings save")
      ============================================================ */
 
-  /** Called by server.ts after PUT /api/settings when the AI block changed. */
+  /** Called by server/index.ts after PUT /api/settings when the AI block changed. */
   onSettingsSaved(): Promise<unknown> {
     // a new endpoint/model deserves a clean slate: keeping the old ladder would
     // permanently cripple a perfectly capable endpoint the user just configured
@@ -984,7 +984,7 @@ export class AI {
   }
 
   /**
-   * Called by server.ts after PUT /api/settings when `ai.effort` itself changed.
+   * Called by server/index.ts after PUT /api/settings when `ai.effort` itself changed.
    *
    * Re-picking an effort in Settings is a DIRECT instruction about the value the
    * ladder walked down from, so it has to undo that walk — otherwise Settings ›
@@ -1005,7 +1005,7 @@ export class AI {
   }
 
   /**
-   * Probe at boot (server.ts), NOT awaited.
+   * Probe at boot (server/index.ts), NOT awaited.
    *
    * Without this the shipped default endpoint was never verified at all: the
    * probe only ran from PUT /api/settings, and only when `ai.baseUrl`/`ai.model`
@@ -1998,7 +1998,7 @@ export class AI {
              as `existed:false`, revert then `rm`ed the file instead of
              restoring it. SPEC §8 gives the AI no delete. So the occupancy
              question goes to the same stat-based `exists()` the human create
-             path uses (server.ts POST /api/docs), and a null read on an
+             path uses (server/index.ts POST /api/docs), and a null read on an
              occupied path is a hard rejection, never `existed:false`. */
           const occupant = await exists(this.deps.vault, e.path);
           if (disk || occupant) {
@@ -2009,7 +2009,7 @@ export class AI {
              not a create the disk can honour: mkdir -p throws ENOTDIR. Caught
              here it is a tool result the model can retry against (research §4.4
              step 6); caught at accept it was a 500 on a proposal the UI had
-             already offered an Accept button for. server.ts's own POST /api/docs
+             already offered an Accept button for. server/index.ts's own POST /api/docs
              guards exactly this (`blockedBy`). */
           const blocker = await this.blockingFile(e.path);
           if (blocker) {

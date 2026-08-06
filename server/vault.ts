@@ -291,7 +291,7 @@ export function extractLinks(markdown: string): string[] {
    them" is the one behaviour a file-backed vault must never have.
 
    Everything below is PURE — it takes a doc-path list and text, and returns
-   text. The disk lives in server.ts; that separation is what makes the
+   text. The disk lives in server/index.ts; that separation is what makes the
    collision algorithm testable without a vault.
    ============================================================ */
 

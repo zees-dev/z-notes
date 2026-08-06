@@ -285,7 +285,7 @@ function parseCreate(input, mode, parent) {
   if (!raw) return no("Type a name.");
   if (raw.includes("\\")) return no('A path uses "/" — "\\" is not a separator here.');
   if (raw.includes("\0")) return no("A name cannot contain a null byte.");
-  /* mirror of the server's move guard (server.ts linkSafeTarget): a name
+  /* mirror of the server's move guard (server/index.ts linkSafeTarget): a name
      carrying "]" or a line break cannot survive the [[link]] a later rename
      would splice it into, and the damage lands in OTHER people's docs */
   if (/[\]\r\n]/.test(raw)) return no('A name cannot contain "]" — a [[link]] pointing at it would not survive.');

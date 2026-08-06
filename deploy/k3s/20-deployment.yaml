@@ -48,7 +48,7 @@ spec:
       labels:
         app.kubernetes.io/name: z-notes
     spec:
-      # The process exits within milliseconds of SIGTERM: server.ts's
+      # The process exits within milliseconds of SIGTERM: server/index.ts's
       # shutdown() closes every SSE controller, stops the reconciler, calls
       # gitSync.stop() — which SIGKILLs every live git child so a push can
       # never outlive the pod and strand .git/index.lock — closes the sqlite
@@ -89,7 +89,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            # Nothing writes to the image filesystem: server.ts only ever
+            # Nothing writes to the image filesystem: server/index.ts only ever
             # writes under $ZNOTES_VAULT, and the /vendor/age.js bundle is built
             # by Bun.build into MEMORY at boot and never hits disk. /tmp is an
             # emptyDir below for anything in bun or git that wants scratch.
@@ -150,7 +150,7 @@ spec:
               mountPath: /tmp
 
           # ---- probes: all three point at GET /healthz, which touches no
-          # disk, no sqlite and no git (see the route comment in server.ts) ----
+          # disk, no sqlite and no git (see the route comment in server/index.ts) ----
 
           # Bun.serve is only called AFTER the boot-time full reconcile, the
           # vendor bundle build and the first git observation have awaited — so
