@@ -37,7 +37,7 @@ import { rm } from "node:fs/promises";
 import type { Index, ProposalRow } from "./db.ts";
 import type { GitSync } from "./git.ts";
 import type { Settings } from "./settings.ts";
-import { sseResponse } from "./sse.ts";
+import { parseSseFrame, sseBlocks, sseResponse } from "./sse.ts";
 import type { CommandRecord, TerminalError } from "./terminal.ts";
 import { MAX_AI_COMMANDS_PER_TURN } from "./terminal.ts";
 import type { ChangeReason } from "./watch.ts";
@@ -557,42 +557,11 @@ interface RawEvent {
   data: string;
 }
 
-/** Split an upstream SSE body into events. Never assumes chunk boundaries. */
 async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<RawEvent> {
-  const dec = new TextDecoder();
-  let buf = "";
-  for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
-    buf += dec.decode(chunk, { stream: true });
-    for (;;) {
-      const sep = /\r?\n\r?\n/.exec(buf);
-      if (!sep) break;
-      const raw = buf.slice(0, sep.index);
-      buf = buf.slice(sep.index + sep[0].length);
-      const ev = parseFrame(raw);
-      if (ev) yield ev;
-    }
-  }
-  buf += dec.decode();
-  if (buf.trim()) {
-    const ev = parseFrame(buf);
+  for await (const block of sseBlocks(body)) {
+    const ev = parseSseFrame(block);
     if (ev) yield ev;
   }
-}
-
-function parseFrame(raw: string): RawEvent | null {
-  let event = "message";
-  const data: string[] = [];
-  for (const line of raw.split(/\r?\n/)) {
-    if (!line || line.startsWith(":")) continue;
-    const i = line.indexOf(":");
-    const field = i < 0 ? line : line.slice(0, i);
-    let value = i < 0 ? "" : line.slice(i + 1);
-    if (value.startsWith(" ")) value = value.slice(1);
-    if (field === "event") event = value;
-    else if (field === "data") data.push(value);
-  }
-  if (!data.length) return null;
-  return { event, data: data.join("\n") };
 }
 
 /**

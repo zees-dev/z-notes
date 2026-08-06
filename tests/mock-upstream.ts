@@ -31,6 +31,7 @@
    ============================================================ */
 
 import type { Server } from "bun";
+import { parseSseFrame } from "../server/sse";
 import { sleep, type TestServer } from "./helpers";
 
 /* ------------------------------------------------------------------
@@ -1068,25 +1069,13 @@ export class AiStream {
 }
 
 function parseFrame(block: string): SSEEvent | null {
-  const lines = block.split(/\r?\n/);
-  let event = "message";
-  const dataLines: string[] = [];
-  for (const line of lines) {
-    if (!line || line.startsWith(":")) continue;
-    const i = line.indexOf(":");
-    const field = i < 0 ? line : line.slice(0, i);
-    let value = i < 0 ? "" : line.slice(i + 1);
-    if (value.startsWith(" ")) value = value.slice(1);
-    if (field === "event") event = value;
-    else if (field === "data") dataLines.push(value);
-  }
-  if (!dataLines.length) return null;
-  const rawData = dataLines.join("\n");
-  let data: any = rawData;
+  const f = parseSseFrame(block);
+  if (!f) return null;
+  let data: any = f.data;
   try {
-    data = JSON.parse(rawData);
+    data = JSON.parse(f.data);
   } catch {}
-  return { event, data, raw: block, at: Date.now() };
+  return { event: f.event, data, raw: block, at: Date.now() };
 }
 
 /** open a turn, wait for it to end, return the stream */
