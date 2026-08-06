@@ -4,8 +4,12 @@
    The browser never talks to a model endpoint. It POSTs to same-origin
    /api/ai/* and gets back a NORMALIZED event stream; everything upstream —
    the API key, the wire protocol, the capability probe, the degradation
-   ladder — lives here and is invisible to the frontend
-   (research/ai-protocol.md §3.2).
+   ladder — lives server-side and is invisible to the frontend
+   (research/ai-protocol.md §3.2). This module owns the relay itself: turn
+   orchestration, context assembly and the leak guard, sessions, the two wire
+   dialects, and the proposal stack. Two seams are split out beside it:
+   ai-edits.ts (the pure edit engine) and ai-endpoint.ts (endpoint health —
+   config, probe, ladder, status).
 
    Four hard rules, in the order they matter:
 
@@ -30,10 +34,18 @@
    any reasoning effort but `none` there — and this app needs both (research §2).
    ============================================================ */
 
-import { structuredPatch } from "diff";
 import { encode } from "gpt-tokenizer/encoding/o200k_base";
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { OPS,
+  applyEditToText,
+  buildDiff,
+  parseEdits, type ApplyFail,
+  type ApplyOk,
+  type EditSpec,
+  type FileImage,
+  type Rejection } from "./ai-edits.ts";
+import { AiEndpoint, LADDER, RUNG_LABEL, UNRECOGNIZED, type AiStatus } from "./ai-endpoint.ts";
 import type { type AiIndex, ProposalRow } from "./db.ts";
 import type { GitSync } from "./git.ts";
 import type { Settings } from "./settings.ts";
@@ -46,7 +58,6 @@ import { ARMOR_BEGIN,
   AI_SECRET_PLACEHOLDER,
   extractLinks,
   hasSecrets,
-  intersectsAgeFence,
   redactForAi,
   safePath, type Vault } from "./vault.ts";
 
@@ -62,15 +73,11 @@ export { ARMOR_CANARY };
 /** What a credential looks like once it has been taken out of an error body. */
 const REDACTED_SECRET = "«redacted»";
 
-const MAX_OUTPUT_TOKENS = 32_000;
-const DEFAULT_CONTEXT_BUDGET = 200_000;
 /** Per-doc cap for depth-1 linked docs — the current doc is never capped. */
 const LINKED_DOC_TOKEN_CAP = 1_500;
 const MAX_TOOL_RETRIES = 2;
-const MAX_DIFF_LINES = 300;
 /** Upstream connect/read budget. A model turn can legitimately be slow. */
 const UPSTREAM_TIMEOUT_MS = 300_000;
-const PROBE_TIMEOUT_MS = 12_000;
 
 /**
  * SPEC §8 restricts the ops to four: no `delete_doc`, no rename. The rest of
@@ -152,8 +159,6 @@ const RUN_COMMAND_TOOL = {
     },
   },
 } as const;
-
-const OPS = new Set(["replace", "insert_after", "create", "rewrite"]);
 
 /* Appended to INSTRUCTIONS only when the terminal is available — an assistant
    that has no terminal must not be told about one, or it will offer to use it. */
@@ -243,174 +248,13 @@ function clampToTokens(text: string, tokens: number): { text: string; truncated:
 }
 
 /* ============================================================
-   Anchor matching (research §4.4 step 3)
-
-   Three passes, widening: exact → line endings normalized → per-line TRAILING
-   whitespace normalized. Leading indentation is NEVER normalized: it is
-   semantic in markdown (list nesting, fenced-code indentation), and a fuzzy
-   match that lands on a line with different indentation than the model saw is
-   how you silently corrupt a document.
-
-   Every pass reports matches in ORIGINAL coordinates, via an index map built
-   alongside the normalized string.
-   ============================================================ */
-
-interface Normalized {
-  text: string;
-  /** map[i] = offset in the original of normalized char i; map[len] = orig len */
-  map: number[];
-}
-
-function normalizeEol(src: string): Normalized {
-  let text = "";
-  const map: number[] = [];
-  for (let i = 0; i < src.length; i++) {
-    if (src[i] === "\r" && src[i + 1] === "\n") {
-      map.push(i);
-      text += "\n";
-      i++;
-      continue;
-    }
-    map.push(i);
-    text += src[i];
-  }
-  map.push(src.length);
-  return { text, map };
-}
-
-function normalizeTrailingWs(src: string): Normalized {
-  const eol = normalizeEol(src);
-  let text = "";
-  const map: number[] = [];
-  const s = eol.text;
-  let run = 0; // pending trailing-whitespace run, not yet emitted
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (c === " " || c === "\t") {
-      run++;
-      continue;
-    }
-    if (c === "\n") {
-      run = 0; // the run was trailing: drop it
-      map.push(eol.map[i]);
-      text += "\n";
-      continue;
-    }
-    // the run was interior whitespace after all — emit it
-    for (let k = run; k > 0; k--) {
-      map.push(eol.map[i - k]);
-      text += s[i - k];
-    }
-    run = 0;
-    map.push(eol.map[i]);
-    text += c;
-  }
-  map.push(src.length);
-  return { text, map };
-}
-
-const needleEol = (s: string) => s.replace(/\r\n/g, "\n");
-const needleTrailingWs = (s: string) => needleEol(s).replace(/[ \t]+(?=\n)/g, "").replace(/[ \t]+$/, "");
-
-interface AnchorMatch {
-  start: number;
-  end: number;
-  pass: 1 | 2 | 3;
-}
-
-/**
- * All occurrences of `needle` in `hay`, in original coordinates, using the
- * first pass that finds any. Overlapping occurrences are counted separately —
- * ambiguity detection must be pessimistic.
- */
-function findAnchor(hay: string, needle: string): { matches: AnchorMatch[]; pass: 1 | 2 | 3 } {
-  if (!needle) return { matches: [], pass: 1 };
-
-  const scan = (h: string, n: string): Array<[number, number]> => {
-    const out: Array<[number, number]> = [];
-    if (!n) return out;
-    let from = 0;
-    for (;;) {
-      const at = h.indexOf(n, from);
-      if (at < 0) break;
-      out.push([at, at + n.length]);
-      from = at + 1; // overlapping: two near-identical anchors must read as 2
-      if (out.length > 8) break;
-    }
-    return out;
-  };
-
-  const exact = scan(hay, needle);
-  if (exact.length) return { matches: exact.map(([s, e]) => ({ start: s, end: e, pass: 1 as const })), pass: 1 };
-
-  const p2 = normalizeEol(hay);
-  const m2 = scan(p2.text, needleEol(needle));
-  if (m2.length) {
-    return { matches: m2.map(([s, e]) => ({ start: p2.map[s], end: p2.map[e], pass: 2 as const })), pass: 2 };
-  }
-
-  const p3 = normalizeTrailingWs(hay);
-  const m3 = scan(p3.text, needleTrailingWs(needle));
-  if (m3.length) {
-    return { matches: m3.map(([s, e]) => ({ start: p3.map[s], end: p3.map[e], pass: 3 as const })), pass: 3 };
-  }
-  return { matches: [], pass: 3 };
-}
-
-/** Which line ending dominates `sample`, falling back to `doc`, else LF. */
-function dominantEol(sample: string, doc: string): "\r\n" | "\n" {
-  const pick = (s: string): "\r\n" | "\n" | null => {
-    const crlf = (s.match(/\r\n/g) || []).length;
-    const lf = (s.match(/\n/g) || []).length - crlf;
-    if (!crlf && !lf) return null;
-    return crlf > lf ? "\r\n" : "\n";
-  };
-  return pick(sample) ?? pick(doc) ?? "\n";
-}
-
-/** Re-encode `s` to `eol`. LF is the identity case — CR is only ever added. */
-const toEol = (s: string, eol: "\r\n" | "\n") =>
-  eol === "\r\n" ? s.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n") : s;
-
-/* ============================================================
    Proposal shapes
+
+   Anchor matching, EditSpec/FileImage, edit application and diffs live in
+   ai-edits.ts — the pure edit engine. This module keeps the orchestration
+   around it (vault reads, occupancy checks, retries) and the UI-facing
+   proposal record below.
    ============================================================ */
-
-/** The UI-facing edit list — ALSO the re-apply spec used by accept. */
-interface EditSpec {
-  op: "replace" | "insert_after" | "create" | "rewrite";
-  path: string;
-  /** the `find` anchor; null for create/rewrite */
-  anchor: string | null;
-  /** the replacement / inserted / new body text */
-  text: string;
-  note: string | null;
-}
-
-interface FileImage {
-  path: string;
-  pre: string;
-  post: string;
-  /** false ⇒ the proposal CREATED this doc; reverting removes it again */
-  existed: boolean;
-}
-
-interface Rejection {
-  status: "rejected";
-  reason: string;
-  path?: string;
-  occurrences?: number;
-  message: string;
-}
-
-interface ApplyOk {
-  ok: true;
-  files: FileImage[];
-}
-interface ApplyFail {
-  ok: false;
-  fail: Rejection;
-}
 
 interface ProposalOut {
   id: string;
@@ -481,48 +325,10 @@ interface AiDeps {
 }
 
 /* ============================================================
-   Endpoint status (statusbar + settings)
-
-   ONE derivation, server-side, so the settings panel and the statusbar can
-   never disagree — and so "reachable" always means an actual request that
-   actually happened, never a hardcoded optimism. Two independent real signals
-   feed it and the FRESHER one wins:
-
-     - `ai.probe`    — the capability probe (research §7): runs at boot and on
-                       every AI settings save, and on demand from the statusbar.
-     - `ai.lastCall` — the outcome of the last real relay turn. A probe that
-                       succeeded ten minutes ago must not keep claiming "ok"
-                       after the endpoint died under a live turn, and vice
-                       versa: a turn that just worked outranks a stale failure.
+   Endpoint status, capability probe and the degradation ladder live in
+   ai-endpoint.ts (AiStatus, LADDER, RUNG_LABEL, UNRECOGNIZED); the AI
+   class below keeps thin delegators so the route surface is unchanged.
    ============================================================ */
-
-type AiState = "ok" | "degraded" | "unreachable" | "unconfigured" | "unknown";
-
-interface AiStatus {
-  state: AiState;
-  /** the configured model, verbatim — never a guess */
-  model: string;
-  /** the effort ACTUALLY in use, i.e. after any effort rung */
-  effort: string;
-  /** one human sentence for the tooltip */
-  message: string;
-  /** ISO of the signal this state came from, or null when there is none */
-  checkedAt: string | null;
-  /** which signal decided it */
-  source: "probe" | "call" | "config";
-  configured: boolean;
-  /* Deliberately NOT named `degraded`: `meta.ai.degraded` is the one place the
-     API contract publishes the rung list, and a second key with the same name
-     nested inside it would make "did anything degrade?" ambiguous to read. */
-  downgrades: Array<{ id: Rung; message: string }>;
-}
-
-interface LastCall {
-  ok: boolean;
-  /** AiError code, or null on success */
-  code: string | null;
-  at: string;
-}
 
 /* ============================================================
    Normalized app events (research §3.2)
@@ -599,70 +405,6 @@ async function* ordered(frames: AsyncGenerator<RawEvent>): AsyncGenerator<{ type
   for (const k of [...pending.keys()].sort((a, b) => a - b)) yield pending.get(k)!;
 }
 
-/* ============================================================
-   Degradation ladder (research §7.4)
-   ============================================================ */
-
-/** Ordered rungs. Each is permanent once taken, and surfaced in settings meta. */
-const LADDER = [
-  "reasoning.summary",
-  "store",
-  "parallel_tool_calls",
-  "max_output_tokens",
-  "effort",
-  "reasoning",
-  "chat-completions",
-] as const;
-type Rung = (typeof LADDER)[number];
-
-const RUNG_LABEL: Record<Rung, string> = {
-  "reasoning.summary": "reasoning summaries are off — no “thinking” affordance",
-  store: "the endpoint rejected store:false",
-  parallel_tool_calls: "the endpoint rejected parallel_tool_calls",
-  max_output_tokens: "using max_tokens instead of max_output_tokens",
-  effort: "reasoning effort was downgraded",
-  reasoning: "reasoning is off entirely",
-  "chat-completions": "fell back to /chat/completions — reasoning is OFF for tool calls",
-};
-
-const EFFORT_ORDER = ["none", "low", "medium", "high", "xhigh", "max"];
-const downgradeEffort = (e: string) => {
-  const i = EFFORT_ORDER.indexOf(e);
-  return i > 0 ? EFFORT_ORDER[i - 1] : "low";
-};
-/** `low` (or lower) is as far as the effort rung goes — below it the next rung
-    drops `reasoning` entirely, so there is nothing left to downgrade. */
-const atEffortFloor = (e: string) => EFFORT_ORDER.indexOf(e) <= 1;
-
-/* `invalid_request_error` is deliberately NOT here. It is the `type` on nearly
-   every OpenAI-family 400 — context-length overflow, a bad model name, a
-   malformed input — not just an unknown-parameter rejection, and treating it as
-   one made a single ordinary 400 walk the ENTIRE ladder in one turn (7 upstream
-   POSTs re-sending the same oversized context) and strip the app of /responses
-   and of reasoning permanently, since rungs are only cleared by a settings
-   save. Research §7.4: "do not silently degrade an app whose whole premise is a
-   pluggable endpoint." Match on evidence that a PARAMETER was refused. */
-const UNRECOGNIZED = /unrecognized|unsupported|unknown (?:field|param|argument)|not supported|unexpected keyword|extra fields|additional propert/i;
-
-/** Fixed, upstream-byte-free classification of a probe response (finding: the
-    probe fires the credential at an arbitrary `ai.baseUrl` and used to echo the
-    first 200 bytes of whatever answered back through `meta.ai.probe.error`,
-    turning a misconfiguration into a general-purpose read oracle). */
-const classifyProbe = (status: number): string =>
-  status === 401 || status === 403
-    ? "the endpoint rejected the API key"
-    : status === 404 || status === 405
-      ? "the endpoint has no such route"
-      : status === 429
-        ? "the endpoint is rate-limiting"
-        : status >= 500
-          ? "the endpoint reported a server error"
-          : status === 400
-            ? "the endpoint refused the request shape"
-            : "the endpoint refused the request";
-
-const UNREACHABLE_PROBE = "the endpoint could not be reached";
-
 /**
  * Identity of one content slot in the output, for de-duplicating the three
  * different `.done` payloads that can each carry the SAME text:
@@ -686,9 +428,17 @@ const slotKey = (outputIndex: unknown, contentIndex: unknown) =>
    ============================================================ */
 
 export class AI {
-  private probing: Promise<unknown> | null = null;
+  /** Endpoint health — config, probe, ladder, status (ai-endpoint.ts). */
+  private readonly endpoint: AiEndpoint;
 
   constructor(private readonly deps: AiDeps) {
+    this.endpoint = new AiEndpoint({
+      settings: deps.settings,
+      meta: deps.index,
+      scrub: (t) => this.scrub(t),
+      log: deps.log ? (l) => this.deps.log!(l) : undefined,
+      onStatus: deps.onStatus ? (s) => this.deps.onStatus!(s) : undefined,
+    });
     deps.settings.setMetaProvider(() => ({ ai: this.metaAi() }));
   }
 
@@ -696,407 +446,48 @@ export class AI {
     this.deps.log?.(line);
   }
 
-  /* ---------------- settings-derived ---------------- */
+  /* ---------------- endpoint health — thin delegators ----------------
 
-  private cfg() {
-    const s = this.deps.settings;
-    const baseUrl = String(s.value("ai.baseUrl", "")).trim().replace(/\/+$/, "");
-    return {
-      baseUrl,
-      apiKey: s.credential("ai.apiKey") || "",
-      model: String(s.value("ai.model", "gpt-5.6-sol")),
-      effort: String(s.value("ai.effort", "high")),
-      maxOutputTokens: Number(s.value("ai.maxOutputTokens", MAX_OUTPUT_TOKENS)) || MAX_OUTPUT_TOKENS,
-      budget: Number(s.value("ai.contextBudgetTokens", DEFAULT_CONTEXT_BUDGET)) || DEFAULT_CONTEXT_BUDGET,
-    };
-  }
-
-  /* ---------------- degradation state ---------------- */
-
-  private degraded(): Rung[] {
-    try {
-      const raw = JSON.parse(this.deps.index.getMeta("ai.degraded") || "[]");
-      return Array.isArray(raw) ? raw.filter((r): r is Rung => (LADDER as readonly string[]).includes(r)) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private setDegraded(rungs: Rung[]) {
-    this.deps.index.setMeta("ai.degraded", JSON.stringify([...new Set(rungs)]));
-    // a rung IS a status change — an app whose premise is a pluggable endpoint
-    // must never degrade without the statusbar saying so (research §7.4)
-    this.announce();
-  }
-
-  /** How many levels the configured effort has been walked down so far. */
-  private effortSteps(): number {
-    const n = Number(this.deps.index.getMeta("ai.effortSteps") || "0");
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
-  }
-
-  /** Take the next rung; false when the ladder is exhausted. */
-  private stepDown(): Rung | null {
-    const have = this.degraded();
-    const next = LADDER.find((r) => !have.includes(r));
-    if (!next) return null;
-
-    /* `effort` is REPEATABLE. Research §7.4 spells the descent out as
-       max → xhigh → high → drop `reasoning`, but a single-shot rung meant a
-       gateway that supports only none|low|medium|high (CLIProxyAPI — the
-       shipped default base URL) went max → xhigh → reasoning-off, never trying
-       `high`, the one value it accepts. Walk the scale one level per 400 and
-       only record the rung — i.e. hand the ladder on to `reasoning` — once the
-       scale has bottomed out. */
-    if (next === "effort") {
-      const before = this.effortInUse();
-      if (!atEffortFloor(before)) {
-        this.deps.index.setMeta("ai.effortSteps", String(this.effortSteps() + 1));
-        const after = this.effortInUse();
-        if (atEffortFloor(after)) this.setDegraded([...have, "effort"]);
-        this.log(`ai: degraded — effort ${before} → ${after}`);
-        this.announce(); // the effort walk is not always a rung, but always a change
-        return "effort";
-      }
-      this.setDegraded([...have, "effort"]); // already at the floor
-      return this.stepDown();
-    }
-
-    this.setDegraded([...have, next]);
-    this.log(`ai: degraded — ${next} (${RUNG_LABEL[next]})`);
-    return next;
-  }
-
-  /**
-   * Jump straight to one rung, skipping the ones above it. An endpoint that has
-   * no `/responses` at all (404/405) has not rejected `reasoning.summary` or
-   * `store` — recording those on the way down would be a lie about what the
-   * endpoint refused, so only the rung that actually applies is stored.
-   */
-  private forceRung(rung: Rung): boolean {
-    const have = this.degraded();
-    if (have.includes(rung)) return false;
-    this.setDegraded([...have, rung]);
-    this.log(`ai: degraded — ${rung} (${RUNG_LABEL[rung]})`);
-    return true;
-  }
+     The logic lives in AiEndpoint; these keep the public surface
+     server/index.ts routes against (status/metaAi/probe/announce/
+     onSettingsSaved/onEffortChanged/probeAtBoot) unchanged. */
 
   /** Server-declared AI capability for GET /api/settings `meta` (API.md). */
   metaAi() {
-    const rungs = this.degraded();
+    const { budget, maxOutputTokens } = this.endpoint.cfg();
+    const rungs = this.endpoint.degraded();
     return {
-      probe: this.probeRecord(),
+      probe: this.endpoint.probeRecord(),
       degraded: rungs.map((id) => ({ id, message: RUNG_LABEL[id] })),
-      contextBudgetTokens: this.cfg().budget,
-      maxOutputTokens: this.cfg().maxOutputTokens,
+      contextBudgetTokens: budget,
+      maxOutputTokens,
       ops: [...OPS],
       status: this.status(),
     };
   }
 
-  /* ============================================================
-     Status — see the AiStatus comment above
-     ============================================================ */
-
-  private probeRecord(): any {
-    try {
-      return JSON.parse(this.deps.index.getMeta("ai.probe") || "null");
-    } catch {
-      return null;
-    }
-  }
-
-  private lastCall(): LastCall | null {
-    try {
-      const raw = JSON.parse(this.deps.index.getMeta("ai.lastCall") || "null");
-      return raw && typeof raw.at === "string" ? (raw as LastCall) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Record how a real relay call actually ended. This is the signal that keeps
-   * the statusbar honest between probes: the probe is a snapshot, a turn is the
-   * thing the user is actually waiting on.
-   */
-  private noteCall(ok: boolean, code: string | null) {
-    const prev = this.lastCall();
-    this.deps.index.setMeta("ai.lastCall", JSON.stringify({ ok, code, at: new Date().toISOString() } satisfies LastCall));
-    // only announce when the OUTCOME flipped — a working endpoint must not emit
-    // one broadcast per turn forever
-    if (!prev || prev.ok !== ok || prev.code !== code) this.announce();
-  }
-
-  /** Derive the one status both the settings panel and the statusbar render. */
   status(): AiStatus {
-    const { baseUrl, apiKey, model } = this.cfg();
-    const rungs = this.degraded();
-    const downgrades = rungs.map((id) => ({ id, message: RUNG_LABEL[id] }));
-    const effort = this.effortInUse();
-    const configured = !!(baseUrl && apiKey);
-    const base = { model, effort, configured, downgrades };
-
-    if (!configured) {
-      return {
-        ...base,
-        state: "unconfigured",
-        message: !baseUrl
-          ? "No AI base URL is configured — set one under Settings → AI."
-          : "No AI API key is configured — set one under Settings → AI.",
-        checkedAt: null,
-        source: "config",
-      };
-    }
-
-    const probe = this.probeRecord();
-    const call = this.lastCall();
-    /* A probe recorded against a DIFFERENT base URL or model is not evidence
-       about the one configured now — the user may have just retyped it. */
-    const probeFresh = probe && probe.probedAt && probe.baseUrl === baseUrl && probe.model === model;
-    const probeAt = probeFresh ? String(probe.probedAt) : null;
-    const callAt = call ? call.at : null;
-    const newest: "probe" | "call" | null =
-      probeAt && callAt ? (callAt >= probeAt ? "call" : "probe") : probeAt ? "probe" : callAt ? "call" : null;
-
-    if (!newest) {
-      return { ...base, state: "unknown", message: "The endpoint has not been checked yet.", checkedAt: null, source: "config" };
-    }
-
-    if (newest === "call") {
-      if (!call!.ok) {
-        return {
-          ...base,
-          state: "unreachable",
-          message: `The last request to ${baseUrl} failed (${call!.code || "error"}).`,
-          checkedAt: call!.at,
-          source: "call",
-        };
-      }
-      return {
-        ...base,
-        state: downgrades.length ? "degraded" : "ok",
-        message: downgrades.length
-          ? `Working, but downgraded — ${downgrades.map((d) => d.message).join("; ")}.`
-          : `${model} · ${effort} — last request to ${baseUrl} succeeded.`,
-        checkedAt: call!.at,
-        source: "call",
-      };
-    }
-
-    const reachable = !!probe.responses || !!probe.toolsWithReasoning;
-    if (!reachable) {
-      return {
-        ...base,
-        state: "unreachable",
-        message: String(probe.error || "The endpoint could not be reached."),
-        checkedAt: probeAt,
-        source: "probe",
-      };
-    }
-    /* Reachable but the capability this app is built on is missing: that is a
-       real downgrade even before the ladder has had to fire. */
-    if (!probe.toolsWithReasoning || downgrades.length) {
-      const why = downgrades.length
-        ? downgrades.map((d) => d.message).join("; ")
-        : "the endpoint would not take tools together with reasoning";
-      return { ...base, state: "degraded", message: `Working, but downgraded — ${why}.`, checkedAt: probeAt, source: "probe" };
-    }
-    return {
-      ...base,
-      state: "ok",
-      message: `${model} · ${effort} — ${baseUrl} answered /responses with tools and reasoning.`,
-      checkedAt: probeAt,
-      source: "probe",
-    };
+    return this.endpoint.status();
   }
 
-  /** Push the derived status out, but only when it actually changed. */
-  private lastAnnounced = "";
   announce(force = false) {
-    if (!this.deps.onStatus) return;
-    let s: AiStatus;
-    try {
-      s = this.status();
-    } catch {
-      return;
-    }
-    const key = JSON.stringify(s);
-    if (!force && key === this.lastAnnounced) return;
-    this.lastAnnounced = key;
-    this.deps.onStatus(s);
+    this.endpoint.announce(force);
   }
 
-  /* ============================================================
-     Capability probe (research §7, "run on settings save")
-     ============================================================ */
-
-  /** Called by server/index.ts after PUT /api/settings when the AI block changed. */
   onSettingsSaved(): Promise<unknown> {
-    // a new endpoint/model deserves a clean slate: keeping the old ladder would
-    // permanently cripple a perfectly capable endpoint the user just configured
-    this.setDegraded([]);
-    this.deps.index.setMeta("ai.effortSteps", "0");
-    /* The outcome of the last call is evidence about the endpoint that was
-       configured THEN. Carrying it across a base-URL/key/model change would let
-       a dead old endpoint keep a freshly configured one marked unreachable
-       (and vice versa) until the next turn. */
-    this.deps.index.setMeta("ai.lastCall", "");
-    this.announce();
-    return this.probe();
+    return this.endpoint.onSettingsSaved();
   }
 
-  /**
-   * Called by server/index.ts after PUT /api/settings when `ai.effort` itself changed.
-   *
-   * Re-picking an effort in Settings is a DIRECT instruction about the value the
-   * ladder walked down from, so it has to undo that walk — otherwise Settings ›
-   * AI paints the chosen value while the statusbar chip and every upstream body
-   * still carry the downgraded one, with no way back except editing the
-   * endpoint triple (the only thing that used to call onSettingsSaved). The
-   * `effort` rung is dropped with the steps: it only ever means "the effort
-   * scale bottomed out", which is no longer true of a freshly chosen value.
-   *
-   * Deliberately NOT a re-probe: effort cannot change what the endpoint is
-   * capable of, and the probe is a network round-trip. The rungs recorded for
-   * OTHER parameters stay — they are still evidence about this endpoint.
-   */
   onEffortChanged(): void {
-    this.deps.index.setMeta("ai.effortSteps", "0");
-    this.setDegraded(this.degraded().filter((r) => r !== "effort")); // announces
-    this.announce();
+    this.endpoint.onEffortChanged();
   }
 
-  /**
-   * Probe at boot (server/index.ts), NOT awaited.
-   *
-   * Without this the shipped default endpoint was never verified at all: the
-   * probe only ran from PUT /api/settings, and only when `ai.baseUrl`/`ai.model`
-   * /`ai.apiKey` actually CHANGED. The intended initial-setup path — a
-   * hand-written `settings.toml` whose credential `load()` absorbs at boot —
-   * changes nothing afterwards, so `meta.ai.probe` stayed `null` forever on a
-   * perfectly working configuration and the app could not say whether its own
-   * endpoint was alive. A probe is two small requests; boot does not wait on it.
-   */
   probeAtBoot(): void {
-    const { baseUrl, apiKey } = this.cfg();
-    if (!baseUrl || !apiKey) {
-      this.announce(true); // "not configured" is a status worth stating too
-      return;
-    }
-    this.announce(true);
-    this.probe().catch(() => {});
+    this.endpoint.probeAtBoot();
   }
 
   probe(): Promise<unknown> {
-    if (this.probing) return this.probing;
-    const run = this.runProbe()
-      .catch((err) => ({ error: String((err as Error)?.message || err) }))
-      .then((out) => {
-        this.deps.index.setMeta("ai.probe", JSON.stringify({ ...(out as object), probedAt: new Date().toISOString() }));
-        this.probing = null;
-        /* A fresh probe SUPERSEDES an older call outcome, but `status()` picks
-           the newest timestamp — and a probe that ran in the same millisecond
-           as the last call would lose the tie. Clearing a STALE call record
-           here would throw away real evidence, so instead the probe simply
-           announces and lets the ordering rule stand. */
-        this.announce();
-        return out;
-      });
-    this.probing = run;
-    return run;
-  }
-
-  private async runProbe() {
-    const { baseUrl, apiKey, model } = this.cfg();
-    const out: Record<string, unknown> = {
-      baseUrl,
-      model,
-      configured: !!(baseUrl && apiKey),
-      modelListed: null,
-      responses: false,
-      toolsWithReasoning: false,
-      error: null,
-    };
-    if (!baseUrl) {
-      out.error = "no base URL configured";
-      return out;
-    }
-
-    const call = async (path: string, body: unknown | null) => {
-      const res = await fetch(baseUrl + path, {
-        method: body ? "POST" : "GET",
-        headers: {
-          ...(apiKey ? { authorization: "Bearer " + apiKey } : {}),
-          ...(body ? { "content-type": "application/json" } : {}),
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-      });
-      const text = await res.text().catch(() => "");
-      return { status: res.status, text };
-    };
-
-    // 1. is the model listed?
-    try {
-      const r = await call("/models", null);
-      if (r.status === 200) {
-        out.modelListed = r.text.includes(`"${model}"`) || r.text.includes(model);
-      }
-    } catch {
-      /* a proxy without /models is not a failure — step 2 is the real test */
-    }
-
-    // 2. does /responses answer at all?
-    try {
-      const r = await call("/responses", {
-        model,
-        input: "ping",
-        max_output_tokens: 16,
-        stream: false,
-        reasoning: { effort: "none" },
-      });
-      out.responses = r.status >= 200 && r.status < 300;
-      if (!out.responses) out.error = `POST /responses → ${r.status}: ${classifyProbe(r.status)}`;
-      // research §7 step 2: 404/405 ⇒ this endpoint is chat-completions only
-      if (r.status === 404 || r.status === 405) this.forceRung("chat-completions");
-    } catch (err) {
-      out.error = UNREACHABLE_PROBE;
-      this.log(`ai: probe POST /responses failed — ${this.scrub(String((err as Error)?.message || err))}`);
-    }
-
-    // 3. tools + reasoning together — the whole reason this app uses /responses
-    if (out.responses) {
-      try {
-        const r = await call("/responses", {
-          model,
-          input: "ping",
-          max_output_tokens: 16,
-          stream: false,
-          reasoning: { effort: "high" },
-          tools: [
-            {
-              type: "function",
-              name: "z_probe",
-              strict: true,
-              parameters: {
-                type: "object",
-                additionalProperties: false,
-                required: ["ok"],
-                properties: { ok: { type: "boolean" } },
-              },
-            },
-          ],
-          tool_choice: "auto",
-        });
-        out.toolsWithReasoning = r.status >= 200 && r.status < 300;
-        if (!out.toolsWithReasoning) out.error = `tools+reasoning → ${r.status}: ${classifyProbe(r.status)}`;
-      } catch (err) {
-        out.error = UNREACHABLE_PROBE;
-        this.log(`ai: probe tools+reasoning failed — ${this.scrub(String((err as Error)?.message || err))}`);
-      }
-    }
-    return out;
+    return this.endpoint.probe();
   }
 
   /* ============================================================
@@ -1174,26 +565,17 @@ export class AI {
     const out: Record<string, unknown> = {
       id: s.id,
       startedAt: s.startedAt,
-      model: this.cfg().model,
-      effort: this.effortInUse(),
+      model: this.endpoint.cfg().model,
+      effort: this.endpoint.effortInUse(),
       contextWindow: this.deps.contextWindow,
       contextDocPath: s.contextDocPath,
       messageCount: messages.filter((m) => (m as any).kind !== "divider").length,
       tokensEstimated: this.estimateTokens(s.id, s.contextDocPath),
     };
-    const rungs = this.degraded();
+    const rungs = this.endpoint.degraded();
     if (rungs.length) out.degraded = rungs.map((id) => ({ id, message: RUNG_LABEL[id] }));
     if (withMessages) out.messages = messages;
     return out;
-  }
-
-  private effortInUse(): string {
-    const { effort } = this.cfg();
-    const have = this.degraded();
-    if (have.includes("chat-completions") || have.includes("reasoning")) return "none";
-    let e = effort;
-    for (let i = this.effortSteps(); i > 0 && !atEffortFloor(e); i--) e = downgradeEffort(e);
-    return e;
   }
 
   /* ============================================================
@@ -1290,7 +672,7 @@ export class AI {
     historyTokens: number,
     sessionId: string
   ): Promise<{ text: string; parts: string[] }> {
-    const budget = this.cfg().budget;
+    const budget = this.endpoint.cfg().budget;
     let current = "";
     if (docPath) {
       const disk = await this.deps.vault.readDoc(docPath);
@@ -1452,8 +834,8 @@ export class AI {
   }
 
   private buildResponsesBody(input: unknown[], contextText: string) {
-    const { model, maxOutputTokens } = this.cfg();
-    const have = this.degraded();
+    const { model, maxOutputTokens } = this.endpoint.cfg();
+    const have = this.endpoint.degraded();
     const body: Record<string, unknown> = {
       model,
       stream: true,
@@ -1469,7 +851,7 @@ export class AI {
     if (!have.includes("reasoning")) {
       // effort is ALWAYS explicit: omitting it silently yields `medium`, not the
       // configured default (research §1)
-      const reasoning: Record<string, unknown> = { effort: this.effortInUse() };
+      const reasoning: Record<string, unknown> = { effort: this.endpoint.effortInUse() };
       if (!have.includes("reasoning.summary")) reasoning.summary = "auto";
       body.reasoning = reasoning;
     }
@@ -1478,7 +860,7 @@ export class AI {
 
   /** Last rung: chat/completions, tools only, reasoning off (research §4.5). */
   private buildChatBody(input: any[], contextText: string) {
-    const { model, maxOutputTokens } = this.cfg();
+    const { model, maxOutputTokens } = this.endpoint.cfg();
     const messages: any[] = [
       { role: "system", content: this.instructions() },
       { role: "system", content: contextText },
@@ -1533,12 +915,12 @@ export class AI {
     incomplete: string | null;
     reasoningItems: any[];
   }> {
-    const { baseUrl, apiKey } = this.cfg();
+    const { baseUrl, apiKey } = this.endpoint.cfg();
     if (!baseUrl) throw new AiError("No AI base URL is configured — set one under Settings → AI.", "ai-unconfigured", 503);
     if (!apiKey) throw new AiError("No AI API key is configured — set one under Settings → AI.", "ai-unconfigured", 503);
 
     for (let attempt = 0; attempt <= LADDER.length; attempt++) {
-      const chat = this.degraded().includes("chat-completions");
+      const chat = this.endpoint.degraded().includes("chat-completions");
       const path = chat ? "/chat/completions" : "/responses";
       const body = chat ? this.buildChatBody(input as any[], contextText) : this.buildResponsesBody(input, contextText);
       const serialized = this.guard(body, "request body"); // ← never sends on a hit
@@ -1558,7 +940,7 @@ export class AI {
       } catch (err) {
         // a client-side abort says nothing about the endpoint — do not record it
         if (signal.aborted) throw err;
-        this.noteCall(false, "ai-unreachable");
+        this.endpoint.noteCall(false, "ai-unreachable");
         throw new AiError(
           this.scrub(`Cannot reach the AI endpoint at ${baseUrl}: ${String((err as Error)?.message || err)}`),
           "ai-unreachable"
@@ -1573,7 +955,7 @@ export class AI {
            parameter problem, so skip the parameter rungs and go straight to
            chat/completions rather than 400ing six times on the way */
         if (!chat && (res.status === 404 || res.status === 405)) {
-          if (this.forceRung("chat-completions")) {
+          if (this.endpoint.forceRung("chat-completions")) {
             emit({
               event: "reasoning",
               data: { delta: `\n(this endpoint has no /responses — ${RUNG_LABEL["chat-completions"]})\n` },
@@ -1582,20 +964,20 @@ export class AI {
           }
         }
         if (res.status === 400 && UNRECOGNIZED.test(detail)) {
-          const rung = this.stepDown();
+          const rung = this.endpoint.stepDown();
           if (rung) {
             emit({ event: "reasoning", data: { delta: `\n(endpoint rejected a parameter — ${RUNG_LABEL[rung]})\n` } });
             continue; // same turn, one rung lower
           }
         }
-        this.noteCall(false, "ai-upstream-" + res.status);
+        this.endpoint.noteCall(false, "ai-upstream-" + res.status);
         throw new AiError(
           `The AI endpoint answered ${res.status}. ${detail || "(no body)"}`,
           "ai-upstream-" + res.status
         );
       }
       if (!res.body) {
-        this.noteCall(false, "ai-empty");
+        this.endpoint.noteCall(false, "ai-empty");
         throw new AiError("The AI endpoint returned an empty stream.", "ai-empty");
       }
 
@@ -1603,7 +985,7 @@ export class AI {
          the statusbar wants. Recorded HERE rather than after the body drains,
          because a user abort mid-stream is not an endpoint fault and a
          mid-stream `error` event gets its own record below. */
-      this.noteCall(true, null);
+      this.endpoint.noteCall(true, null);
       try {
         return chat
           ? await this.consumeChat(res.body, emit, partial)
@@ -1620,10 +1002,10 @@ export class AI {
            endpoint is fine at the exact moment the user is reading the failure,
            and not correcting itself until the NEXT message. */
         if (err instanceof AiError) {
-          this.noteCall(false, err.code);
+          this.endpoint.noteCall(false, err.code);
           throw err;
         }
-        this.noteCall(false, "ai-stream-broken");
+        this.endpoint.noteCall(false, "ai-stream-broken");
         /* Bun's own advice ("pass `verbose: true` in the second argument to
            fetch()") used to reach the toast, the persisted `ai_messages` row and
            the history replayed upstream verbatim. Say what happened instead. */
@@ -1826,91 +1208,10 @@ export class AI {
   }
 
   /* ============================================================
-     propose_edits validation (research §4.4, ALL steps)
+     propose_edits validation (research §4.4) — the disk-facing half.
+     Parsing and per-edit application are pure and live in ai-edits.ts;
+     this half owns the vault reads and occupancy checks around them.
      ============================================================ */
-
-  /** Parse and normalize the tool arguments into an EditSpec list. */
-  private parseEdits(argsJson: string): { ok: true; summary: string; edits: EditSpec[] } | ApplyFail {
-    let parsed: any;
-    try {
-      parsed = JSON.parse(argsJson);
-    } catch (err) {
-      return {
-        ok: false,
-        fail: {
-          status: "rejected",
-          reason: "bad_json",
-          message: `the tool arguments were not valid JSON: ${String((err as Error)?.message || err)}`,
-        },
-      };
-    }
-    const list = Array.isArray(parsed?.edits) ? parsed.edits : null;
-    if (!list || !list.length) {
-      return {
-        ok: false,
-        fail: { status: "rejected", reason: "no_edits", message: "the call carried no edits" },
-      };
-    }
-    const edits: EditSpec[] = [];
-    for (const e of list) {
-      const op = String(e?.op || "");
-      if (!OPS.has(op)) {
-        return {
-          ok: false,
-          fail: {
-            status: "rejected",
-            reason: "bad_op",
-            message: `op must be one of ${[...OPS].join(", ")} (got ${JSON.stringify(e?.op)}); this vault does not allow deleting or renaming docs`,
-          },
-        };
-      }
-      const raw = typeof e?.path === "string" ? e.path : "";
-      /* safePath verbatim — no leniency, no leading-slash strip. Quietly
-         rewriting `/tmp/x.md` into the vault-relative `tmp/x.md` would answer a
-         request to write outside the vault by writing SOMEWHERE ELSE instead of
-         refusing, and the model would never learn its path was wrong. */
-      const path = safePath(raw);
-      if (!path || !/\.md$/i.test(path) || !this.deps.vault.abs(path)) {
-        return {
-          ok: false,
-          fail: {
-            status: "rejected",
-            reason: "path_denied",
-            path: raw,
-            message: `${JSON.stringify(raw)} is not a vault-relative .md path inside the vault`,
-          },
-        };
-      }
-      const anchor = typeof e?.find === "string" ? e.find : null;
-      const text =
-        op === "replace"
-          ? typeof e?.replace === "string"
-            ? e.replace
-            : null
-          : typeof e?.content === "string"
-            ? e.content
-            : null;
-      if ((op === "replace" || op === "insert_after") && !anchor) {
-        return {
-          ok: false,
-          fail: { status: "rejected", reason: "missing_find", path, message: `${op} needs a non-empty "find" anchor` },
-        };
-      }
-      if (text == null) {
-        return {
-          ok: false,
-          fail: {
-            status: "rejected",
-            reason: "missing_text",
-            path,
-            message: op === "replace" ? '"replace" must be a string' : '"content" must be a string',
-          },
-        };
-      }
-      edits.push({ op: op as EditSpec["op"], path, anchor, text, note: typeof e?.note === "string" ? e.note : null });
-    }
-    return { ok: true, summary: String(parsed?.summary || "").trim() || "Proposed edit", edits };
-  }
 
   /**
    * Run an EditSpec list against CURRENT on-disk bytes and return the resulting
@@ -1995,67 +1296,11 @@ export class AI {
         return reject({ status: "rejected", reason: "exists", path: e.path, message: `${e.path} was already created earlier in this proposal` });
       }
 
-      const cur = img.post;
-
-      if (e.op === "create") {
-        img.post = e.text;
-        continue;
-      }
-      if (e.op === "rewrite") {
-        // a rewrite spans the whole document, so ANY age fence in it is an
-        // intersection: the model saw a placeholder and would write it back
-        if (intersectsAgeFence(cur, 0, cur.length)) {
-          return reject({
-            status: "rejected",
-            reason: "secret_intersect",
-            path: e.path,
-            message: `${e.path} contains an encrypted block, so it cannot be rewritten wholesale — use replace on the parts you mean to change`,
-          });
-        }
-        img.post = e.text;
-        continue;
-      }
-
-      // 3+4. anchored ops: exactly one match, three-pass
-      const { matches, pass } = findAnchor(cur, e.anchor!);
-      if (!matches.length) {
-        return reject({
-          status: "rejected",
-          reason: "not_found",
-          path: e.path,
-          occurrences: 0,
-          message: `the "find" text does not appear in ${e.path}; copy it byte-for-byte from the document`,
-        });
-      }
-      if (matches.length > 1) {
-        return reject({
-          status: "rejected",
-          reason: "ambiguous",
-          path: e.path,
-          occurrences: matches.length,
-          message: `the "find" text appears ${matches.length} times in ${e.path}; include more surrounding lines so it is unique`,
-        });
-      }
-      const m = matches[0];
-      // 5. secret guard
-      const span = e.op === "replace" ? [m.start, m.end] : [m.end, m.end];
-      if (intersectsAgeFence(cur, span[0], span[1])) {
-        return reject({
-          status: "rejected",
-          reason: "secret_intersect",
-          path: e.path,
-          message: `that span touches an encrypted block in ${e.path}; encrypted blocks cannot be edited by the assistant`,
-        });
-      }
-      /* Pass 2 matched an LF-only needle against CRLF bytes and returns the
-         span in ORIGINAL coordinates — so the span swallows the \r\n while the
-         model's text is LF-only, and splicing it verbatim left bare LFs inside
-         an otherwise-CRLF file. SPEC §1 (byte-faithful) and the relay's own
-         instruction ("preserve the file's existing line endings") both say no:
-         the server's tolerance must not defeat the rule it ships. Re-encode to
-         whatever the matched span (else the document) actually uses. */
-      const text = pass >= 2 ? toEol(e.text, dominantEol(cur.slice(m.start, m.end), cur)) : e.text;
-      img.post = e.op === "replace" ? cur.slice(0, m.start) + text + cur.slice(m.end) : cur.slice(0, m.end) + text + cur.slice(m.end);
+      /* steps 3–5 — anchor uniqueness, the secret guard and EOL re-encoding —
+         are pure functions of (current text, edit) and live in ai-edits.ts */
+      const applied = applyEditToText(img.post, e);
+      if (!applied.ok) return applied;
+      img.post = applied.post;
     }
 
     const out = [...files.values()].filter((f) => f.pre !== f.post || !f.existed);
@@ -2069,36 +1314,13 @@ export class AI {
      Proposal records
      ============================================================ */
 
-  private buildDiff(files: FileImage[]): { diff: Array<{ marker: string; text: string }>; added: number; removed: number } {
-    const diff: Array<{ marker: string; text: string }> = [];
-    let added = 0;
-    let removed = 0;
-    for (const f of files) {
-      if (files.length > 1) diff.push({ marker: " ", text: `— ${f.path} —` });
-      const patch = structuredPatch(f.path, f.path, f.pre, f.post, "", "", { context: 2 });
-      for (const h of patch.hunks) {
-        for (const line of h.lines) {
-          if (line.startsWith("\\")) continue; // "\ No newline at end of file"
-          const marker = line[0] === "+" || line[0] === "-" ? line[0] : " ";
-          if (marker === "+") added++;
-          if (marker === "-") removed++;
-          // a CRLF doc yields rows ending in a literal CR, which the diff card
-          // renders raw — the row is display text, not bytes
-          if (diff.length < MAX_DIFF_LINES) diff.push({ marker, text: line.slice(1).replace(/\r$/, "") });
-        }
-      }
-    }
-    if (diff.length >= MAX_DIFF_LINES) diff.push({ marker: " ", text: "… diff truncated" });
-    return { diff, added, removed };
-  }
-
   private storeProposal(
     sessionId: string,
     summary: string,
     edits: EditSpec[],
     files: FileImage[]
   ): ProposalRow {
-    const { diff, added, removed } = this.buildDiff(files);
+    const { diff, added, removed } = buildDiff(files);
     const seq = this.deps.index.nextSeq("propSeq");
     const id = "prop_" + seq;
     const label = summary.replace(/\s+/g, " ").trim().slice(0, 64) || "Proposed edit";
@@ -2119,8 +1341,8 @@ export class AI {
       diff: JSON.stringify(diff),
       edits: JSON.stringify(edits),
       files: JSON.stringify(files),
-      model: this.cfg().model,
-      effort: this.effortInUse(),
+      model: this.endpoint.cfg().model,
+      effort: this.endpoint.effortInUse(),
       commitSha: null,
       commitNote: null,
       appliedAt: null,
@@ -2263,7 +1485,7 @@ export class AI {
       await this.deps.recon.reconcileHeld(hints);
 
       const stackIndex = this.deps.index.stack().length + 1;
-      const { diff, added, removed } = this.buildDiff(applied.files);
+      const { diff, added, removed } = buildDiff(applied.files);
       this.deps.index.updateProposal(id, {
         state: "applied",
         stackIndex,
@@ -2281,7 +1503,7 @@ export class AI {
         `ai: ${row.label}`,
         "",
         `Z-Notes-Proposal: ${row.id}`,
-        `Z-Notes-Model: ${row.model ?? this.cfg().model}@${row.effort ?? this.effortInUse()}`,
+        `Z-Notes-Model: ${row.model ?? this.endpoint.cfg().model}@${row.effort ?? this.endpoint.effortInUse()}`,
       ].join("\n");
       let commit = { committed: false, sha: null as string | null, reason: "git commit not attempted" };
       try {
@@ -2421,7 +1643,7 @@ export class AI {
         `ai: revert ${row.label}`,
         "",
         `Z-Notes-Proposal: ${row.id}`,
-        `Z-Notes-Model: ${row.model ?? this.cfg().model}@${row.effort ?? this.effortInUse()}`,
+        `Z-Notes-Model: ${row.model ?? this.endpoint.cfg().model}@${row.effort ?? this.endpoint.effortInUse()}`,
         `Z-Notes-Revert: ${row.commitSha ?? "uncommitted"}`,
       ].join("\n");
       /* commitPaths signals every phase-2 guard (mid-merge, detached HEAD,
@@ -2566,7 +1788,7 @@ export class AI {
           break;
         }
         let fail: Rejection | null = null;
-        const parsed = this.parseEdits(turn.toolCall.arguments);
+        const parsed = parseEdits(turn.toolCall.arguments, (p) => !!this.deps.vault.abs(p));
         if (parsed.ok !== true) {
           fail = parsed.fail;
         } else {
