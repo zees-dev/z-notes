@@ -12,8 +12,12 @@
      against the app root rather than against whatever doc URL is in the bar. -->
 <base href="/">
 <title>z-notes</title>
-<!-- zero external requests: an empty data: icon stops the browser's favicon probe -->
-<link rel="icon" href="data:,">
+<!-- zero external requests: the icon is an inline SVG data: URI, so the browser's
+     favicon probe never leaves this document. The mark: mono z + block cursor on
+     near-black — the editor and the gated terminal in one glyph. The SMIL <animate>
+     blinks the cursor in browsers that animate SVG favicons (Firefox); the rest
+     render the first frame (cursor on). -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='7' fill='%23121412'/%3E%3Ctext x='10.5' y='20.8' font-family='ui-monospace,Menlo,monospace' font-size='17' font-weight='600' fill='%238fbfa2' text-anchor='middle'%3Ez%3C/text%3E%3Crect x='16.5' y='9.5' width='5.5' height='13' fill='%238fbfa2'%3E%3Canimate attributeName='opacity' values='1;1;0;0;1' keyTimes='0;.5;.5;.95;1' dur='1.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3C/svg%3E">
 <link rel="stylesheet" href="./themes/base.css">
 <!-- swapped live by the Settings › Theme control; ?theme=<id> overrides at boot.
      The href below is the DEFAULT theme; the resolver under it rewrites it from
