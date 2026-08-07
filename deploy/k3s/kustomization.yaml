@@ -32,4 +32,4 @@ images:
   # Change the tag in ONE place when you rebuild:
   #   kustomize edit set image z-notes=z-notes:0.2.0
   - name: z-notes
-    newTag: "0.1.0"
+    newTag: "0.1.1"
