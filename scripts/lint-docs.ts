@@ -138,7 +138,7 @@ for (const f of readdirSync(appDir)) {
         fail(`app/${f}`, `leaf module imports feature module ./${m[1]}.js`, "leaves stay leaves: inject the feature function from app.js (see dialogs.js wireDialogs) or move the logic");
     }
   }
-  if (/^export let /m.test(text))
+  if (/^\s*export let /m.test(text))
     fail(`app/${f}`, "`export let` live binding", "shared mutable state belongs in state.js (or the module's session object); export functions or const objects instead");
 }
 
