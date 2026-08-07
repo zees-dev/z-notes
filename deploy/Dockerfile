@@ -4,6 +4,9 @@
 # Build context is the REPO ROOT, not deploy/:
 #     docker build -f deploy/Dockerfile -t z-notes:0.1.0 .
 #
+# The image is pushed to ghcr.io/zees-dev/z-notes (ADR 0005); the source label
+# below links the package to this repo on GitHub's side.
+#
 # Three stages so the final image carries the runtime and nothing else: the
 # dependency install (and bun's ~/.bun/install/cache) stays in `deps`, the
 # import-graph verification stays in `src`, and neither is a layer in the
@@ -67,6 +70,7 @@ RUN bun build --target=bun --outdir=/tmp/graph server/index.ts > /dev/null \
 
 # --- stage 3: runtime -------------------------------------------------------
 FROM oven/bun:1.3.14-slim AS runtime
+LABEL org.opencontainers.image.source="https://github.com/zees-dev/z-notes"
 
 # Three packages, each earning its place:
 #   git             — hard runtime dependency: SPEC §7 sync shells out to `git`

@@ -75,13 +75,21 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
+      # The PACKAGE is private because the repo is private, so pulls need
+      # credentials. The secret is created out-of-band (deploy/README.md) and
+      # only NAMED here — same rule as the AI key and the git token: nothing
+      # in this manifest is a credential.
+      imagePullSecrets:
+        - name: ghcr-creds
+
       containers:
         - name: znotes
-          # Built from deploy/Dockerfile and side-loaded with
-          # `k3s ctr images import` (see deploy/README.md). IfNotPresent — not
-          # Always — because there is no registry to pull from; Always would
-          # make the pod ImagePullBackOff forever. The tag is pinned (never
-          # :latest) so an imported image is unambiguous.
+          # Built from deploy/Dockerfile, pushed to ghcr.io (ADR 0005) — the
+          # nodes pull only layers they don't have, so a code-only release
+          # ships ~2MB, not the whole Bun base image over the Pis' Wi-Fi.
+          # The kustomization rewrites this name/tag; the tag is pinned
+          # (never :latest) so what runs is unambiguous. IfNotPresent keeps
+          # a node that already has the pinned tag from re-pulling it.
           image: z-notes:0.1.0
           imagePullPolicy: IfNotPresent
 

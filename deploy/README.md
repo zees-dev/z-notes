@@ -66,23 +66,36 @@ path the server never reads. `--compile` is also avoided: it reports
 `vendor/` and `bun.lock`. (The vault and DB are already immune — they come from
 `$ZNOTES_VAULT`.)
 
-## 2. Load it into k3s
+## 2. Push it to the registry
 
-No registry needed. Save, copy, import — on **every node that can run the pod**
-(with one replica on an RWO local-path volume that is effectively one node):
+The cluster pulls from `ghcr.io/zees-dev/z-notes` (ADR 0005). Containerd stores
+layers by digest, so a release whose only change is app code ships ~2MB — the
+Bun base layers are already on the node:
 
 ```sh
-docker save z-notes:0.1.0 | gzip > z-notes-0.1.0.tar.gz
-scp z-notes-0.1.0.tar.gz <node>:/tmp/
-ssh <node> 'sudo k3s ctr images import /tmp/z-notes-0.1.0.tar.gz && rm /tmp/z-notes-0.1.0.tar.gz'
-ssh <node> 'sudo k3s ctr images ls | grep z-notes'
+gh auth token | docker login ghcr.io -u zees-dev --password-stdin
+docker tag z-notes:0.1.X ghcr.io/zees-dev/z-notes:0.1.X
+docker push ghcr.io/zees-dev/z-notes:0.1.X
+cd deploy/k3s && kustomize edit set image z-notes=ghcr.io/zees-dev/z-notes:0.1.X
 ```
 
-With a registry instead, push `<registry>/z-notes:0.1.0` and point kustomize at
-it: `cd deploy/k3s && kustomize edit set image z-notes=<registry>/z-notes:0.1.0`.
+The package is private (the repo is), so the `znotes` namespace carries an
+`imagePullSecret` named `ghcr-creds` — created out-of-band, never committed:
 
-`imagePullPolicy` is `IfNotPresent` — `Always` would chase a registry that does
-not exist and sit in `ImagePullBackOff`.
+```sh
+kubectl -n znotes create secret docker-registry ghcr-creds \
+  --docker-server=ghcr.io --docker-username=zees-dev --docker-password=<PAT>
+```
+
+The PAT needs `read:packages` (classic — GHCR does not reliably accept
+fine-grained tokens for registry auth).
+
+`imagePullPolicy` is `IfNotPresent` — tags are pinned and never reused, so a
+node that already has the tag has the release.
+
+The pre-registry side-load path still works when ghcr (or the WAN) is down:
+`docker save z-notes:0.1.X | gzip`, `scp` to the node, `sudo k3s ctr images
+import` — then retag the import to the ghcr name so the pinned manifest matches.
 
 ## 3. Install cert-manager
 
