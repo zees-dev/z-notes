@@ -41,7 +41,7 @@ pointers reach — the spec's Out of Scope section is binding.
 
 ## Rules
 
-- Behavior outside the spec is frozen: `docs/API.md` shapes are
+- Behavior outside the spec is frozen: `docs/specs/done/0002-http-api-v0.md` shapes are
   byte-contracts, and the source-text tests listed in `docs/style.md`
   (gotchas) will fail on incidental reformatting — read them before touching
   `server/ai*.ts`, crypto imports, or theme CSS.

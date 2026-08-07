@@ -12,8 +12,8 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
   → `trash ai-endpoint` → `git terminal` → `ai docs` → `index`.
 - `app/` — the frontend. ES modules, no build step, no runtime deps. Leaf modules
   (`state ui api armor entropy dialogs crypto-worker`) never import feature modules.
-- `docs/` — the knowledge base; see the taxonomy below. `docs/API.md` is the
-  normative HTTP/SSE contract; `docs/SPEC.md` is the product spec.
+- `docs/` — the knowledge base; see the taxonomy below. `docs/specs/done/0002-http-api-v0.md` is the
+  normative HTTP/SSE contract; `docs/specs/done/0001-z-notes-v1.md` is the product spec.
 - `tests/` — black-box by default (spawn the real server / a real Chromium).
   `helpers.ts` + `browser.ts` are the shared harness; `mock-upstream.ts` fakes the
   AI endpoint. `bun run gates` = the five acceptance suites.
@@ -40,10 +40,10 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
 - [docs/decisions/](docs/decisions/) — append-only one-page ADRs. Respect them;
   new durable decisions get promoted here by `/implement`.
 - [docs/specs/](docs/specs/) — work specs. `open/` = transient, awaiting
-  implementation (written by `/spec`); `done/` = archive, staleness harmless.
-- Contracts (normative, versioned with the code): [docs/API.md](docs/API.md),
-  [docs/SPEC.md](docs/SPEC.md), [docs/THEMES.md](docs/THEMES.md),
-  [docs/secrets-crypto.md](docs/secrets-crypto.md).
+  implementation (written by `/spec`); `done/` = the archive. The five founding
+  specs live there: 0001 product ("SPEC §N" in code = its section N), 0002 the
+  normative HTTP/SSE contract, 0003 theming, 0004 secrets crypto, 0005 the Bun
+  platform research. Their durable rules are ADRs 0002–0004.
 
 ## Workflow
 
@@ -54,7 +54,7 @@ durable decision to an ADR in the same change.
 
 ## Hard rules
 
-- The API contract is `docs/API.md` — behavior-preserving unless a spec says
+- The API contract is `docs/specs/done/0002-http-api-v0.md` — behavior-preserving unless a spec says
   otherwise. Error bodies are `{error, message, ...extra}`, key order included.
 - The server never sees a passphrase or plaintext secret (SPEC §6). Nothing in
   `server/` may import `age-encryption` — `tests/secrets.test.ts` enforces it.

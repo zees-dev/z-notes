@@ -1,4 +1,26 @@
-# Writing a z-notes theme
+# 0003 — Theming — one CSS token file per theme
+
+> Founding document, retrofitted into the spec template when the repo adopted
+> the agent-first shape (ADR 0001 era). Archived here as a completed spec:
+> staleness is harmless, durable decisions live in `docs/decisions/`.
+
+## Problem Statement
+
+Multiple visual identities (modern / minimal / terminal) must coexist over one DOM without a build step, without layout drift between themes, and switchable live.
+
+## Solution
+
+A theme is ONE CSS file that sets custom properties, loaded after `themes/base.css` and swapped by replacing a `<link>` href. Two independent axes: `data-theme` picks the palette file, `data-scheme` (dark/light) picks the palette inside it. ADR [0003](../../decisions/0003-themes-are-css-token-contracts.md) records the durable rules.
+
+## User Stories
+
+1. As the user, I want to switch theme/scheme/density live from Settings, so that no reload or rebuild is ever needed.
+2. As a theme author, I want a token reference and hard MUST-NOTs, so that a theme cannot break layout or accessibility.
+3. As the app, I want `base.css` to own all structure, so that N themes never means N layouts.
+
+## Implementation Decisions
+
+The authoring guide and token reference, verbatim (headings demoted one level):
 
 A theme is **one CSS file that sets custom properties**. It is loaded after
 `themes/base.css` and swapped at runtime by replacing the `href` of
@@ -11,7 +33,7 @@ themes/minimal.css   Minimal   — tokens only, zero selectors
 themes/terminal.css  Terminal
 ```
 
-## Adding one
+### Adding one
 
 1. Copy `modern.css` to `themes/<id>.css` and change the values.
 2. Register it in the backend's settings metadata (the `meta.themes` list served
@@ -19,7 +41,7 @@ themes/terminal.css  Terminal
    control is built from that list, so the frontend needs no change at all.
 3. Test with `?theme=<id>` (see below).
 
-## Two axes
+### Two axes
 
 `data-theme` picks the stylesheet. `data-scheme` (`dark` | `light`, stamped on
 `<html>` by app.js from the `colorScheme` setting) picks the palette inside it.
@@ -60,7 +82,7 @@ the canvas) belongs to base.css and the two scheme blocks — a theme never sets
 it, and `index.html` resolves `data-scheme` **before the first paint** so the
 boot splash never flashes the wrong ground.
 
-## Rules
+### Rules
 
 **A theme MAY**
 
@@ -96,7 +118,7 @@ boot splash never flashes the wrong ground.
 - reference an external font, image or URL. Zero network requests, system font
   stacks only.
 
-## Testing
+### Testing
 
 ```
 http://localhost:4700/                       stored theme + stored scheme
@@ -146,12 +168,11 @@ and light) at 1440px and 390px:
 
 ---
 
-# Token reference
 
 Everything below has a neutral default in `base.css`. Values are CSS, so a token
 that takes a colour will also take a gradient wherever it feeds `background`.
 
-## Surfaces
+### Surfaces
 
 | Token | Meaning |
 |---|---|
@@ -162,30 +183,30 @@ that takes a colour will also take a gradient wherever it feeds `background`.
 | `--panel-3` | deepest fill: chips, icon-button hover, hover wells |
 | `--line` / `--line-2` | structural border / internal hairline |
 
-## Ink
+### Ink
 
 `--text` · `--text-2` (body copy) · `--muted` · `--muted-2` (faintest).
 
-## Accent
+### Accent
 
 `--accent` · `--accent-h` (hover/active) · `--accent-on` (ink on an accent
 fill) · `--accent-soft` / `--accent-soft-2` (tints) · `--accent-ring` (focus
 halo colour).
 
-## Semantic and diff
+### Semantic and diff
 
 `--ok` `--ok-soft` `--ok-bd` · `--warn` `--warn-soft` · `--danger`
 `--danger-soft` · `--add-bg` `--add-fg` `--add-gutter` · `--del-bg` `--del-fg`
 `--del-gutter`.
 
-## Misc palette
+### Misc palette
 
 `--sel-bg` `--sel-fg` (text selection) · `--scroll-thumb`
 `--scroll-thumb-hover` · `--mark-fg` (fuzzy-match highlight) ·
 `--code-inline-fg` `--code-inline-bg` `--code-inline-bd` · `--hover-tint`
 (click-to-edit block hover) · `--scrim-bg`.
 
-## Typography
+### Typography
 
 | Token | Meaning |
 |---|---|
@@ -199,7 +220,7 @@ halo colour).
 | `--tracking-tight` `--tracking-wide` | |
 | `--label-transform` `--label-tracking` | small caps-style labels (`uppercase` / `none`) |
 
-## Shape, elevation, motion
+### Shape, elevation, motion
 
 `--r-sm` `--r` `--r-lg` `--r-xl` `--r-pill` — set them all to `0px` for a
 terminal look. `--bd-w` `--bd-style` (`solid`/`dashed`) and the composed
@@ -207,12 +228,12 @@ terminal look. `--bd-w` `--bd-style` (`solid`/`dashed`) and the composed
 (the focus ring; `none` is not allowed — keyboard users need it).
 `--ease`, `--dur-1` `--dur-2` `--dur-3`.
 
-## Layout dials (safe, non-structural)
+### Layout dials (safe, non-structural)
 
 `--sidebar-w` · `--chat-w` · `--doc-max-w` (measure) · `--doc-pad-x`,
 `--doc-pad-x-md`, `--doc-pad-x-sm` (per breakpoint) · `--doc-pad-bottom`.
 
-## Region treatments
+### Region treatments
 
 `--sidebar-bg` `--sidebar-bd` `--sidebar-blur` · `--topbar-bg` `--topbar-blur`
 · `--editor-bg` · `--statusbar-bg` `--statusbar-blur` · `--chat-bg`
@@ -222,7 +243,7 @@ terminal look. `--bd-w` `--bd-style` (`solid`/`dashed`) and the composed
 
 `*-blur` tokens are `backdrop-filter` values; `none` disables.
 
-## Components
+### Components
 
 | Group | Tokens |
 |---|---|
@@ -240,7 +261,7 @@ terminal look. `--bd-w` `--bd-style` (`solid`/`dashed`) and the composed
 | toast/status | `--toast-bg` `--toast-fg` `--toast-ok` `--conn-ok` `--conn-down` |
 | vault mark | `--vault-mark-bg` `--vault-mark-fg` `--vault-mark-radius` `--vault-mark-sh` |
 
-## Density scale
+### Density scale
 
 Set under `:root[data-density="comfy"]` and `:root[data-density="compact"]`.
 Comfy is the default and is already dense; Compact is tighter still.
@@ -268,3 +289,15 @@ the point). Two couplings to respect:
 spacer height is `((n − 1) × --d-font × --d-lh)`, so Preview's extra-blank-line
 rhythm tracks whatever the theme sets. Keep `--d-raw-lh` close to `--d-lh` or
 Raw and Preview will drift apart vertically.
+
+## Testing Decisions
+
+`tests/themes-tokens.test.ts` parses the stylesheets for token discipline; `tests/theming-e2e.test.ts` boots every theme×scheme in Chromium and measures contrast. The checklist under Implementation Decisions is the manual gate for a new theme.
+
+## Out of Scope
+
+Per-theme layout changes, external fonts/images (zero network requests), user-authored themes uploaded at runtime.
+
+## Further Notes
+
+The token reference at the end is the contract's living half — grow it in the same change that adds a token to `base.css`.

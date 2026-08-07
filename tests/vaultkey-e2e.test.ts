@@ -1,6 +1,6 @@
 /* ============================================================
    vaultkey-e2e.test.ts — changing the vault passphrase, end to end
-   (SPEC §6; docs/secrets-crypto.md §5.3).
+   (SPEC §6; docs/specs/done/0004-secrets-client-side-crypto.md §5.3).
 
    The user's question this answers: "I should be able to update this secret in
    the settings — I believe this should be stored in the backend though." The

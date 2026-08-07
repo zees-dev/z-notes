@@ -38,7 +38,7 @@ import { CREDENTIAL_FILE_KEYS } from "./settings.ts";
 import { trashGitPaths } from "./trash.ts";
 import type { Vault } from "./vault.ts";
 
-/* ---------- contract (docs/API.md § Sync) ---------- */
+/* ---------- contract (docs/specs/done/0002-http-api-v0.md § Sync) ---------- */
 
 type SyncState = "synced" | "syncing" | "offline" | "error";
 
