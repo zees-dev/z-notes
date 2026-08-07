@@ -121,12 +121,6 @@
   --bubble-user-fg: #ffffff;
   --bubble-ai-bg: #ffffff;
   --bubble-ai-bd: 1px solid var(--line);
-
-
-
-  --vault-mark-bg: linear-gradient(145deg, #6d64f5, var(--accent) 55%, #3f36c9);
-  --vault-mark-fg: #ffffff;
-  --vault-mark-sh: 0 2px 6px -1px rgba(79, 70, 229, .55), inset 0 1px 0 rgba(255, 255, 255, .4);
 }
 
 /* ============================================================
@@ -237,10 +231,6 @@
   --toast-bg: #f0f2f7;
   --toast-fg: #12141c;
   --toast-ok: #1a8f52;
-
-  --vault-mark-bg: linear-gradient(145deg, #c9c4ff, #a29bff 55%, #7d75e0);
-  --vault-mark-fg: #12101f;
-  --vault-mark-sh: 0 2px 6px -1px rgba(122, 112, 240, .5), inset 0 1px 0 rgba(255, 255, 255, .35);
 }
 
 /* Density: Modern keeps base.css's rescaled two-rung scale and only re-states

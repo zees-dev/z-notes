@@ -103,7 +103,10 @@
            so the title/aria are painted from the setting at boot and on every
            change — never hard-coded here. -->
       <button class="vault" type="button" id="homeBtn" data-act="home" title="Home">
-        <span class="vault-mark">z</span>
+        <!-- the favicon's mark (the <link rel="icon"> in <head>), same drawing
+             minus the blink: a cursor that flashes forever in the chrome would
+             upstage the editor's real one. Decorative — the name span speaks. -->
+        <span class="vault-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="7" fill="#121412"/><text x="10.5" y="20.8" font-family="ui-monospace,Menlo,monospace" font-size="17" font-weight="600" fill="#8fbfa2" text-anchor="middle">z</text><rect x="16.5" y="9.5" width="5.5" height="13" fill="#8fbfa2"/></svg></span>
         <span class="vault-lines">
           <span class="vault-name" id="vaultName">z-notes</span>
           <span class="vault-sub" id="vaultSub">~/vault</span>

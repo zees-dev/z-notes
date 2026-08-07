@@ -191,11 +191,6 @@
   --toast-ok: #9ccdae;
 
   --conn-ok: var(--accent);
-
-  --vault-mark-bg: transparent;
-  --vault-mark-fg: var(--accent);
-  --vault-mark-radius: 4px;
-  --vault-mark-sh: inset 0 0 0 1px var(--line);
 }
 
 /* ============================================================

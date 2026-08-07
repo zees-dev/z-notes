@@ -138,11 +138,6 @@
   --toast-ok: var(--accent);
 
   --conn-ok: var(--accent);
-
-  --vault-mark-bg: transparent;
-  --vault-mark-fg: var(--accent);
-  --vault-mark-radius: 0;
-  --vault-mark-sh: inset 0 0 0 1px var(--ok-bd);
 }
 
 /* ============================================================
