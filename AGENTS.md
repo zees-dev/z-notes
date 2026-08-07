@@ -1,0 +1,66 @@
+# z-notes — agent map
+
+Single-user markdown notes app. Files on disk are the source of truth; the app is a
+view over them. One Bun process serves a no-build vanilla-JS frontend, a JSON/SSE
+API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
+
+## Layout
+
+- `server/` — the backend. Flat files, each a deep module with a deliberate export
+  surface; `index.ts` is the composition root + route table. Forward-only layering
+  (enforced by `bun run lint:docs`): `vault db http sse` → `settings watch ai-edits`
+  → `trash ai-endpoint` → `git terminal` → `ai docs` → `index`.
+- `app/` — the frontend. ES modules, no build step, no runtime deps. Leaf modules
+  (`state ui api armor entropy dialogs crypto-worker`) never import feature modules.
+- `docs/` — the knowledge base; see the taxonomy below. `docs/API.md` is the
+  normative HTTP/SSE contract; `docs/SPEC.md` is the product spec.
+- `tests/` — black-box by default (spawn the real server / a real Chromium).
+  `helpers.ts` + `browser.ts` are the shared harness; `mock-upstream.ts` fakes the
+  AI endpoint. `bun run gates` = the five acceptance suites.
+- `deploy/` — Dockerfile + k3s manifests. Live at https://znotes.k3s.lan.
+
+## Commands
+
+```sh
+bun run dev          # bun --hot server/index.ts on :4700
+bun test             # full suite (~12 min: spawns servers + headless Chromium)
+bun test tests/X.test.ts   # one file — do this while iterating
+bun run gates        # the 5 acceptance gates (~70 s) — run before every commit
+bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
+```
+
+## Docs taxonomy (five durable types + one transient)
+
+- [docs/architecture.md](docs/architecture.md) — module map, interfaces, layering,
+  where state lives. Start here before touching structure.
+- [docs/style.md](docs/style.md) — conventions linters can't enforce, and the
+  repo's sharp edges (read the "gotchas" section before sweeping the repo).
+- [docs/glossary.md](docs/glossary.md) — domain vocabulary + banned synonyms.
+  Use these words in code, docs, commits.
+- [docs/decisions/](docs/decisions/) — append-only one-page ADRs. Respect them;
+  new durable decisions get promoted here by `/implement`.
+- [docs/specs/](docs/specs/) — work specs. `open/` = transient, awaiting
+  implementation (written by `/spec`); `done/` = archive, staleness harmless.
+- Contracts (normative, versioned with the code): [docs/API.md](docs/API.md),
+  [docs/SPEC.md](docs/SPEC.md), [docs/THEMES.md](docs/THEMES.md),
+  [docs/secrets-crypto.md](docs/secrets-crypto.md).
+
+## Workflow
+
+Shaping happens in conversation → `/spec` writes `docs/specs/open/NNNN-slug.md`
+(self-sufficient; the implementing agent gets no other context) → `/implement`
+executes it TDD-at-the-agreed-seams, moves the spec to `done/`, and promotes any
+durable decision to an ADR in the same change.
+
+## Hard rules
+
+- The API contract is `docs/API.md` — behavior-preserving unless a spec says
+  otherwise. Error bodies are `{error, message, ...extra}`, key order included.
+- The server never sees a passphrase or plaintext secret (SPEC §6). Nothing in
+  `server/` may import `age-encryption` — `tests/secrets.test.ts` enforces it.
+- The AI relay has no route to rename/delete (SPEC §8) — `tests/fileops.test.ts`
+  greps the source of all three `ai*.ts` modules to prove it.
+- One deploy replica, ever (sqlite + fs.watch + git working tree; see
+  `deploy/k3s/20-deployment.yaml`).
+- Zero runtime deps beyond `age-encryption`, `diff`, `gpt-tokenizer`; no frontend
+  build step. Adding a dependency is an ADR-sized decision.
