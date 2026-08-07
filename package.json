@@ -6,7 +6,8 @@
     "dev": "bun --hot server/index.ts",
     "start": "bun server/index.ts",
     "test": "bun test",
-    "gates": "bun test tests/roundtrip.test.ts tests/reconcile.test.ts tests/ai.test.ts tests/leak.test.ts tests/e2e.test.ts"
+    "gates": "bun test tests/roundtrip.test.ts tests/reconcile.test.ts tests/ai.test.ts tests/leak.test.ts tests/e2e.test.ts",
+    "lint:docs": "bun scripts/lint-docs.ts"
   },
   "devDependencies": {
     "puppeteer-core": "^25.4.0"

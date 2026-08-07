@@ -1,4 +1,25 @@
-# Bun-native capabilities for the z-notes backend
+# 0005 — Bun platform foundation — the zero-dependency feasibility research
+
+> Founding document, retrofitted into the spec template when the repo adopted
+> the agent-first shape (ADR 0001 era). Archived here as a completed spec:
+> staleness is harmless, durable decisions live in `docs/decisions/`.
+
+## Problem Statement
+
+v1's zero-dependency, single-process design only works if Bun natively covers routing, static serving, SSE, sqlite+FTS5, file watching, git shell-out and browser-bundle generation — this had to be verified, not assumed, before the spec froze.
+
+## Solution
+
+Bun 1.3.x covers the whole surface with one sharp edge: `fs.watch` on macOS reports neither reliable event types nor filenames, so the watcher is a dumb doorbell and truth is re-derived from disk (this became the Reconciler). Findings verbatim under Implementation Decisions.
+
+## User Stories
+
+1. As the spec author, I want each platform capability verified with running code, so that v1's architecture doesn't rest on documentation claims.
+2. As the implementer, I want the sharp edges named with workarounds, so that known platform traps are designed around, not discovered.
+
+## Implementation Decisions
+
+The research, verbatim (headings demoted one level; section numbers unchanged and cited from code):
 
 **Bottom line:** Bun 1.3.14 covers essentially the whole backend surface z-notes needs — routing, static
 serving, SSE, WebSocket, FTS5 search, git shell-out, frontend bundling, and a single-file executable —
@@ -8,7 +29,7 @@ naively assume, and it happens to sit on the app's core requirement ("files also
 treats the watcher as a dumb "something moved" doorbell and re-derives truth from disk. Everything else is
 a straightforward yes.
 
-## Verification method
+### Verification method
 
 Every claim marked **[verified]** was executed locally on the target machine, not recalled from docs.
 
@@ -23,11 +44,11 @@ Bun 1.3.14 is the latest stable release as of 2026-07-31, so no upgrade is pendi
 
 ---
 
-## 1. `Bun.serve` — routing, static, SSE, WebSocket
+### 1. `Bun.serve` — routing, static, SSE, WebSocket
 
 All of the following ran in a single process against one `Bun.serve` call. **[verified]**
 
-### Routing
+#### Routing
 
 The `routes` object is declarative and handles every shape z-notes needs
 ([docs](https://bun.com/docs/api/http)):
@@ -55,7 +76,7 @@ Useful server-object surface: `server.url`, `server.port`, `server.pendingReques
 `server.pendingWebSockets`, `server.subscriberCount(topic)`, `server.requestIP(req)`,
 `server.timeout(req, seconds)`, `server.stop(force?)`, `server.ref()/unref()`.
 
-### Static file serving
+#### Static file serving
 
 `new Response(Bun.file(path))` is the primitive. **[verified]** results:
 
@@ -66,7 +87,7 @@ Useful server-object surface: `server.url`, `server.port`, `server.pendingReques
   caching is *not* free; you must add `ETag` (e.g. `Bun.hash` of contents, or `mtimeMs`-`size`) and
   handle `If-None-Match` yourself if you want browser caching of vault assets.
 
-### SSE — works, but one sharp edge that will bite
+#### SSE — works, but one sharp edge that will bite
 
 SSE is just a `ReadableStream` response. **[verified]** — including that the stream's `cancel()` callback
 fires on client disconnect, which is how you reap dead subscribers:
@@ -92,7 +113,7 @@ fires on client disconnect, which is how you reap dead subscribers:
 > anyway (proxies and laptop sleep/wake will still cut idle connections; the heartbeat plus the client's
 > native `EventSource` auto-reconnect is what actually makes it durable).
 
-### WebSocket
+#### WebSocket
 
 Full support including native pub/sub. **[verified]**: `server.upgrade(req, { data })` from inside a
 route, typed `ws.data`, `open`/`message`/`close` handlers, `ws.subscribe(topic)`,
@@ -106,9 +127,9 @@ plain HTTP GET.
 
 ---
 
-## 2. `bun:sqlite` — FTS5, WAL, prepared statements
+### 2. `bun:sqlite` — FTS5, WAL, prepared statements
 
-### FTS5 is available and complete **[verified]**
+#### FTS5 is available and complete **[verified]**
 
 Enumerated `pragma_compile_options()` directly. Present: `ENABLE_FTS5`, `ENABLE_FTS4`, `ENABLE_FTS3`,
 `ENABLE_RTREE`, `ENABLE_MATH_FUNCTIONS`, `ENABLE_SESSION`, `ENABLE_PREUPDATE_HOOK`, `ENABLE_SNAPSHOT`,
@@ -148,7 +169,7 @@ you want substring matching over code blocks and secret-block *labels*.
 >    Since the DB is a rebuildable index (see below) this is harmless, but if you want a clean single file:
 >    `db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0)` then `PRAGMA wal_checkpoint(TRUNCATE)`.
 
-### WAL and pragmas **[verified]**
+#### WAL and pragmas **[verified]**
 
 ```ts
 db.query("PRAGMA journal_mode = WAL").get();   // -> { journal_mode: "wal" }
@@ -163,7 +184,7 @@ read.
 ⚠️ Minor gotcha: multi-statement pragma strings via `.get()` don't return what you expect
 (`PRAGMA foreign_keys=ON; PRAGMA foreign_keys` returned `null`). Issue pragmas **one per call**.
 
-### Prepared statements **[verified]**
+#### Prepared statements **[verified]**
 
 - `db.query(sql)` — **caches** the compiled statement by SQL string. `db.prepare(sql)` — uncached.
   Use `query()` for hot paths, `prepare()` when you hold a long-lived handle.
@@ -186,11 +207,11 @@ disk are the source of truth (that is the whole point of the round-trip contract
 
 ---
 
-## 3. File watching — **the one genuinely hard part**
+### 3. File watching — **the one genuinely hard part**
 
 This is where the naive implementation is wrong. Findings below are all **[verified]** on macOS 26.5.
 
-### What works
+#### What works
 
 - `fs.watch(dir, { recursive: true })` **works**, and **does pick up directories created after the watch
   started**, plus files inside them. Verified: created `vault/newdir/` then `vault/newdir/c.md` after the
@@ -199,7 +220,7 @@ This is where the naive implementation is wrong. Findings below are all **[verif
   watcher threads ([1.3.14 notes](https://bun.com/blog/bun-v1.3.14)).
 - Deeply nested paths are reported relative to the watch root (`sub/deep/b.md`).
 
-### ⚠️ Failure 1: `eventType` is **always** `"rename"` — it carries zero information
+#### ⚠️ Failure 1: `eventType` is **always** `"rename"` — it carries zero information
 
 Across every operation type — create, in-place modify, **append**, truncating rewrite, rename, delete —
 the callback's first argument was `"rename"`. Never once `"change"`.
@@ -221,7 +242,7 @@ where Node reports `"change"` ([oven-sh/bun#23992](https://github.com/oven-sh/bu
 
 **Consequence: never branch on `eventType`.**
 
-### ⚠️ Failure 2: the *destination* of an intra-vault rename is never reported
+#### ⚠️ Failure 2: the *destination* of an intra-vault rename is never reported
 
 This is the dangerous one, because **it is exactly what an atomic save looks like**, and atomic save is
 what vim (`backupcopy=no`), VS Code, and most editors do by default.
@@ -241,12 +262,12 @@ watcher that trusts the reported filename would silently serve stale content for
 the precise failure the app exists to avoid. (Note the first row: when the temp file lives *outside* the
 watched tree the destination *is* reported. You cannot rely on which pattern a given editor uses.)
 
-### ⚠️ Failure 3: events are coalesced
+#### ⚠️ Failure 3: events are coalesced
 
 In a rapid-fire sequence, 9 filesystem operations produced 8 events, with the rename pair collapsed.
 Assume **event count ≠ operation count** and that events may be dropped under load.
 
-### The mitigation (validated end-to-end)
+#### The mitigation (validated end-to-end)
 
 Treat `fs.watch` purely as **"something in the vault moved — go look."** Ignore `eventType`, ignore
 `filename`, debounce, then reconcile against disk using `Bun.Glob` + `stat` + a content hash.
@@ -283,9 +304,9 @@ well clear of it — do **not** create one watcher per directory.
 
 ---
 
-## 4. `Bun.$` shell and `Bun.spawn` for git
+### 4. `Bun.$` shell and `Bun.spawn` for git
 
-### Quoting is safe by default **[verified]**
+#### Quoting is safe by default **[verified]**
 
 Interpolated values are escaped as single literal arguments — command injection through note filenames is
 not possible:
@@ -299,7 +320,7 @@ A realistic vault filename round-tripped intact: `my notes/2026-07 "q" & stuff.m
 `$.escape(str)` exposes the escaper; `${{ raw: "..." }}` is the deliberate opt-out
 ([docs](https://bun.com/docs/runtime/shell)). Arrays interpolate as space-separated escaped args.
 
-### Exit codes and stderr **[verified]**
+#### Exit codes and stderr **[verified]**
 
 ```ts
 const r = await $`git rev-parse --abbrev-ref HEAD`.cwd(repo).nothrow().quiet();
@@ -312,14 +333,14 @@ Non-zero exit **throws `ShellError`** by default (with `.exitCode`, `.stdout`, `
 opts out. `.quiet()` suppresses passthrough. Also verified: `.cwd()`, `.env()`, `.text()`, `.lines()`,
 `.json()`.
 
-### ⚠️ Sharp edge: `Bun.$` builtins shadow real binaries
+#### ⚠️ Sharp edge: `Bun.$` builtins shadow real binaries
 
 Bun Shell natively implements `cd, ls, rm, echo, pwd, cat, touch, mkdir, which, mv, exit, true, false,
 yes, seq, dirname, basename, bun`. These take precedence over `/bin/*`. `mv` notably **lacks cross-device
 support**. This is fine for `git` (never shadowed) but means shell one-liners can behave subtly unlike
 `zsh`.
 
-### Recommendation: use `Bun.spawn` for git, not `Bun.$`
+#### Recommendation: use `Bun.spawn` for git, not `Bun.$`
 
 Git sync involves a credential token, and `Bun.spawn` takes an **argv array with no shell parsing at
 all** — strictly stronger than escaping. **[verified]**:
@@ -348,9 +369,9 @@ hang the server forever. Always set `timeout`.
 
 ---
 
-## 5. `bun build` — frontend bundling, dev, single executable
+### 5. `bun build` — frontend bundling, dev, single executable
 
-### HTML entrypoints **[verified]**
+#### HTML entrypoints **[verified]**
 
 ```
 bun build ./src/index.html --outdir=dist --minify --sourcemap=linked
@@ -366,7 +387,7 @@ Bun crawls `<script>`/`<link>` from the HTML, transpiles TS, bundles CSS, conten
 into the entry. With it **[verified]**: a shared chunk plus a lazily-loaded `heavy-*.js` chunk. Relevant
 for lazily loading a heavy editor library or the AI panel.
 
-### Zero-build dev — yes, genuinely **[verified]**
+#### Zero-build dev — yes, genuinely **[verified]**
 
 Importing an HTML file into a route makes the dev server bundle on demand:
 
@@ -385,7 +406,7 @@ Log line: `Bundled page in 1ms`. So **dev needs no build step and no second proc
 
 Set `development: false` in production; leaving HMR on ships a dev runtime.
 
-### Backend hot reload **[verified]**
+#### Backend hot reload **[verified]**
 
 `bun --hot server.ts` re-evaluates the module in the **same process** and **preserves `globalThis`**:
 
@@ -398,7 +419,7 @@ Set `development: false` in production; leaving HMR on ships a dev runtime.
 So the SQLite handle, the SSE subscriber set, and the watcher can be parked on `globalThis` and survive
 edits. Combined with front-end HMR, `bun --hot server.ts` is the entire dev loop.
 
-### Single-file executable **[verified]**
+#### Single-file executable **[verified]**
 
 ```
 bun build --compile --minify --sourcemap ./server.ts --outfile znotes
@@ -430,9 +451,9 @@ folder is simpler to iterate on. Keep `--compile` as a v1.1 packaging step.
 
 ---
 
-## Recommendation
+### Recommendation
 
-### Backend shape
+#### Backend shape
 
 Not literally one file, but **one process, one entrypoint, and a handful of small modules**. A true
 single file would fuse the markdown round-trip parser, the indexer, and git sync into something
@@ -449,7 +470,7 @@ lib/ai.ts          # OpenAI-compatible proxy, streams through to client
 src/index.html     # frontend entry (HTML import in dev, bun build in prod)
 ```
 
-### Concrete parameters
+#### Concrete parameters
 
 | Parameter | Value | Why |
 |---|---|---|
@@ -469,7 +490,7 @@ src/index.html     # frontend entry (HTML import in dev, bun build in prod)
 | Static serving | `new Response(Bun.file(p))`; **add your own `ETag`/`If-None-Match`** | Bun emits none — verified |
 | Packaging | defer `--compile` to v1.1 | works fully, but 63 MB and `/$bunfs/root` complicates vault paths |
 
-### Endpoints vs static
+#### Endpoints vs static
 
 ```
 GET  /                    -> HTML shell (import in dev, dist/index.html in prod)
@@ -483,7 +504,7 @@ POST /api/git/{sync,commit} -> Bun.spawn git; progress over SSE
 POST /api/ai/chat         -> streaming proxy to the OpenAI-compatible endpoint
 ```
 
-### Watch → SSE pipeline (the validated design)
+#### Watch → SSE pipeline (the validated design)
 
 ```
 fs.watch(vault, {recursive:true})     // "something moved" doorbell; args discarded
@@ -498,7 +519,7 @@ fs.watch(vault, {recursive:true})     // "something moved" doorbell; args discar
 Server writes go through the same reconcile path, so there is exactly one code path that mutates the
 index, and self-inflicted events are suppressed by hash rather than by fragile echo-cancellation flags.
 
-### Key risk
+#### Key risk
 
 **File-watch fidelity is the only real risk, and it is a correctness risk, not a performance one.**
 `fs.watch` on macOS gives an event type that is always `"rename"` and a filename that, for intra-vault
@@ -513,7 +534,7 @@ bug if missed.
 
 ---
 
-## Sources
+### Sources
 
 - [Bun `Bun.serve` / HTTP docs](https://bun.com/docs/api/http)
 - [Bun `bun:sqlite` docs](https://bun.com/docs/api/sqlite)
@@ -526,3 +547,15 @@ bug if missed.
 - [oven-sh/bun#23992 — fs.watch reports `rename` where Node reports `change`](https://github.com/oven-sh/bun/issues/23992)
 - [nodejs/node#7420 — fs.watch `event` always `"rename"` on macOS](https://github.com/nodejs/node/issues/7420)
 - Local empirical verification: Bun 1.3.14 (rev `0d9b296a`), macOS 26.5.2 arm64, 2026-07-31
+
+## Testing Decisions
+
+The findings were verified by running code at research time (method section inside). Today the real enforcement is the app's own suite; `server/watch.ts` and `server/db.ts` cite the relevant sections for their design rationale.
+
+## Out of Scope
+
+Anything above the platform: product behavior, API shapes, UI. Non-Bun runtimes.
+
+## Further Notes
+
+Research document retrofitted as a completed spec: its numbers (versions, benchmarks) are frozen at research time (2026-07); the citations from `watch.ts`/`db.ts` reference the section numbers, which are stable.

@@ -8,7 +8,7 @@
    Migrations are "rebuild": on schema_version mismatch every index table is
    dropped and rebuilt from disk (credentials are carried across best-effort).
 
-   Sharp edges obeyed (docs/bun-capabilities.md):
+   Sharp edges obeyed (docs/specs/done/0005-bun-platform-foundation.md):
      - one PRAGMA per call (multi-statement pragma strings return nothing)
      - WAL + synchronous=NORMAL + busy_timeout=5000
      - strict:true statements (no $/:/@ sigils, throws on missing params)

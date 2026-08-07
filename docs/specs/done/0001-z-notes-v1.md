@@ -1,19 +1,46 @@
-# z-notes — build-ready spec (v1)
+# 0001 — z-notes v1 — the build-ready product spec
+
+> Founding document, retrofitted into the spec template when the repo adopted
+> the agent-first shape (ADR 0001 era). Archived here as a completed spec:
+> staleness is harmless, durable decisions live in `docs/decisions/`.
+
+## Problem Statement
+
+A single-user markdown note-taking app whose files on disk are the source of truth, self-hosted on a private network, with client-side secrets, git sync, an AI edit relay and a gated terminal — buildable in phases with zero framework dependencies.
+
+## Solution
+
+One Bun process serving a no-build frontend and a versioned HTTP/SSE contract; sqlite as a rebuildable cache over the vault; every decision below in the numbered sections. "SPEC §N" anywhere in the codebase refers to section N here.
+
+## User Stories
+
+1. As the vault's owner, I want my notes to be plain `.md` files on disk, so that no app lock-in ever exists.
+2. As the owner, I want edits from ANY tool (editor, git pull, this app) reconciled automatically, so that the app is a view, not a silo.
+3. As the owner, I want secrets encrypted in my browser before they touch the server, so that the server never holds plaintext.
+4. As the owner, I want every change committed and pushed automatically, so that history and backup are free.
+5. As the owner, I want an AI assistant that can only PROPOSE edits I accept/revert LIFO, so that it can never destroy work.
+6. As the owner, I want the terminal gated behind a password and per-command approval, so that AI-run commands are never autonomous.
+
+(Reconstructed at retrofit time — v1 predates the template.)
+
+## Implementation Decisions
+
+The entire v1 design, verbatim (headings demoted one level). The numbered sections are the canonical "SPEC §N" references used across code comments and tests:
 
 Single-user markdown note-tasking app. Files on disk are the source of truth; the app is a view over them.
 
 ---
 
-## 1. Goals & principles
+### 1. Goals & principles
 
 - **Markdown-first**: you write markdown; files are byte-faithful and always editable outside the app (vim, IDE). The app picks up external changes automatically.
-- **Decoupled frontend**: the UI talks *only* to the versioned HTTP/SSE contract ([API.md](API.md), normative v0). New frontends or a mobile app reuse the backend unchanged.
+- **Decoupled frontend**: the UI talks *only* to the versioned HTTP/SSE contract ([API.md](0002-http-api-v0.md), normative v0). New frontends or a mobile app reuse the backend unchanged.
 - **Bun-only toolchain**: `bun install` / `bun build` / `bun test`; no npm, no node. Backend is one bun process. sqlite via `bun:sqlite`.
 - **No data leakage**: secrets are encrypted client-side; plaintext never reaches disk, git, sqlite, logs, or the AI endpoint.
 
 **Out of scope for v1** (map: Out of scope + fog): HTML/PDF export, native mobile/desktop apps, task rollups/queries (fog — pull in later if wanted), AI delete/rename powers.
 
-## 2. Architecture
+### 2. Architecture
 
 ```
 ┌─ browser ──────────────────────────────────────────┐
@@ -32,14 +59,14 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 └────────────────────────────────────────────────────┘
 ```
 
-- Backend: one entrypoint plus small modules under `server/` — `index.ts`, `vault.ts`, `watch.ts`, `git.ts`, `ai.ts`, `db.ts`. Dev: `bun --hot server/index.ts` (zero build); prod: `bun build` HTML entrypoint, optionally `--compile` single executable. ([Bun capabilities](bun-capabilities.md))
+- Backend: one entrypoint plus small modules under `server/` — `index.ts`, `vault.ts`, `watch.ts`, `git.ts`, `ai.ts`, `db.ts`. Dev: `bun --hot server/index.ts` (zero build); prod: `bun build` HTML entrypoint, optionally `--compile` single executable. ([Bun capabilities](0005-bun-platform-foundation.md))
 - `Bun.serve` traps: `idleTimeout: 0` + ~20s heartbeat or SSE dies at 10s; `Bun.file` responses carry no ETag — add cache headers manually.
 - macOS `fs.watch` is a contentless doorbell (eventType always "rename"; atomic saves name only the temp file): never trust the payload — debounce 120ms, then reconcile `Bun.Glob` → `stat` → `Bun.hash` against sqlite, emit `doc-changed` on real differences only.
 - Git via `Bun.spawn` argv arrays (token never enters a shell string).
 
-## 3. API contract
+### 3. API contract
 
-[API.md](API.md) is normative v0: docs CRUD with opaque `rev` + 409 conflicts, `POST /api/docs` (doc/folder create), `/api/search` (server-side fuzzy, match offsets), `/api/settings` (server-declared `meta` drives UI option lists), `/api/sync/status`, AI sessions/messages/proposals with server-enforced LIFO, `/events` SSE (`doc-changed`, `sync-status`, `heartbeat`).
+[API.md](0002-http-api-v0.md) is normative v0: docs CRUD with opaque `rev` + 409 conflicts, `POST /api/docs` (doc/folder create), `/api/search` (server-side fuzzy, match offsets), `/api/settings` (server-declared `meta` drives UI option lists), `/api/sync/status`, AI sessions/messages/proposals with server-enforced LIFO, `/events` SSE (`doc-changed`, `sync-status`, `heartbeat`).
 
 **Deltas for the real backend** (mock conveniences to correct):
 
@@ -49,7 +76,7 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 4. `POST /api/ai/messages` streams (SSE or chunked) rather than returning a blob.
 5. Add `/api/terminal/*` (§13): status, unlock/lock, password, exec (SSE), stdin, cancel, and the assistant's command records. Every mutating route is inside the existing `/api/*` cross-site guard; every route except `status` needs the terminal bearer.
 
-## 4. Editor
+### 4. Editor
 
 - **Two modes**: Preview (rendered, **default**) and Raw (exact markdown source, monospace). Toggle: `⌘E`, or the **mode chip in the statusbar**. The chip is one muted word — `Preview` / `Raw` — carrying the same size and weight as the line and word counts beside it, and its `title` says both what a click does and the chord. It is **not** topbar chrome: which of two views of the same document you are looking at is *state*, and the statusbar is where this app says state; a 100px two-button segmented control was more furniture than the fact deserved. `#stMode`'s `data-mode` attribute is the contract everything else addresses it by (`syncModeUI`, the tests). It is never shed at any width — below 768px there is no `⌘E`, so the chip is the only way to reach Raw on a phone — and it is hidden on the settings route with the topbar's other document controls, because it acts on a document that is not on screen. Preview is still the mode a doc opens in. Lossless by construction — the source string itself is edited. Raw surface: CodeMirror 6 or a plain textarea (prototype proves textarea suffices); no TipTap, no AST bridge.
 - **Container parity**: both modes share the identical container (borders, padding, max-width, scroll). Only the text changes. Scroll position preserved across switches.
@@ -60,7 +87,7 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 - **Saving**: autosave debounce (default 10s, configurable), manual save button, `⌘S`. Save sends `{markdown, rev}`; statusbar shows saved/dirty state.
 - **The buffer is flushed at every boundary the page has, not just at `pagehide`.** The debounce is a `setTimeout`, and a frozen page runs no timers — iOS freezes a backgrounded tab at `visibilitychange` and may discard it without ever firing `pagehide`, so up to a full debounce of typing had no path to disk at all (measured: the canary text was not in the file after `hidden`, and was after `pagehide`). `visibilitychange → hidden` therefore runs exactly what `pagehide` runs: sync the raw buffer, then a silent `keepalive` save. The debounce stays at 10s — shortening it would be a worse fix for the same problem, since a frozen page cannot run a shorter timer either. A body over the browser's ~64KiB `keepalive` allowance is sent **without** `keepalive` rather than being rejected outright, because a rejected flush is silent loss proportional to how much was written. The mirror runs on the way back in: `visibilitychange → visible` and the `online` event reconnect the stream if it is not open, **retry the write**, and re-read the tree and the open doc. The retry is not optional: `doSaveDoc` clears the debounce *before* it attempts the `PUT` and only a keystroke re-arms it, so a save that failed while the network was down was the last attempt ever made — measured, the chip read "connected" beside an indicator reading "Unsaved changes" and the text was still not on disk 7.5× the debounce later. The heal's re-read deliberately cannot cover it (it returns immediately on a dirty buffer, so it can never clobber typing), and the flush is a no-op on a clean one. The returning flush is **not** `quiet`, unlike the leaving one: a page that is staying is exactly where the orphan veil, and a failure, have somebody to talk to.
 
-## 5. Data model, links, external edits
+### 5. Data model, links, external edits
 
 - A doc = any `.md` under the vault root; `.znotes/` excluded. Full IDE-parity file ops from the sidebar (create inline-named, rename, move, delete — destructive ops human-only, confirmed). Reachable three ways, all driving the same inline editor and the same confirm: the footer buttons + `⌘N`/`⇧⌘N`, the per-row hover actions + `F2`/`Del`, and a **context menu** (right-click, `⇧F10`/Menu with focus in the panel, or a **500ms long press** on a row). The menu carries an explicit PLACEMENT — the folder it was opened on, or the vault root on empty space. The long press is not a fourth surface, it is the same menu from the same `ctxTarget`: without it a phone had *no* route to rename, move or delete a **file**, because the hover actions are revealed by `:hover`/`:focus-within` and tapping a file row runs `openDoc`, which closes the drawer and takes the row and its actions off-canvas — reopening it moves focus to the Menu button, so the reveal is lost again (measured at 390×844: an unbreakable loop; folders escaped it only because their row toggles disclosure instead). It cancels on a 10px drag or a tree scroll, so a flick down the list is still a scroll, and it swallows exactly one trailing tap: a touch not consumed by `contextmenu` still emits compat `mousedown`→`click` at liftoff, which would otherwise close the menu on the gesture that opened it and open the doc underneath.
 - **Creation is context-aware and path-aware.** `⌘N` (doc) and `⇧⌘N` (folder) create *relative to what you are looking at*: the sidebar folder last clicked or focused → inside it; a doc row clicked/focused, or simply the open doc → its parent folder; nothing picked and nothing open → the vault root. Both gestures resolve the context identically, and every ancestor of it is expanded before the inline row mounts so the input is never buried in a collapsed subtree. The **input takes a path**, relative to that context: `abc` → `abc.md`, `a/b/c.md` → folders `a` and `a/b` then the doc, `abc/` → the **folder** `abc` (a trailing slash always means folder, in either mode — the only override the grammar has), a leading `/` re-bases on the vault root. A bare name gets `.md` because a doc *is* a `.md` file here, so `notes` can only mean `notes.md`. **The field explains nothing** — no hint line, no grammar in the placeholder: the second line under the input is mounted only to carry a *refusal* (a path the client rejects, or the server's `409`), which holds the row open with the typed name still in it.
@@ -72,9 +99,9 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 - sqlite (`.znotes/index.db`, untracked, WAL): doc index (path, rev, hash, mtime), FTS5 search, backlinks graph, AI chat history, proposal pre-images, credentials. Fully rebuildable except credentials/history; deleting it never loses notes.
 - **A corrupt index is PARKED, never deleted.** The tree, FTS and backlinks all rebuild from the markdown, but the GitHub token, the AI key, the terminal password hash and the whole proposal undo stack live here and nowhere else *by design* — so `rmSync` at boot threw four unrecoverable things away, silently, to fix a cache. The file is renamed to `.znotes/index.db.corrupt-<ts>` instead (the shape `identity.age.prev` already establishes), with its sidecars as `…corrupt-<ts>-wal` / `-shm` so the parked set is still a valid sqlite triple and the WAL — which can hold the most recent credential write — sits where `sqlite3 .recover` will find it. Each rename is individually guarded: the sidecars are simply absent after a clean shutdown, and a boot must not fail because of that. Recovery is manual and deliberate; what boot owes the user is only to not make it impossible.
 
-## 6. Secrets
+### 6. Secrets
 
-(full params in [secrets-crypto.md](secrets-crypto.md))
+(full params in [secrets-crypto.md](0004-secrets-client-side-crypto.md))
 
 - **age-in-a-fence**: standard age v1 PEM armor inside a ` ```age ` fence, via the `age-encryption` (typage) library. Per-block X25519 encryption to the committed vault recipient (`.znotes/vault.pub`); the identity lives in `.znotes/identity.age`, passphrase-wrapped with scrypt logN=18 (r=8, p=1).
 - One passphrase unlock per session, inside a dedicated **crypto Web Worker**; key held as a non-extractable CryptoKey; nothing in sessionStorage; auto-lock timeout. New blocks encryptable while locked (recipient is public).
@@ -89,7 +116,7 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 - **Change passphrase** (Settings › Secrets; research §5.3, the "routine" of its two operations): the crypto worker unwraps `identity.age` with the current passphrase and re-wraps the *same* identity under the new one (fresh scrypt salt, logN=18), then `PUT /api/vault/identity {replace:true}`. The vault key does not change, so `vault.pub` is untouched, no block is re-encrypted, and everything already in the corpus still decrypts. Same entropy floor as first-run, same generator. Key **rotation** — a new identity plus a decrypt-and-re-encrypt pass over every block — is a separate corpus-wide operation and is deliberately **not** offered in Settings; the UI says so, and says that older copies of `identity.age` in git history stay decryptable with the **old** passphrase.
 - **Where a secret lives — and why this panel's two password fields answer that oppositely.** The vault passphrase is **never stored**: not in sqlite, not in `.znotes/settings.toml`, not in `sessionStorage`, and it never reaches the server. What the backend holds is the passphrase-**wrapped** identity (`.znotes/identity.age`) plus the public recipient (`.znotes/vault.pub`), both committed with the vault — the server is a courier for two opaque strings and validates their shape only, which is what lets it never see a passphrase or a plaintext. The **terminal password** (§13) is the opposite by necessity: the *server* must verify that one, so it stores a scrypt **hash** of it and checks what is typed against it. Neither is recoverable; only the terminal one is checkable. Settings › Secrets states this next to the control.
 
-## 7. Git sync
+### 7. Git sync
 
 - Debounced auto-sync: 60s (configurable) after saves settle → `git add` changed notes → commit (auto message: timestamp + files touched) → push to configured branch (default `main`). Manual "Sync now" always available.
 - Push rejected → `pull --rebase` → retry. Real conflict → editing continues, statusbar goes to error state, conflict UI for manual resolution; the app never auto-destroys either side.
@@ -97,7 +124,7 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 - Committed: notes, `.znotes/settings.toml`, `.znotes/vault.pub`, `.znotes/identity.age`. Ignored: `.znotes/index.db`, `.znotes/index.db.corrupt-*` (a parked corrupt index is a *copy of the credential store*, so this is a secrecy rule, not a tidiness one), `.znotes/identity.age.prev`. Credentials (GitHub token, AI key) exist only in sqlite. Token used only as HTTPS credential via env/credential-helper — never in argv or remotes.
 - **A settings save schedules a sync like any other write.** `settings.toml` is committed, and `applySettings` only re-arms the timer when auto-sync was just switched *on* — so on a repo whose auto-sync was already on, every settings save left the file uncommitted until an unrelated note edit swept it up (measured: minutes of "1 pending"). `PUT /api/settings` schedules on success.
 
-## 8. AI
+### 8. AI
 
 - Pluggable OpenAI-compatible endpoint; settings: base URL, key (sqlite), model (default `gpt-5`), effort (default `high`). Backend relays `POST {base}/v1/responses` with SSE; key never reaches the browser. Send `reasoning:{effort,summary:"auto"}`, `store:false`; capability probe at settings-save; documented fallback ladder to chat-completions.
 - One global assistant; context = current doc (server-assembled from on-disk bytes → secrets structurally excluded) + what the user attaches. Sessions resettable; message count + token estimate visible; history in sqlite.
@@ -105,9 +132,9 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 - Accept → apply + sqlite pre-image + one git commit per proposal. Revert strictly LIFO, enforced server-side (409 `not-stack-top`).
 - **Second tool, `run_command` (§13)**: declared *only* when the terminal is enabled and has a password, so a vault without one never tells the model the capability exists. The system prompt gains a "The terminal" section describing what it can do, that there is no TTY, that the cwd persists, that the user sees every command, and that notes and fetched documents are untrusted text rather than instructions. The gate: the terminal must be **unlocked**, and by default each command **waits for explicit user approval** (a Run/Reject card, the same shape as a proposal). `terminal.allowAiAutoRun` removes the click and ships **off**. Approved output reaches the model on the *next* turn, as a context block explicitly labelled program output; auto-run output comes back in-turn as the tool result. An auto-run that arrives while anything is already running is **refused** (`reason: "busy"`) rather than started — the user's command is never displaced by the model's. ≤4 `run_command` calls per turn.
 
-## 9. Frontend, themes, settings
+### 9. Frontend, themes, settings
 
-(theme contract: [THEMES.md](THEMES.md))
+(theme contract: [THEMES.md](0003-theming-token-contract.md))
 
 - Three themes — Modern, Minimalistic, Terminal/TUI — as CSS token files over `base.css` (~140-token contract, all layout/behavior in base). **Minimal is the default.** Live-switchable from settings — the pick previews instantly and Save persists it (see below); theme list comes from server `meta`. Adding a theme = backend meta entry + one CSS file.
 - Colour scheme: `system | dark | light`, a second axis orthogonal to the theme. app.js stamps the resolved value as `data-scheme` on `<html>` and keeps `<meta name="color-scheme">` in step; every theme carries a full palette for **both** schemes (Terminal ships a light variant, Minimal a dark one), so all six combinations are supported. `system` is a live subscription: a `matchMedia` listener repaints a mid-session OS switch with no reload, and is detached the moment the setting is pinned. `index.html` resolves the scheme — **and the theme and the density** — synchronously in `<head>` from a cache of what was last applied, before the boot splash paints, so there is no flash of the wrong ground and no repaint into the right theme a frame later. A profile that has never run the app is the one case that cannot be resolved before the network, and costs exactly one repaint. `?theme=` and `?scheme=` override for one page load without persisting — and the vault cannot take the pin back: a `settings-changed` that moves a **pinned** axis is skipped by the adopt path (measured: a page opened at `/?theme=terminal` flipped to `minimal`, cache and all, the moment another device saved a theme, so a kiosk or screenshot tab changed appearance mid-session). The pin is spent the moment *this* client applies that axis on purpose — a Save, a Discard, or leaving Settings with a drafted look — because that is the user answering the question the URL pre-answered.
@@ -137,11 +164,11 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 - No `type="password"` inputs anywhere (browser password-manager must stay out): masked fields are text + `-webkit-text-security` + `autocomplete="off"`.
 - `.znotes/settings.toml` (committed): theme, density, color scheme, autosave seconds, home doc, trash retention days, branch, auto-sync, AI base URL/model/effort, terminal enabled/idle-lock/shell/starting directory/AI auto-run. sqlite (untracked): GitHub token, AI key, terminal password **hash**.
 
-## 10. Deployment
+### 10. Deployment
 
 Local **k3s** pod with automatic certificate generation → HTTPS (secure context for WebCrypto). Remote access via **Tailscale**. No app-level auth — cluster + tailnet are the perimeter; the passphrase guards only the vault identity. Vault volume mounted into the pod; git available in the image.
 
-## 11. Testing gates
+### 11. Testing gates
 
 - **Round-trip**: golden corpus — open/save cycles byte-identical for externally-written files (frontmatter, setext, `1)` lists, tabs, trailing spaces).
 - **Reconcile**: atomic-save simulation (temp+rename), identical-bytes suppression, burst debounce.
@@ -156,7 +183,7 @@ Local **k3s** pod with automatic certificate generation → HTTPS (secure contex
 - **The SSE watchdog keeps trying, and the middle state is rendered.** A black hole installed at the `EventSource` constructor (a stream that never opens and never errors — the exact boundary the recovery is written against) with the page's clock scaled so the 50s threshold and the 1→2→4→15s walk are reached in real seconds. A stuck reconnect is retried at least four times with never-shrinking gaps and never a 5s storm, the chip never says "connected" over it, and an open-but-silent stream renders "no signal" *before* the reconnect rather than having it written and replaced inside one task.
 - **iOS zoom floor**: at 390px every text field in the document computes ≥16px, and the same probe at 1440px shows the floor has *not* leaked onto the desktop. It is a **sweep over every field actually mounted**, not a list of remembered ones — the failure is per-field and a field added later would reintroduce it silently — with the four the checklist names asserted by name afterwards so the gate cannot pass by finding none of them mounted.
 
-## 12. Implementation order
+### 12. Implementation order
 
 1. Backend core: vault scan, docs API, watch→reconcile→SSE, sqlite index/FTS (frontend runs against it by swapping the SW mock out — zero frontend changes expected).
 2. Git sync (runner, debounce, statusbar states).
@@ -166,7 +193,7 @@ Local **k3s** pod with automatic certificate generation → HTTPS (secure contex
 6. Packaging (image, k3s manifests, cert automation) + test gates in CI.
 7. Terminal (§13): runner, password + sessions, SSE exec, `run_command` tool and its approval gate.
 
-## 13. Terminal
+### 13. Terminal
 
 Deliberate, user-requested command execution on the user's own machine, in their own vault — a way to see, commit, sync and unwedge things without leaving the app.
 
@@ -178,3 +205,15 @@ Deliberate, user-requested command execution on the user's own machine, in their
 - **Failure modes.** Wrong password: constant-time compare, and a full decoy derivation when no password is set — built off the request path, so the FIRST attempt costs the same either way and `POST /api/terminal/unlock` is not an oracle for whether one exists in its timing any more than in its wording. Three free attempts, then exponential backoff to 60 s (429 with `retryAfterMs`), counted per calling address: a limiter on one global counter is one peer away from being a lockout for everyone else. Changing an existing password requires the current one or a live session. `settings.toml` can carry `[terminal] password = "…"` to bootstrap a fresh install — absorbed, hashed, stripped from the file, never committed — and is **ignored and stripped** if one is already set, so a synced file cannot take the terminal. The password never appears in a response, a log line, an SSE payload or the settings object; command output is never written to the vault or to git, and a transcript that contains age armor is withheld from the durable record entirely — it would otherwise put armor in sqlite (§11) and, being replayed into every later context, would make the relay's canary refuse every subsequent turn.
 - **UI.** A Terminal section on the Settings page (`/settings/terminal` — §9), in the existing chrome: lock state row, password field, unlock, the settings, then the console — cwd, monospace scrollback, prompt with ↑/↓ history, Ctrl+C to cancel, Ctrl+D for EOF, Ctrl+L to clear. Stop and Ctrl+C follow the SERVER's `running`, so a command another tab or the assistant started can be cancelled from here too — the refusal that names Ctrl+C is never a dead end. No `type="password"` anywhere (§9): text + `.masked`. ANSI is stripped rather than half-rendered — statefully per stream, so an escape split across two chunks is still an escape.
 - **AI access** — see §8 for the tool and the gate.
+
+## Testing Decisions
+
+The five acceptance gates in §11 (round-trip, reconcile, LIFO, leak canary, browser parity) are `bun run gates`; §12's phases each carried their own test files — see `tests/`.
+
+## Out of Scope
+
+Multi-user, public exposure, mobile-native apps, real-time collaborative editing, plugin systems. Anything not in the numbered sections was out of scope for v1.
+
+## Further Notes
+
+Amendments were folded in place over the build (marked "amendment N" where they changed earlier text). The platform research that de-risked these choices is [0005-bun-platform-foundation.md](0005-bun-platform-foundation.md).

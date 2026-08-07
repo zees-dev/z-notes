@@ -1,11 +1,33 @@
-# z-notes API — v0
+# 0002 — HTTP/SSE API v0 — the normative contract
+
+> Founding document, retrofitted into the spec template when the repo adopted
+> the agent-first shape (ADR 0001 era). Archived here as a completed spec:
+> staleness is harmless, durable decisions live in `docs/decisions/`.
+
+## Problem Statement
+
+The frontend, tests and any future client need one exact, versioned description of every route, body, error shape and SSE event — precise enough that the backend can be replaced without the frontend noticing.
+
+## Solution
+
+A v0 contract: JSON bodies, opaque doc revs with 409 CAS conflicts, stable error slugs in `{error, message, ...extra}` bodies, and an SSE bus. The full contract is under Implementation Decisions; ADR [0002](../../decisions/0002-http-api-v0-error-shape.md) records its durable rules.
+
+## User Stories
+
+1. As the frontend, I want every route's request/response shape fixed, so that `api.js` is the only file that knows HTTP.
+2. As the test suite, I want error slugs and key order stable, so that black-box assertions can compare serialized bytes.
+3. As a future client (phone, CLI), I want the contract self-sufficient, so that I can implement against this document alone.
+
+## Implementation Decisions
+
+The contract, verbatim (headings demoted one level):
 
 The frontend in `app/` talks to **nothing but this contract**. `api.js` is the
 only file that opens a socket; the rest of the frontend has no `fetch`. Anything that
 serves these routes can sit behind it — the bun backend is the implementation, and the
 frontend does not change if the implementation does.
 
-## Conventions
+### Conventions
 
 - **Base.** Every path below is relative to an API root — `/` in production
   (so `GET /api/docs`); `api.js` resolves paths against `new URL('./', import.meta.url)`,
@@ -25,7 +47,7 @@ frontend does not change if the implementation does.
   typed; the index stores each document twice (row + FTS shadow) inside the vault, so an
   unbounded body is a disk and memory cost with no legitimate caller.
 
-## Status codes
+### Status codes
 
 | Code | Meaning |
 |---|---|
@@ -41,9 +63,9 @@ frontend does not change if the implementation does.
 
 ---
 
-## Docs
+### Docs
 
-### `GET /api/docs`
+#### `GET /api/docs`
 
 The vault tree. Folders carry children; files carry metadata only, never content.
 
@@ -66,7 +88,7 @@ The vault tree. Folders carry children; files carry metadata only, never content
 `slug` is what `[[wiki-links]]` resolve against. `open` is the server's remembered
 disclosure state — advisory; the client may override it locally.
 
-### `GET /api/docs/{path}`
+#### `GET /api/docs/{path}`
 
 ```json
 {
@@ -84,7 +106,7 @@ disclosure state — advisory; the client may override it locally.
 
 `404 {"error":"not-found"}` for an unknown path.
 
-### `PUT /api/docs/{path}`
+#### `PUT /api/docs/{path}`
 
 ```json
 { "markdown": "# z-notes design\n…", "rev": "r7" }
@@ -96,7 +118,7 @@ disclosure state — advisory; the client may override it locally.
 `/events` to every client (including the writer — compare `rev` to your own to ignore your
 echo). Also nudges sync into `syncing` and back to `synced`.
 
-### `POST /api/docs`
+#### `POST /api/docs`
 
 Create a doc or a folder.
 
@@ -126,7 +148,7 @@ Refusals — nothing is written by any of them:
 A doc path gets `.md` appended if it lacks it, so `{"path":"a/b/c"}` with `type:"doc"` creates
 `a/b/c.md` and the reply names the `.md` path.
 
-### `PATCH /api/docs/{path}` — rename / move *(SPEC §3 delta 2)*
+#### `PATCH /api/docs/{path}` — rename / move *(SPEC §3 delta 2)*
 
 ```json
 { "to": "archive/2026/z-notes-design.md" }
@@ -186,7 +208,7 @@ byte, and ciphertext is never edited.
 Emits the `doc-changed` pair described under [Events](#events) for every moved path, plus
 `"reason":"write"` for every doc whose links were rewritten.
 
-### `DELETE /api/docs/{path}`
+#### `DELETE /api/docs/{path}`
 
 → `204`, no body. Moves a doc, or a folder and everything under it, to a
 self-describing entry below `.znotes/trash/<id>/`. The departure and retained copy land in
@@ -207,13 +229,13 @@ something used to be there. Restoring the entry makes those links resolve again.
 
 ---
 
-## Trash
+### Trash
 
 The trash is outside the document namespace. Its payload lives under `.znotes/trash/`,
 which the vault scan, search, backlink graph and AI context all exclude. Each entry has an
 opaque id, a `meta.json` record, and a `files/` subtree mirroring its original vault path.
 
-### `GET /api/trash`
+#### `GET /api/trash`
 
 ```json
 {
@@ -244,7 +266,7 @@ since the deletion reports `restorable:false` and names that path in `blockedBy`
 
 `GET /api/trash/{id}` returns one entry in the same shape or `404 not-found`.
 
-### `POST /api/trash/{id}/restore`
+#### `POST /api/trash/{id}/restore`
 
 Restores the exact payload to its original path, creating missing ancestor folders. It
 never overwrites: `409 restore-blocked` names the path occupying the destination (or an
@@ -253,12 +275,12 @@ markdown and non-markdown payload back together. → `200` with the restored `pa
 doc paths, and doc metadata when the entry itself is a doc. Emits `doc-changed` with
 `"reason":"restored"` for every restored doc, then `trash-changed`.
 
-### `DELETE /api/trash/{id}`
+#### `DELETE /api/trash/{id}`
 
 Permanently removes one retained entry. → `204`, no body. There is no restore or undo after
 this route. Emits `trash-changed`.
 
-### `POST /api/trash/purge`
+#### `POST /api/trash/purge`
 
 With no body (or `{}`), applies the retention policy now. With `{"all":true}`, permanently
 empties the trash including entries whose window has not expired. →
@@ -270,13 +292,13 @@ bounded to 1–365 days; zero never means “delete immediately”.
 
 ---
 
-## Secrets
+### Secrets
 
 Decryption is client-side (SPEC §3 delta 1): no passphrase ever reaches the server. Every
 `/api/secrets/*` request answers `404 {"error":"secrets-client-side"}` — a stable slug
 clients branch on. The client uses the vault keyring routes below plus a crypto Web Worker.
 
-### The vault keyring
+#### The vault keyring
 
 Three routes. They move **ciphertext and a public key,
 nothing else**: the identity arrives already encrypted under the user's passphrase (age
@@ -287,7 +309,7 @@ The two files these routes own — `.znotes/identity.age` and `.znotes/vault.pub
 of the committed set (SPEC §7); a successful `PUT` schedules a sync so the new keyring is
 committed like any other change.
 
-#### `GET /api/vault/identity`
+##### `GET /api/vault/identity`
 
 → `200 text/plain; charset=utf-8` — the ASCII-armored contents of `.znotes/identity.age`,
 verbatim, ending in a newline. This is the **only** non-JSON success body in the contract:
@@ -301,7 +323,7 @@ offers to create one; a 404 here with a `200` there is a keyring missing its pri
 which `PUT` will refuse with `409 exists` — so "offer to create one" would be a dead end
 (SPEC §6). It is never a failure of the route.
 
-#### `GET /api/vault/recipient`
+##### `GET /api/vault/recipient`
 
 ```json
 { "recipient": "age1hrn8rnnreh22tzvz7m9x42crd2vxjfxe6aqustzncaprt5sq650std0rv0" }
@@ -311,7 +333,7 @@ The `age1…` X25519 public key from `.znotes/vault.pub`. Public by construction
 what lets a client encrypt a **new** secret block while the vault is still locked.
 `404 {"error":"no-identity"}` if absent.
 
-#### `PUT /api/vault/identity`
+##### `PUT /api/vault/identity`
 
 ```json
 { "identity": "-----BEGIN AGE ENCRYPTED FILE-----\n…", "recipient": "age1…", "replace": false }
@@ -339,7 +361,7 @@ replace of one opaque string by another: the passphrase never appears in a reque
 `recipient` is identical before and after — which is the wire-level tell that the vault key
 was *not* rotated and no block needs re-encrypting.
 
-### `GET /vendor/age.js` *(asset, not an API route)*
+#### `GET /vendor/age.js` *(asset, not an API route)*
 
 The `age-encryption` (typage) browser bundle, built in memory at server start from
 `vendor/age-entry.js` and served to the crypto worker. `/vendor/age.js` is a `302` with
@@ -350,9 +372,9 @@ the bundle failed to build — the client then disables secrets features and say
 
 ---
 
-## Search
+### Search
 
-### `GET /api/search?q=&limit=`
+#### `GET /api/search?q=&limit=`
 
 Fuzzy (subsequence) match over doc paths **and** content lines. Scoring, snippet windowing
 and the match indices are the server's job so every client highlights identically.
@@ -375,9 +397,9 @@ An empty `q` returns every doc as `kind:"doc"`, unscored, path-ordered.
 
 ---
 
-## Settings
+### Settings
 
-### `GET /api/settings`
+#### `GET /api/settings`
 
 ```json
 {
@@ -576,7 +598,7 @@ is not evidence about the one configured now and is ignored; changing the endpoi
 the recorded turn outcome for the same reason. With no signal at all the state is
 `unknown` — never `ok`.
 
-### `PUT /api/settings`
+#### `PUT /api/settings`
 
 A **partial** settings object (deep-merged one level into `settings`).
 
@@ -619,9 +641,9 @@ and the AI model/effort/budgets by the relay on the next turn.
 
 ---
 
-## Sync
+### Sync
 
-### `GET /api/sync/status`
+#### `GET /api/sync/status`
 
 ```json
 { "state": "synced", "branch": "main", "remote": "origin/main",
@@ -639,7 +661,7 @@ which case sync still commits locally and `message` says `local only`. `offline`
 vault directory is not a git repository at all (`message: "not a git repository"`); the
 server is otherwise fully functional. `ahead`/`behind` are `0` until an upstream exists.
 
-### `POST /api/sync/now`
+#### `POST /api/sync/now`
 
 Manual **Sync now**. Runs the same pipeline as the debounced auto-sync — stage the tracked
 set (`*.md`, `.znotes/settings.toml`, `.znotes/vault.pub`, `.znotes/identity.age`; never
@@ -665,14 +687,14 @@ that state; resolve in the vault repo and call this again.
 
 ---
 
-## AI
+### AI
 
 Wire protocol to the model is the backend's business (ticket 10: `POST {baseUrl}/v1/responses`
 with `reasoning.effort`, relayed server-side so the key never reaches the browser, edits
 proposed through one strict `propose_edits` function tool returning anchored search/replace
 spans). None of that is visible here: the frontend sees sessions, messages and proposals.
 
-### Session object
+#### Session object
 
 ```json
 {
@@ -702,11 +724,11 @@ attach; the client displays it and never computes its own. (Real backend: a true
 BPE count, not a character heuristic.) A session also carries `degraded` — the same array as
 `meta.ai.degraded` — whenever the relay has had to downgrade the request shape.
 
-### `GET /api/ai/sessions/current`
+#### `GET /api/ai/sessions/current`
 
 → `200` session object. Always exists (created lazily).
 
-### `GET /api/ai/status` · `POST /api/ai/status`
+#### `GET /api/ai/status` · `POST /api/ai/status`
 
 ```json
 { "status": { "state": "ok", "model": "gpt-5", "effort": "high", "…": "…" },
@@ -726,13 +748,13 @@ the fresh verdict. Unlike the boot and settings-save probes it *is* awaited: it 
 the "check it now" affordance on the statusbar, which is a question the user is waiting for
 an answer to. Body is ignored. → `200`, or `405` for any other method.
 
-### `POST /api/ai/sessions`
+#### `POST /api/ai/sessions`
 
 Body: `{}` or `{ "keepStack": true }`. Starts a fresh session; the thread is cleared and a
 `{"role":"system","kind":"divider"}` message opens the new one. → `201` session object.
 **The change stack is not touched** — clearing context drops the thread, not the doc history.
 
-### `POST /api/ai/messages`
+#### `POST /api/ai/messages`
 
 ```json
 { "content": "yes, add it", "docPath": "architecture/z-notes-design.md" }
@@ -751,7 +773,7 @@ Body: `{}` or `{ "keepStack": true }`. Starts a fresh session; the thread is cle
 }
 ```
 
-#### Streaming *(SPEC §3 delta 4)*
+##### Streaming *(SPEC §3 delta 4)*
 
 The backend **streams** this route instead of returning the blob above. The response is
 `200 text/event-stream; charset=utf-8` (`cache-control: no-store`, `x-accel-buffering: no`,
@@ -857,7 +879,7 @@ therefore invisible to the assistant — flush before asking. A payload that sti
 age armor is **refused, not stripped**: the turn fails with an `error` event naming the leak
 canary and no request is made.
 
-### Proposal object
+#### Proposal object
 
 ```json
 {
@@ -894,7 +916,7 @@ indentation is never normalized), and no edit span intersects an encrypted block
 are fed back to the model as the tool result for at most two retries inside the same turn —
 the UI is never offered an Accept button for an edit that cannot apply.
 
-### `GET /api/ai/proposals`
+#### `GET /api/ai/proposals`
 
 ```json
 { "proposals": [ "…proposal objects…" ],
@@ -904,7 +926,7 @@ the UI is never offered an Accept button for an edit that cannot apply.
 
 `stack` is oldest → newest.
 
-### `POST /api/ai/proposals/{id}/accept`
+#### `POST /api/ai/proposals/{id}/accept`
 
 Body: `{}`. Applies the edits, snapshots the pre-image, pushes onto the change stack.
 
@@ -939,7 +961,7 @@ applies (a vault mid-merge, a tracked `index.db`, a credential in `settings.toml
 the commit); a vault that is not a git repository still applies the edit and records the
 reason in `commitNote`.
 
-### `POST /api/ai/proposals/{id}/revert`
+#### `POST /api/ai/proposals/{id}/revert`
 
 **LIFO is enforced by the server, not the UI.** Reverting anything but the top of the stack is
 
@@ -964,14 +986,14 @@ pull` — the revert is refused rather than clobbering that work:
 Reverting a proposal whose `op` was `create` removes the document it created (that path then
 reports `removed: true` on `doc-changed`).
 
-### `POST /api/ai/proposals/{id}/reject`
+#### `POST /api/ai/proposals/{id}/reject`
 
 Marks a **pending** proposal `rejected` (a dismissal, not an edit). `409 {"error":"applied"}`
 if it is on the stack — revert first. → `200 { "proposal": … }`.
 
 ---
 
-## Terminal *(SPEC §13)*
+### Terminal *(SPEC §13)*
 
 A password-locked **streaming command runner** on the machine the vault lives on. It is not a
 terminal emulator and does not pretend to be one: bun has no PTY, so full-screen and
@@ -995,7 +1017,7 @@ of `/api/*` (`403 cross-site`).
 lives server-side (sqlite `credentials`); `GET /api/settings` reports its existence as
 `terminal.passwordSet: true|false` and nothing more.
 
-### `GET /api/terminal/status`
+#### `GET /api/terminal/status`
 
 The only unauthenticated route. Capability, never content. Sending a bearer additionally
 reports whether *that* token is live.
@@ -1016,7 +1038,7 @@ assistant): it is what a client drives its Stop affordance from, because a comma
 did not start is still a command this tab must be able to cancel. `retryAfterMs` is the
 *calling address's* own unlock backoff, never anyone else's.
 
-### `POST /api/terminal/unlock`
+#### `POST /api/terminal/unlock`
 
 ```
 { "password": "…" }
@@ -1038,11 +1060,11 @@ reset on a successful unlock and a blocked caller cannot succeed.
 The token is a bearer, not a cookie: a cookie is ambient authority the browser attaches to
 every same-origin request. It is never persisted, so a reload re-locks.
 
-### `POST /api/terminal/lock`
+#### `POST /api/terminal/lock`
 
 Drops the caller's session. → `200 { …status… }`. Idempotent.
 
-### `POST /api/terminal/password`
+#### `POST /api/terminal/password`
 
 ```
 { "password": "<new, or \"\" to clear>", "current": "<required if one is set>" }
@@ -1059,7 +1081,7 @@ it is hashed into sqlite and stripped from the file on the next write, so it is 
 committed. It is **ignored and stripped** if a password already exists, so a settings.toml
 synced from another machine cannot take the terminal.)*
 
-### `POST /api/terminal/exec` — `text/event-stream`
+#### `POST /api/terminal/exec` — `text/event-stream`
 
 ```
 { "command": "git status --short" }
@@ -1096,7 +1118,7 @@ arrives as `event: error` with `{error, message}`; one that happens before is or
 Closing the response cancels the command — a browser that navigates away does not leave a
 build running.
 
-### `POST /api/terminal/stdin`
+#### `POST /api/terminal/stdin`
 
 ```
 { "data": "y\n", "eof": false, "id": "cmd_ms…" }   → 200 { "ok": true, "id": "cmd_ms…" }
@@ -1111,7 +1133,7 @@ is the prompt in front of *them*, so a client whose idea of the running command 
 not be able to feed a passphrase to a different process. It is optional only for a caller with
 no id to offer; the app always sends one.
 
-### `POST /api/terminal/cancel`
+#### `POST /api/terminal/cancel`
 
 ```
 { "id": "cmd_ms…" }   → 200 { "cancelled": true, "id": "cmd_ms…" }
@@ -1125,7 +1147,7 @@ nothing was.
 Closing a streamed response cancels **that** command and only that one — a teardown that
 arrives after the command it belonged to has finished never reaches past it.
 
-### `GET /api/terminal/commands?limit=`
+#### `GET /api/terminal/commands?limit=`
 
 The **assistant's** command records, oldest first. Only AI-originated commands are recorded —
 what the user types into their own shell is theirs and is never stored or replayed into a
@@ -1152,13 +1174,13 @@ which SPEC §11 says armor never reaches) and replayed into every later model co
 the relay's canary refuses outright). The user still saw the real bytes stream past in their
 own scrollback.
 
-### `POST /api/terminal/commands/{id}/run` — `text/event-stream`
+#### `POST /api/terminal/commands/{id}/run` — `text/event-stream`
 
 The **Run** button on an assistant command card. Streams exactly like `exec`, so approved
 output lands in the same scrollback as anything the user typed. `409 already-run`,
 `409 rejected`, `409 busy`, `404 not-found`.
 
-### `POST /api/terminal/commands/{id}/reject`
+#### `POST /api/terminal/commands/{id}/reject`
 
 ```
 → 200 { "command": { …record, "state": "rejected"… } }
@@ -1168,9 +1190,9 @@ output lands in the same scrollback as anything the user typed. `409 already-run
 
 ---
 
-## Events
+### Events
 
-### `GET /events` — `text/event-stream`
+#### `GET /events` — `text/event-stream`
 
 One long-lived stream per client. `Cache-Control: no-store`, `idleTimeout: 0` on the real
 server (Bun kills SSE at 10 s otherwise — ticket 8), heartbeat every 20 s so proxies and the
@@ -1302,9 +1324,9 @@ and whatever doc is open. Settings do not move it — see `settings-changed` abo
 
 ---
 
-## App shell
+### App shell
 
-### `GET /d/{path}` — the doc URL
+#### `GET /d/{path}` — the doc URL
 
 Not an API route: the SPA shell. The frontend gives every open doc its own URL so a doc can
 be linked, refreshed into, and walked back to with the browser's Back button, and `/d/` is
@@ -1327,7 +1349,7 @@ Because the shell is served from more than one depth, `index.html` carries `<bas
 root in `api.js` and the crypto worker's URL resolving against the app root instead of
 against whatever doc URL is in the address bar.
 
-### `GET /settings`, `GET /settings/{section}` — the settings page
+#### `GET /settings`, `GET /settings/{section}` — the settings page
 
 The frontend's other routing space, and the same kind of thing as `/d/{path}`: Settings is a
 **page** in the editor pane, not a modal, so it has a real address that can be deep-linked,
@@ -1340,3 +1362,15 @@ Same response as `/d/{path}`: `index.html` byte-for-byte, same `ETag`, `GET`/`HE
 
 This is **not** `/api/settings` and never shadows it — the API lives under `/api/*`, which is
 matched first, so the read/write surface documented above is untouched by this route.
+
+## Testing Decisions
+
+The whole `tests/` suite is the contract's enforcement: `tests/helpers.ts` (HTTP seam), `tests/api.test.ts`, `tests/routing.test.ts`, and the browser suites. Any contract change starts as a new spec, never an edit here.
+
+## Out of Scope
+
+Auth (the network is the perimeter — SPEC §10), API versioning machinery (v0 is the only version), pagination.
+
+## Further Notes
+
+Originally authored against a service-worker mock before the backend existed; the mock is long deleted and this text describes the real server.

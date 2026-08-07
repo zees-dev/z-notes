@@ -75,6 +75,17 @@ jobs:
           if [ "$fail" -ne 0 ]; then exit 1; fi
           echo "bun-only: bun.lock present, no npm/yarn/pnpm/node artifacts."
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # The agent-first repo shape is mechanically enforced: AGENTS.md stays a
+      # ≤100-line map, doc links resolve, specs carry their template, server/
+      # layering is forward-only, app/ leaves stay leaves. Zero-dep script, so
+      # no bun install is needed here.
+      - name: lint-docs (repo shape, links, layering)
+        run: bun run lint:docs
+
       - name: No .skip / .only / .todo in test files
         run: |
           set -uo pipefail

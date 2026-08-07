@@ -1,4 +1,27 @@
-# Secrets crypto design — inline encrypted ```` ```age ```` blocks
+# 0004 — Secrets — client-side age crypto for inline encrypted blocks
+
+> Founding document, retrofitted into the spec template when the repo adopted
+> the agent-first shape (ADR 0001 era). Archived here as a completed spec:
+> staleness is harmless, durable decisions live in `docs/decisions/`.
+
+## Problem Statement
+
+Notes must be able to carry secrets (keys, credentials) in ordinary markdown files that are committed to git — without the server, the index, the AI relay or the remote ever seeing plaintext, and without hand-rolling cryptography.
+
+## Solution
+
+age v1 file format inside fenced ```age blocks, produced by the `age-encryption` (typage) library in the BROWSER: an X25519 vault key per block, the identity itself passphrase-wrapped (scrypt logN=18) in a committed keyring. The server stores and serves ciphertext, validates shape only. ADR [0004](../../decisions/0004-secrets-are-client-side-age.md) records the durable parameters.
+
+## User Stories
+
+1. As the owner, I want to reveal a secret block with one passphrase per session, so that secrets are usable without being stored open.
+2. As the owner, I want ciphertext committed like any other text, so that sync and history need no special casing.
+3. As the owner, I want the AI relay structurally unable to see plaintext, so that no prompt can exfiltrate a secret.
+4. As the owner, I want degradation over plain HTTP (blocks stay locked, badge explains), so that an insecure context fails safe.
+
+## Implementation Decisions
+
+The design and its research, verbatim (headings demoted one level):
 
 Scope: the on-disk format, KDF, cipher, key lifecycle and leak-surface rules for
 inline encrypted regions in z-notes. Everything client-side, no external
@@ -13,9 +36,9 @@ under a **passphrase + scrypt (logN=18)** keyring file. Full parameters in
 
 ---
 
-## 1. KDF: PBKDF2 (WebCrypto) vs Argon2id (WASM) vs scrypt (pure JS)
+### 1. KDF: PBKDF2 (WebCrypto) vs Argon2id (WASM) vs scrypt (pure JS)
 
-### 1.1 What the standards say (verified today)
+#### 1.1 What the standards say (verified today)
 
 OWASP's Password Storage Cheat Sheet currently recommends
 ([source](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)):
@@ -35,7 +58,7 @@ memory above 64 MiB breaks iOS autofill
 point is the practical ceiling for browser/mobile clients: memory-hard KDFs are
 constrained by the *client's* memory budget, not the server's.
 
-### 1.2 Argon2id in a browser needs WASM, and the WASM options are stale
+#### 1.2 Argon2id in a browser needs WASM, and the WASM options are stale
 
 Argon2 is **not** available in WebCrypto. It appears in the WICG
 ["Modern Algorithms in the Web Cryptography API"](https://wicg.github.io/webcrypto-modern-algos/)
@@ -60,7 +83,7 @@ threaded WASM with `p=4` costs the defender 4 lanes of *serial* work while an
 attacker with real threads gets the parallelism for free. If Argon2id is ever
 used here, use **p=1**.
 
-### 1.3 Measured KDF cost in JS (noble's own benchmark suite)
+#### 1.3 Measured KDF cost in JS (noble's own benchmark suite)
 
 From [@noble/hashes README benchmarks](https://github.com/paulmillr/noble-hashes#benchmarks):
 
@@ -85,9 +108,9 @@ alignment (irrelevant here) and zero dependencies.
 
 ---
 
-## 2. Prior art
+### 2. Prior art
 
-### 2.1 age (the format)
+#### 2.1 age (the format)
 
 Spec: [C2SP `age.md`](https://github.com/C2SP/C2SP/blob/main/age.md) (canonical
 home of `age-encryption.org/v1`). Relevant mechanics:
@@ -119,7 +142,7 @@ defaults to 18 and hard-rejects logN>20 on decrypt
 ([recipients.ts](https://github.com/FiloSottile/typage/blob/main/lib/recipients.ts)).
 Stay at 18 to keep both sides happy.
 
-### 2.2 typage / `age-encryption` (the library)
+#### 2.2 typage / `age-encryption` (the library)
 
 [FiloSottile/typage](https://github.com/FiloSottile/typage) — TypeScript
 implementation by age's author.
@@ -150,7 +173,7 @@ implementation by age's author.
   *format* is specified and implemented by `age` (Go) and `rage` (Rust) — a dead
   library never means unrecoverable data.
 
-### 2.3 Obsidian plugins
+#### 2.3 Obsidian plugins
 
 - **Meld Encrypt** ([repo](https://github.com/meld-cp/obsidian-encrypt), v2.4.5,
   2025-07-12) — current in-place scheme (`CryptoHelper2304`, source read
@@ -179,7 +202,7 @@ implementation by age's author.
 
 ---
 
-## 3. Why per-block passphrase KDF is the wrong default
+### 3. Why per-block passphrase KDF is the wrong default
 
 The obvious design — every ```` ```secret ```` block carries its own salt and is
 derived straight from the passphrase — has four concrete failures:
@@ -208,9 +231,9 @@ the CLI recovery recipe. Worth it.
 
 ---
 
-## 4. Block format
+### 4. Block format
 
-### 4.1 On-disk shape
+#### 4.1 On-disk shape
 
 ````markdown
 ```age
@@ -240,7 +263,7 @@ Rules:
   must treat the fence as a
   verbatim-preserved node including indentation.
 
-### 4.2 Round-trip and git behaviour
+#### 4.2 Round-trip and git behaviour
 
 - CommonMark treats fenced-code content as literal text — no escaping, no
   entity mangling, no smart quotes. This is the single safest container in
@@ -258,27 +281,24 @@ Rules:
   the app must loudly flag any `age` fence whose body fails armor parsing or MAC
   verification.
 
-### 4.3 CLI escape hatch
+#### 4.3 CLI escape hatch
 
 The whole point of using a standard format — recovery without the app, from vim
 or a shell, which matters because notes are edited outside the app:
 
 ```sh
-# one-off: unwrap the vault identity (prompts for the passphrase)
 age -d .znotes/identity.age > /tmp/id.txt && chmod 600 /tmp/id.txt
 
-# decrypt a block: paste the armor on stdin, never write plaintext to disk
 age -d -i /tmp/id.txt | less
 
-# or, no temp file at all (bash/zsh process substitution)
 age -d -i <(age -d .znotes/identity.age) < block.age | less
 ```
 
 ---
 
-## 5. Key lifecycle
+### 5. Key lifecycle
 
-### 5.1 Files in the repo
+#### 5.1 Files in the repo
 
 | Path | Contents | Committed? |
 |---|---|---|
@@ -289,7 +309,7 @@ age -d -i <(age -d .znotes/identity.age) < block.age | less
 Everything needed to decrypt is in the repo except the passphrase. That is the
 intended property: clone + passphrase = full recovery.
 
-### 5.2 In-memory handling
+#### 5.2 In-memory handling
 
 - The passphrase string is passed to scrypt and then dropped. Never stored,
   never echoed, never sent anywhere. (JS strings are immutable and cannot be
@@ -316,7 +336,7 @@ intended property: clone + passphrase = full recovery.
 - Locking while a revealed block has unsaved edits: re-encrypt first, then wipe.
   Never discard silently, never persist plaintext to await unlock.
 
-### 5.3 Passphrase change and key rotation
+#### 5.3 Passphrase change and key rotation
 
 Two distinct operations, and they must be distinct in the UI:
 
@@ -330,7 +350,7 @@ Two distinct operations, and they must be distinct in the UI:
   still decrypts everything in git history, so genuine compromise also means
   rotating the underlying secrets themselves. Say so explicitly.
 
-### 5.4 Passphrase strength
+#### 5.4 Passphrase strength
 
 scrypt at logN=18 costs an attacker roughly 1 s of CPU + 256 MiB per guess, but
 that is a constant factor. Entropy carries the load: require a **generated
@@ -340,7 +360,7 @@ passphrases in examples.
 
 ---
 
-## 6. Leak-surface audit
+### 6. Leak-surface audit
 
 The one rule that kills most of the class: **plaintext exists only inside the
 crypto worker and the DOM node of a block the user explicitly revealed. Every
@@ -364,9 +384,9 @@ which contains armor only.**
 
 ---
 
-## 7. Recommendation
+### 7. Recommendation
 
-### 7.1 The scheme
+#### 7.1 The scheme
 
 **"age-in-a-fence", X25519 vault key with a passphrase-wrapped keyring.**
 
@@ -383,7 +403,7 @@ the identity as a non-extractable `CryptoKey`, then
 `d.addIdentity(key); await d.decrypt(age.armor.decode(armor), "text")` per block
 — no KDF, sub-millisecond.
 
-### 7.2 Concrete parameters
+#### 7.2 Concrete parameters
 
 | Parameter | Value | Fixed by |
 |---|---|---|
@@ -400,7 +420,7 @@ the identity as a non-extractable `CryptoKey`, then
 | Auto-lock | 15 min idle · 5 min hidden · `pagehide` · 8 h hard cap · manual lock broadcast to all tabs | this doc §5.2 |
 | Optional PQ | `generateHybridIdentity()` (ML-KEM768 + X25519) as a settings flag for a repo pushed to a remote; requires age ≥ 1.3 for CLI decrypt | typage README |
 
-### 7.3 Threat-model boundaries
+#### 7.3 Threat-model boundaries
 
 **Protects against:** anyone with read access to the git repo or the remote
 (GitHub, backups, a stolen laptop *while locked*), the z-notes bun server
@@ -421,7 +441,7 @@ length ≈ plaintext length + ~200 bytes), and when each secret last changed
 padding bytes in `age -d` output, breaking the clean CLI story — recommend
 accepting the leak and documenting it.
 
-### 7.4 Fallback if the dependency is rejected
+#### 7.4 Fallback if the dependency is rejected
 
 If the "vetted dependencies" policy rejects a 0.x library, the
 zero-dependency alternative is pure WebCrypto — but implement it with the same
@@ -452,7 +472,7 @@ actively maintained, zero-WASM dependency the design needs anyway.
 
 ---
 
-## 8. Open questions for downstream tickets
+### 8. Open questions for downstream tickets
 
 - **[13 exposure/auth]** LAN/mobile access requires HTTPS or the client has no
   `crypto.subtle` at all. Decide TLS strategy before promising mobile clients.
@@ -467,7 +487,7 @@ actively maintained, zero-WASM dependency the design needs anyway.
   figure); if it exceeds ~1.5 s, drop to logN=17 (128 MiB, still ≥ OWASP scrypt
   minimum) rather than switching KDF.
 
-## Sources
+### Sources
 
 - [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
 - [C2SP — age v1 specification](https://github.com/C2SP/C2SP/blob/main/age.md)
@@ -483,3 +503,15 @@ actively maintained, zero-WASM dependency the design needs anyway.
 - [MDN — Secure Contexts](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Secure_Contexts) · [MDN — Crypto.subtle](https://developer.mozilla.org/en-US/docs/Web/API/Crypto/subtle)
 - [Igalia — Secure Curves in the Web Platform (X25519/Ed25519 shipping status)](https://blogs.igalia.com/jfernandez/2025/02/28/can-i-use-secure-curves-in-the-web-platform/)
 - npm registry metadata for `age-encryption`, `hash-wasm`, `argon2id`, `argon2-browser`, `@noble/*` (queried 2026-07-31)
+
+## Testing Decisions
+
+`tests/secrets.test.ts` (incl. the structural no-crypto-import-in-server assertion), `tests/crypto-worker.test.ts`, `tests/leak.test.ts` (the canary), `tests/vaultkey-e2e.test.ts` and `tests/secrets-ui.test.ts`. The leak-surface table under Implementation Decisions is the threat model the canary tests encode.
+
+## Out of Scope
+
+Server-side decryption of any kind, multi-recipient sharing, hardware keys, changing the KDF without a new spec.
+
+## Further Notes
+
+The research sections retain their original measurements (KDF benchmarks, library review) — historical evidence for the parameter choices, not live requirements.

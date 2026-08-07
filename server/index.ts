@@ -1,7 +1,7 @@
 /* ============================================================
    server.ts — z-notes backend, phase 1 (SPEC §12.1).
 
-   One bun process: Bun.serve hosts the v0 API (docs/API.md), the
+   One bun process: Bun.serve hosts the v0 API (docs/specs/done/0002-http-api-v0.md), the
    SSE event stream, and the static frontend in ./app. Zero runtime deps.
 
      ZNOTES_VAULT   vault directory      (default ./vault)

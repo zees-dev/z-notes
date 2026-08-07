@@ -2,7 +2,7 @@
    watch.ts — doorbell → debounce → reconcile → SSE.
 
    fs.watch on macOS is a CONTENTLESS DOORBELL (verified, see
-   docs/bun-capabilities.md §3): eventType is always "rename"
+   docs/specs/done/0005-bun-platform-foundation.md §3): eventType is always "rename"
    and an intra-vault atomic save names only the temp file — the file that
    actually changed is never mentioned. So the callback arguments are never
    read. We debounce 120ms and re-derive truth from disk:
