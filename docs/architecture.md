@@ -16,7 +16,7 @@ markdown files (source of truth), `.znotes/settings.toml` (committed),
 replica at https://znotes.k3s.lan (`deploy/`); the replica count is a
 correctness constraint, not a cost choice — see `deploy/k3s/20-deployment.yaml`. Platform behavior the design leans on
 (fs.watch semantics, `bun --hot`, sqlite/FTS5, Bun.build) is documented in
-[bun-capabilities.md](bun-capabilities.md) — reference, not contract.
+[the platform research](specs/done/0005-bun-platform-foundation.md) — reference, not contract.
 
 ## Server modules and layers
 

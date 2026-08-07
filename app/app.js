@@ -4,7 +4,7 @@
    Hard rule (inherited from the single-file era, and still true of every
    module in this directory): NO document content, NO vault data, NO settings
    defaults and NO network calls outside api.js, which speaks the contract in
-   docs/API.md (normative, SPEC §3). Swap what serves that contract
+   docs/specs/done/0002-http-api-v0.md (normative, SPEC §3). Swap what serves that contract
    and nothing here changes.
 
    Split from the original single-file app.js along its own section markers;

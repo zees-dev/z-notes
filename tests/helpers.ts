@@ -7,7 +7,7 @@
      - `bun server/index.ts` at the repo root, env ZNOTES_VAULT / ZNOTES_PORT
      - one ready line on stdout: "z-notes listening on http://localhost:<port>"
      - clean exit on SIGTERM
-     - HTTP contract per docs/API.md + SPEC.md §3 deltas
+     - HTTP contract per docs/specs/done/0002-http-api-v0.md + SPEC.md §3 deltas
      - SSE at /events
 
    Every test spawns its own server against its own freshly-built temp vault,
