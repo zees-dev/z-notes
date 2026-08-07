@@ -645,7 +645,8 @@
         </span>
         Assistant
       </span>
-      <span class="model-chip"><span class="live"></span><b id="modelName">—</b> · <span id="modelEffort">—</span></span>
+      <!-- a BUTTON since spec 0006: click → the effort menu (#effortPop) -->
+      <button class="model-chip" id="modelChip" data-act="effort" aria-haspopup="dialog" aria-expanded="false" title="Reasoning effort"><span class="live"></span><b id="modelName">—</b> · <span id="modelEffort">—</span></button>
       <div class="spacer"></div>
       <button class="iconbtn" data-act="toggle-chat" title="Hide panel">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -681,6 +682,14 @@
         <button class="btn sm" data-act="close-sess">Close</button>
         <button class="btn sm primary" data-act="new-session">New session</button>
       </div>
+    </div>
+
+    <!-- spec 0006: the model chip's effort menu. Options are built at runtime
+         from meta.efforts — ai.effort is an open field server-side and this
+         menu is what makes it feel like an enum, so nothing is hardcoded. -->
+    <div class="pop" id="effortPop" role="dialog" aria-label="Reasoning effort">
+      <h4>Reasoning effort</h4>
+      <div id="effortOpts"></div>
     </div>
 
     <div class="msgs" id="msgs"></div>

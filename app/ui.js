@@ -41,6 +41,9 @@ export const I = {
    ============================================================ */
 export const $ = (s, r) => (r || document).querySelector(s);
 export const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll(s));
+/** "low" → "Low" — the one label rule every enum control shares. */
+export const cap = (s) => s[0].toUpperCase() + s.slice(1);
+
 export const el = (tag, cls, html) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;

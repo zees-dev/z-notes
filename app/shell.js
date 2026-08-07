@@ -15,7 +15,7 @@ import { closeConfirm, closeConflict, confirmDialog } from "./dialogs.js";
 import { adoptTrash, refreshTrash } from "./trash.js";
 import { closeExitGuard, guardRawExit, navGate, openDoc, rawExitDiff, renderDoc, saveDoc, setBaseline, setMode, syncRaw, viewedPath } from "./editor.js";
 import { closePP } from "./secrets.js";
-import { closePal, renderChat, updateSessionUI } from "./chat.js";
+import { closeEffort, closePal, renderChat, updateSessionUI } from "./chat.js";
 import { adoptSettings, cacheLook, exitSettings, paintAiStatus, settingAt, showSettings } from "./settings.js";
 import { loadCommands } from "./terminal.js";
 import { findDoc } from "./app.js";
@@ -262,8 +262,26 @@ export function connect() {
        item therefore never polls and never guesses. */
     onAiStatus: paintAiStatus,
     /* Settings saved by ANOTHER client (or another tab of this one). Masked
-       already — see the note on this event in api.js. */
-    onSettingsChanged: adoptSettings,
+       already — see the note on this event in api.js. A save that moved
+       ai.effort also repaints the model chip (spec 0006) — from a session
+       refetch, because the chip shows the server's effortInUse, which the
+       settings body alone cannot tell us. */
+    onSettingsChanged: (payload) => {
+      /* captured BEFORE adopt: applySavedSettings overwrites
+         state.session.effort with the CONFIGURED value, so a comparison made
+         after it would always see equality and the refetch could never fire */
+      const sessBefore = state.session ? state.session.effort : null;
+      adoptSettings(payload);
+      const eff = payload?.settings?.ai?.effort;
+      if (eff && sessBefore !== null && eff !== sessBefore) {
+        api.getSession()
+          .then((s) => {
+            state.session = s;
+            updateSessionUI();
+          })
+          .catch(() => {});
+      }
+    },
     /* The whole server list, not a mutation hint. A permanent purge has no
        doc-changed frame, so this is the only way an already-open drawer on a
        second client can remove the row promptly. */
@@ -477,7 +495,13 @@ export function closeSess() {
   $("#sessChip").setAttribute("aria-expanded", "false");
 }
 export function overlayOpen() {
-  return VEILS.some(isOpen) || $("#sessPop").classList.contains("show") || !!state.creating || !!state.renaming;
+  return (
+    VEILS.some(isOpen) ||
+    $("#sessPop").classList.contains("show") ||
+    $("#effortPop").classList.contains("show") ||
+    !!state.creating ||
+    !!state.renaming
+  );
 }
 
 /* The veils, most-modal first. Same order dismissTop() unwinds them in.
@@ -552,6 +576,10 @@ export function dismissTop() {
   /* popovers, below every modal: a confirm raised FROM the context menu must
      take the first Esc, and it does — the menu is already closed by then */
   if (closeCtx()) return true;
+  if ($("#effortPop").classList.contains("show")) {
+    closeEffort();
+    return true;
+  }
   if ($("#sessPop").classList.contains("show")) {
     closeSess();
     return true;

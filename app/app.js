@@ -22,7 +22,7 @@ import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, confl
 import { refreshTrash, toggleTrash } from "./trash.js";
 import { autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, syncModeUI, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
 import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
-import { closePal, loadProposals, loadSession, openPal, palInputChanged, palMove, palOpen, renderChat, sendMessage, startNewSession } from "./chat.js";
+import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, draftedLook, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
 import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, onPop, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
@@ -46,6 +46,15 @@ function wire() {
     }
 
     const act = e.target.closest ? e.target.closest("[data-act]") : null;
+    /* the chat-head popovers close on ANY click that lands outside them —
+       including [data-act] controls, which return out of this handler before
+       the closers at the bottom can run. Exempt each pop's own toggle (it
+       decides open/close itself) and clicks inside the pop. */
+    {
+      const a = act ? act.dataset.act : null;
+      if (a !== "effort" && $("#effortPop").classList.contains("show") && !e.target.closest("#effortPop")) closeEffort();
+      if (a !== "sess" && $("#sessPop").classList.contains("show") && !e.target.closest("#sessPop")) closeSess();
+    }
     if (act) {
       const a = act.dataset.act;
       if (a === "save") saveDoc(state.active);
@@ -91,14 +100,16 @@ function wire() {
       if (a === "xg-keep") closeExitGuard();
       if (a === "xg-discard") exitGuardDiscard();
       if (a === "xg-save") exitGuardSave();
-      if (a === "sess") ($("#sessPop").classList.contains("show") ? closeSess() : openSess());
+      /* mutual exclusion between the two chat-head popovers is the
+         pre-dispatch closer's doing — each toggle only manages itself */
+      if (a === "sess") $("#sessPop").classList.contains("show") ? closeSess() : openSess();
       if (a === "close-sess") closeSess();
+      if (a === "effort") $("#effortPop").classList.contains("show") ? closeEffort() : openEffort();
       if (a === "new-session") startNewSession();
       if (a === "send") sendMessage();
       return;
     }
 
-    if ($("#sessPop").classList.contains("show") && !e.target.closest("#sessPop")) closeSess();
   });
 
   /* ---------- sidebar context menu ---------- */

@@ -9,7 +9,7 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, apiFail, el, esc, toast } from "./ui.js";
+import { $, $$, apiFail, cap, el, esc, toast } from "./ui.js";
 import { refreshTrash } from "./trash.js";
 import { autoGrow, guardRawExit, openDoc, syncRaw } from "./editor.js";
 import { applyLockPolicy, clearKeyFields, clearTerminalSecretFields, initSecrets, paintVaultKey } from "./secrets.js";
@@ -216,8 +216,8 @@ export function paintSettings() {
     m = state.meta;
   buildSeg($("#themeSeg"), m.themes, draftValue("theme"));
   buildSeg($("#densitySeg"), m.densities, draftValue("density"));
-  buildSeg($("#schemeSeg"), m.colorSchemes.map((x) => ({ id: x, label: x[0].toUpperCase() + x.slice(1) })), draftValue("colorScheme"));
-  buildSeg($("#effortSeg"), m.efforts.map((x) => ({ id: x, label: x[0].toUpperCase() + x.slice(1) })), draftValue("ai.effort"));
+  buildSeg($("#schemeSeg"), m.colorSchemes.map((x) => ({ id: x, label: cap(x) })), draftValue("colorScheme"));
+  buildSeg($("#effortSeg"), m.efforts.map((x) => ({ id: x, label: cap(x) })), draftValue("ai.effort"));
   paintNumbers();
   /* the placeholder is `meta.homeDocDefault`, not a literal here: the client
      hard-codes no default, the same rule the theme list and meta.numbers follow */
@@ -531,7 +531,7 @@ function paintEndpoint() {
       '<b class="ep-' +
       esc(st.state) +
       '">' +
-      esc(st.state === "ok" ? "Reachable" : st.state[0].toUpperCase() + st.state.slice(1)) +
+      esc(st.state === "ok" ? "Reachable" : cap(st.state)) +
       "</b> — " +
       esc(st.message) +
       (html ? "<br>" + html : "");

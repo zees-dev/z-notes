@@ -9,7 +9,7 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, I, apiFail, el, esc, inline, toast } from "./ui.js";
+import { $, $$, I, apiFail, cap, el, esc, inline, toast } from "./ui.js";
 import { renderDiff } from "./dialogs.js";
 import { autoGrow, openDoc, renderDoc, saveDoc, setBaseline, syncRaw } from "./editor.js";
 import { closeSess, isOpen } from "./shell.js";
@@ -31,7 +31,9 @@ export function updateSessionUI() {
   if (chip) {
     const d = s.degraded || [];
     chip.classList.toggle("degraded", d.length > 0);
-    chip.title = d.length ? "Endpoint downgraded — " + d.map((x) => x.message).join(" · ") : "";
+    /* the fallback is the menu affordance, not "" — this repaint runs on the
+       first session load and must not erase the chip's only textual hint */
+    chip.title = d.length ? "Endpoint downgraded — " + d.map((x) => x.message).join(" · ") : "Reasoning effort";
   }
   $("#sessCount").textContent = s.messageCount;
   $("#sessCountWord").textContent = s.messageCount === 1 ? "msg" : "msgs";
@@ -47,6 +49,68 @@ export function updateSessionUI() {
   const pct = Math.min(100, (s.tokensEstimated / s.contextWindow) * 100);
   $("#ctxFill").style.width = Math.max(1.5, pct).toFixed(1) + "%";
   $("#ctxPct").textContent = (pct < 0.1 ? "<0.1" : pct.toFixed(1)) + "% of " + Math.round(s.contextWindow / 1000) + "k";
+}
+
+/* ============================================================
+   EFFORT MENU (spec 0006) — the model chip is a button; picking an effort
+   PUTs ai.effort and repaints the chip from a session refetch, because the
+   chip's contract is the server's effortInUse, not the configured value.
+   The PUT is NEVER skipped when the pick equals the shown value: a patch
+   that names ai.effort is the documented reset of the degradation ladder's
+   effort walk (see putRoute's picksEffort branch in server/settings.ts).
+   ============================================================ */
+export function openEffort() {
+  const host = $("#effortOpts");
+  const cur = state.session ? state.session.effort : null;
+  host.innerHTML = "";
+  for (const eff of (state.meta && state.meta.efforts) || []) {
+    const b = el("button", "eff-opt" + (eff === cur ? " on" : ""));
+    b.type = "button";
+    b.setAttribute("data-effort", eff);
+    b.setAttribute("aria-pressed", eff === cur ? "true" : "false");
+    b.textContent = cap(eff);
+    b.addEventListener("click", () => pickEffort(eff));
+    host.appendChild(b);
+  }
+  /* anchored under the CHIP, inline: .pop's static coordinates are #sessPop's
+     slot (base.css), and this menu must hang off the button that opened it.
+     Offsets are relative to .chat, the chip's offsetParent. */
+  const chip = $("#modelChip");
+  const pop = $("#effortPop");
+  const w = 200;
+  const max = chip.offsetParent ? chip.offsetParent.clientWidth : w + 16;
+  pop.style.width = w + "px";
+  pop.style.left = Math.max(8, Math.min(chip.offsetLeft, max - w - 8)) + "px";
+  pop.style.right = "auto";
+  pop.style.top = chip.offsetTop + chip.offsetHeight + 6 + "px";
+  pop.classList.add("show");
+  chip.setAttribute("aria-expanded", "true");
+}
+
+export function closeEffort() {
+  const pop = $("#effortPop");
+  /* focus back on the chip BEFORE the options go — but only when it was
+     inside the menu, so an outside click keeps its own target's focus */
+  if (pop.contains(document.activeElement)) $("#modelChip").focus();
+  /* emptied, not just faded: .pop hides via opacity, which would leave the
+     option buttons invisible-but-tabbable — one Enter away from a silent
+     PUT that also resets the degradation ladder */
+  $("#effortOpts").innerHTML = "";
+  pop.classList.remove("show");
+  $("#modelChip").setAttribute("aria-expanded", "false");
+}
+
+async function pickEffort(effort) {
+  try {
+    await api.patchSettings({ ai: { effort } });
+    state.session = await api.getSession();
+    updateSessionUI();
+  } catch (err) {
+    /* the chip stays as it was — it must never claim an effort the server
+       did not accept */
+    apiFail(err, "Could not change effort");
+  }
+  closeEffort();
 }
 
 let statsT;
