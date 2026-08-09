@@ -82,6 +82,8 @@ beforeEach(() => {
    attached to it), and `boot` takes the longer wait this suite always used. */
 let ui: AppDriver;
 const boot = (at = "/") => ui.boot(at, 25000);
+/** a seeded doc that is NOT the one boot opens — somewhere for a Forward to go */
+const FWD_DOC = "architecture/event-pipeline.md";
 const chord = (code: string) => pressChord(page, code);
 const gotoSettings = () => goSettings(page);
 const leaveSettings = () => exitSettings(page);
@@ -115,6 +117,18 @@ const waitSave = (disabled: boolean) =>
 async function clickSave() {
   await page.click("#settingsSave");
 }
+
+/* ---- the leave-without-saving guard (`guardSettingsExit`) ---- */
+const waitConfirm = (shown: boolean) =>
+  page.waitForFunction(
+    (s) => document.getElementById("cfVeil")!.classList.contains("show") === s,
+    { timeout: 8000 },
+    shown
+  );
+/** the guard puts the COUNT where a delete puts the path */
+const confirmPath = () => page.evaluate(() => document.getElementById("cfPath")!.textContent ?? "");
+const onSettings = () =>
+  page.evaluate(() => (document.getElementById("settingsView") as HTMLElement).getAttribute("aria-hidden") === "false");
 
 /** type into a text control the way a user does: clear, type, blur */
 async function typeInto(sel: string, value: string) {
@@ -422,7 +436,15 @@ describe("appearance previews live but only Save persists it", () => {
       cachedTheme: localStorage.getItem("znotes.theme"),
     }));
 
-  test("picking a theme repaints at once, leaving without saving puts it back, and re-entry brings it back", async () => {
+  /* LEAVING IS A QUESTION NOW, not a silent keep.
+     The page used to walk away without a word, revert the preview and hold the
+     draft for next time — which made "left without saving" and "saved" look
+     identical from anywhere else in the app, since the one drafted setting you
+     can see from another page is the THEME. So every deliberate exit is gated
+     (`guardSettingsExit`), Cancel stays, and OK discards: the question on
+     screen is "leave without saving?", and a Yes that quietly kept the answer
+     would be answering a different one. */
+  test("picking a theme repaints at once; leaving asks, Cancel stays, Discard puts it back", async () => {
     await srv.api("PUT", "/api/settings", { theme: "modern", density: "comfy" });
     await boot();
     await gotoSettings();
@@ -446,27 +468,44 @@ describe("appearance previews live but only Save persists it", () => {
     );
     expect(`and nothing was persisted: ${puts.length} PUT`).toBe("and nothing was persisted: 0 PUT");
 
-    /* leave without saving → the preview goes away */
-    await leaveSettings();
-    expect(`after leaving unsaved: ${JSON.stringify(await look())}`).toBe(
-      `after leaving unsaved: ${JSON.stringify({ theme: "modern", density: "comfy", cachedTheme: "modern" })}`
+    /* Back, with two unsaved changes → the guard, not the exit */
+    await page.evaluate(() => history.back());
+    await waitConfirm(true);
+    expect(`the guard names the count: ${await confirmPath()}`).toBe("the guard names the count: 2 unsaved changes");
+    expect(`and it is still the settings page: ${await onSettings()}`).toBe("and it is still the settings page: true");
+
+    /* Cancel keeps the page, the draft AND the preview */
+    await page.click('#cfVeil [data-act="cf-cancel"]');
+    await waitConfirm(false);
+    expect(`Cancel stayed: ${await onSettings()}`).toBe("Cancel stayed: true");
+    expect(`with the preview intact: ${JSON.stringify(await look())}`).toBe(
+      `with the preview intact: ${JSON.stringify({ theme: "terminal", density: "compact", cachedTheme: "modern" })}`
+    );
+    expect(`and the draft intact: ${await dirtyPill()}`).toBe("and the draft intact: 2 unsaved changes");
+
+    /* Discard and leave → gone, both from the page and from the look */
+    await page.evaluate(() => history.back());
+    await waitConfirm(true);
+    await page.click("#cfOk");
+    await page.waitForFunction(() => (document.getElementById("settingsView") as HTMLElement).getAttribute("aria-hidden") === "true", { timeout: 8000 });
+    expect(`after discarding: ${JSON.stringify(await look())}`).toBe(
+      `after discarding: ${JSON.stringify({ theme: "modern", density: "comfy", cachedTheme: "modern" })}`
     );
     expect(`the server still has: ${(await srv.get("/api/settings")).body.settings.theme}`).toBe(
       "the server still has: modern"
     );
 
-    /* …but the DRAFT was not discarded: coming back shows it again, still
-       unsaved, and the preview comes back with it */
+    /* …and the draft really is gone, not merely hidden: coming back is clean */
     await gotoSettings();
-    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "terminal", {
-      timeout: 8000,
-    });
-    expect(`re-entry restores the draft and its preview: ${JSON.stringify(await look())}`).toBe(
-      `re-entry restores the draft and its preview: ${JSON.stringify({ theme: "terminal", density: "compact", cachedTheme: "modern" })}`
+    expect(`re-entry is clean: ${await dirtyPill()}`).toBe("re-entry is clean: ");
+    expect(`and wearing the stored look: ${JSON.stringify(await look())}`).toBe(
+      `and wearing the stored look: ${JSON.stringify({ theme: "modern", density: "comfy", cachedTheme: "modern" })}`
     );
-    expect(`Save is still offering it: ${await dirtyPill()}`).toBe("Save is still offering it: 2 unsaved changes");
 
     /* Save → it is the real look now, cache included, and it survives a reload */
+    await page.click('#themeSeg button[data-v="terminal"]');
+    await page.click('#densitySeg button[data-v="compact"]');
+    await waitSave(false);
     await clickSave();
     await waitSave(true);
     expect(`requests issued: ${puts.length}`).toBe("requests issued: 1");
@@ -483,6 +522,44 @@ describe("appearance previews live but only Save persists it", () => {
     );
     await srv.api("PUT", "/api/settings", { theme: "modern", density: "comfy" });
   }, 180000);
+
+  /* REGRESSION, and the reason the exit guard above exists at all.
+     The seg handler used to re-apply `draftedLook()`, and `setDraft` DELETES
+     the entry when the pick equals the stored value — so picking Terminal and
+     then Minimal (the stored one) again left the drafted-look list EMPTY and
+     applied nothing. The app stayed on Terminal with no draft behind it: Save
+     was disabled, Discard was hidden, and `exitSettings` had no axis to
+     restore, so a theme nobody saved followed the user off the page and
+     survived every later navigation. The axis the user clicked is always the
+     axis to repaint, drafted or not. */
+  test("clicking back to the STORED theme repaints it, and leaves nothing pending", async () => {
+    await srv.api("PUT", "/api/settings", { theme: "minimal" });
+    await boot();
+    await gotoSettings();
+    await waitSave(true);
+
+    await page.click('#themeSeg button[data-v="terminal"]');
+    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "terminal", {
+      timeout: 8000,
+    });
+    await waitSave(false);
+
+    await page.click('#themeSeg button[data-v="minimal"]');
+    await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "minimal", {
+      timeout: 8000,
+    });
+    /* back to the stored value ⟹ no diff ⟹ nothing to save, nothing to leave
+       behind, and no exit guard on the way out */
+    await waitSave(true);
+    expect(`the pill is empty: ${JSON.stringify(await dirtyPill())}`).toBe('the pill is empty: ""');
+    expect(`and nothing went to the server: ${puts.length} PUT`).toBe("and nothing went to the server: 0 PUT");
+
+    await leaveSettings();
+    expect(`after leaving, the look is the stored one: ${JSON.stringify(await look())}`).toBe(
+      `after leaving, the look is the stored one: ${JSON.stringify({ theme: "minimal", density: "comfy", cachedTheme: "minimal" })}`
+    );
+    await srv.api("PUT", "/api/settings", { theme: "modern" });
+  }, 120000);
 
   test("Discard throws the draft away and puts the look back, on the page", async () => {
     await srv.api("PUT", "/api/settings", { theme: "modern" });
@@ -509,6 +586,127 @@ describe("appearance previews live but only Save persists it", () => {
     );
     expect(`and Discard nothing on the wire: ${puts.length}`).toBe("and Discard nothing on the wire: 0");
   }, 120000);
+
+  /* REGRESSION. The guard read `settingsDirty()` BEFORE flushing the numeric
+     field the caret was sitting in — and the nine `[data-num]` controls record
+     on `change`, which a history traversal is not. So the page looked clean at
+     the exact moment it was asked, the guard waved the press through, and the
+     number went with it: no dialog, no toast, no pill. Exactly the failure ⌘S
+     had (see "⌘S saves a NUMERIC field…"), reached through the other door.
+     Deliberately NO blur, no Tab, no Enter — that is the whole test. */
+  test("BACK out of a numeric field the caret is still in asks, instead of losing the edit", async () => {
+    await boot();
+    await gotoSettings();
+    const before = (await srv.get("/api/settings")).body.settings.editor.autosaveSeconds;
+    const wanted = before === 25 ? 30 : 25;
+    await typeInto("[data-num='editor.autosaveSeconds']", String(wanted));
+    expect(`the caret is still in the field: ${await page.evaluate(() => document.activeElement?.getAttribute("data-num"))}`).toBe(
+      "the caret is still in the field: editor.autosaveSeconds"
+    );
+    /* and the draft has NOT heard about it yet — the pill is the proof that this
+       test is exercising the ordering rather than a field that already recorded */
+    expect(`the pill before the press: "${await dirtyPill()}"`).toBe('the pill before the press: ""');
+
+    await page.evaluate(() => history.back());
+    await waitConfirm(true);
+    expect(`the guard counted the un-blurred edit: ${await confirmPath()}`).toBe(
+      "the guard counted the un-blurred edit: 1 unsaved change"
+    );
+    expect(`and it is still the settings page: ${await onSettings()}`).toBe("and it is still the settings page: true");
+
+    /* Cancel keeps it, and the edit is in the draft where Save can reach it */
+    await page.click('#cfVeil [data-act="cf-cancel"]');
+    await waitConfirm(false);
+    expect(`the draft survived Cancel: ${await dirtyPill()}`).toBe("the draft survived Cancel: 1 unsaved change");
+    await waitSave(false);
+    await clickSave();
+    await waitSave(true);
+    expect(`what reached the wire: ${JSON.stringify(puts[0]?.body)}`).toBe(
+      `what reached the wire: ${JSON.stringify({ editor: { autosaveSeconds: wanted } })}`
+    );
+
+    await srv.api("PUT", "/api/settings", { editor: { autosaveSeconds: before } });
+  }, 120000);
+
+  /* REGRESSION. Every layer `onPop` unwinds is gated on BACK, because none of
+     them is a gesture you perform with Forward — you do not dismiss a sheet by
+     pressing Forward. A DRAFT is not a gesture: Forward off the settings page
+     throws the work away exactly as Back does, and it is three presses from a
+     cold boot. The guard was reached in one direction only. */
+  test("FORWARD off the settings page asks too — a draft is work, not a gesture", async () => {
+    await srv.api("PUT", "/api/settings", { theme: "modern" });
+    await boot();
+    /* THREE entries, BUILT IN STACK ORDER, because Forward can only walk into an
+       entry that is really there and a push TRUNCATES everything ahead of it:
+       the boot doc, the settings page pushed over it, and a second doc pushed
+       over that. Then ONE Back lands us on settings with a real entry still
+       ahead. Opening settings last instead would leave it on top of the stack,
+       where `history.forward()` is a no-op that fires no popstate at all — which
+       is what the first draft of this test measured, and why it timed out on a
+       guard that was working. */
+    await gotoSettings();
+    await ui.clickDoc(FWD_DOC);
+    await page.evaluate(() => history.back());
+    await page.waitForFunction(() => (document.getElementById("settingsView") as HTMLElement).getAttribute("aria-hidden") === "false", { timeout: 8000 });
+    await sleep(200);
+
+    await page.click('#themeSeg button[data-v="terminal"]');
+    await waitSave(false);
+
+    await page.evaluate(() => history.forward());
+    await waitConfirm(true);
+    expect(`FORWARD raised the guard: ${await confirmPath()}`).toBe("FORWARD raised the guard: 1 unsaved change");
+    expect(`and it is still the settings page: ${await onSettings()}`).toBe("and it is still the settings page: true");
+
+    /* Cancel stays put, preview and all */
+    await page.click('#cfVeil [data-act="cf-cancel"]');
+    await waitConfirm(false);
+    expect(`Cancel stayed: ${await onSettings()}`).toBe("Cancel stayed: true");
+    expect(`with the preview intact: ${await page.evaluate(() => document.documentElement.getAttribute("data-theme"))}`).toBe(
+      "with the preview intact: terminal"
+    );
+
+    /* AND THE DESTINATION IS GONE, which is a property of the architecture and
+       not an accident worth papering over: the dialog is a veil, every veil
+       pushes a marker, and a push TRUNCATES everything ahead. So the entry the
+       press was reaching for is destroyed by the act of ASKING about it, before
+       the answer is known. Backwards this costs nothing (entries below are never
+       truncated); forwards, Cancel keeps the page and the forward stack does not
+       come back. Measured here rather than left to be discovered. */
+    await page.evaluate(() => history.forward());
+    await sleep(400);
+    expect(`a second Forward has nowhere to go: ${await onSettings()}`).toBe(
+      "a second Forward has nowhere to go: true"
+    );
+    expect(`and asks nothing: ${await page.evaluate(() => document.getElementById("cfVeil")!.classList.contains("show"))}`).toBe(
+      "and asks nothing: false"
+    );
+
+    /* So the OTHER half of the answer — Discard and leave — is measured on a
+       fresh stack. The reload drops the draft with it, which is why the theme is
+       re-picked below rather than carried over. */
+    await boot();
+    await gotoSettings();
+    await ui.clickDoc(FWD_DOC);
+    await page.evaluate(() => history.back());
+    await page.waitForFunction(() => (document.getElementById("settingsView") as HTMLElement).getAttribute("aria-hidden") === "false", { timeout: 8000 });
+    await sleep(200);
+    await page.click('#themeSeg button[data-v="terminal"]');
+    await waitSave(false);
+
+    /* Discard and leave lands on the doc the press was ASKING for — the one
+       ABOVE, not the one below, which is the whole difference between honouring
+       a Forward and quietly turning it into a Back. */
+    await page.evaluate(() => history.forward());
+    await waitConfirm(true);
+    await page.click("#cfOk");
+    await page.waitForFunction(() => (document.getElementById("settingsView") as HTMLElement).getAttribute("aria-hidden") === "true", { timeout: 8000 });
+    await ui.settled(FWD_DOC);
+    expect(`the look came back: ${await page.evaluate(() => document.documentElement.getAttribute("data-theme"))}`).toBe(
+      "the look came back: modern"
+    );
+    expect(`and nothing was persisted: ${puts.length} PUT`).toBe("and nothing was persisted: 0 PUT");
+  }, 180000);
 });
 
 /* ============================================================

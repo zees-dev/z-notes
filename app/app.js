@@ -14,7 +14,7 @@
 "use strict";
 
 import * as api from "./api.js";
-import { estimateBits, generatePassphrase } from "./entropy.js";
+import { generatePassphrase } from "./entropy.js";
 import { state } from "./state.js";
 import { $, $$, clearStickyToast, lookupLink, toast } from "./ui.js";
 import { LONGPRESS_MS, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
@@ -23,8 +23,8 @@ import { refreshTrash, toggleTrash } from "./trash.js";
 import { autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, syncModeUI, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
 import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, renderChat, sendMessage, startNewSession } from "./chat.js";
-import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, draftedLook, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
-import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, onPop, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
+import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
+import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
 
 /* ============================================================
@@ -77,10 +77,7 @@ function wire() {
         const p = generatePassphrase();
         $("#ppInput").value = p;
         $("#ppConfirm").value = p;
-        /* measured with estimateBits like the Settings handler — the two
-           Generate buttons must report the same strength for the same
-           generator, and re-deriving the arithmetic here was how they split */
-        ppHint("Generated · ~" + estimateBits(p) + " bits. Write it down now — there is no recovery.", false);
+        ppHint("Generated. Write it down now — there is no recovery.", false);
       }
       if (a === "encrypt-selection") encryptSelection();
       if (a === "lock-vault") lockVault("manual");
@@ -260,6 +257,39 @@ function wire() {
      the assistant no longer raises one, so there is no longer a layer between
      the reader and the document they are asking about. */
   $("#scrim").addEventListener("click", closeNav);
+
+  /**
+   * …AND THE ASSISTANT'S CLICK-AWAY, WHICH IS NOT A SCRIM.
+   *
+   * A scrim would undo the very thing the sheet was shortened for: the document
+   * above it must stay readable, scrollable and clickable while you ask about
+   * it. So the dismissal is a listener rather than a layer — reaching PAST the
+   * panel to touch the document or the sidebar puts the panel away, and the tap
+   * still lands on whatever it was aimed at, because nothing is swallowed here.
+   *
+   * `pointerdown` in CAPTURE, so the panel is already collapsing while the
+   * click it belongs to is still on its way to the target — the same ordering
+   * the context menu's click-away keeps, and for the same reason.
+   *
+   * Three exemptions, and each is a click that is not "reaching past":
+   *   · the panel itself, and the topbar toggle that owns its open/closed state;
+   *   · anything FLOATING (a veil, a modal, the row menu, the chat popovers) —
+   *     those are layers of their own and dismissing something underneath them
+   *     is not what a click on them means;
+   *   · every width at or above W_TRIPANE, where the panel is a grid column and
+   *     covers nothing, so there is nothing to reach past.
+   */
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (isTriPane() || !app.classList.contains("chat-open")) return;
+      const t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest('.chat, #chatBtn, [data-act="toggle-chat"], .veil, .modal, .menu, .pop, .toast')) return;
+      dismissChat();
+    },
+    true
+  );
   ["#ppInput", "#ppConfirm"].forEach((sel) =>
     $(sel).addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
@@ -267,11 +297,13 @@ function wire() {
       doPassphraseOk();
     })
   );
-  $("#ppInput").addEventListener("input", () => {
-    if (vault.ppMode !== "create") return;
-    const bits = estimateBits($("#ppInput").value);
-    ppHint("~" + bits + " bits" + (bits < 60 ? " — too weak, 60 minimum" : " — good"), bits < 60);
-  });
+  /* NO live strength readout on this field. A meter that grades every keystroke
+     and lands on "weak" is a requirement in everything but enforcement — it is
+     the same sentence the old gate printed, minus the refusal — and the ask was
+     that this field state no requirement at all. What stays is the fact that
+     does not depend on the string: there is no recovery. Generate is beside the
+     field for anyone who wants the strong answer, and `estimateBits` still backs
+     it (see entropy.js, which is still unit-tested against the same numbers). */
 
   /* segmented controls */
   $$(".seg").forEach((seg) => {
@@ -285,10 +317,19 @@ function wire() {
          `toggle-mode` data-act like every other statusbar affordance. */
       markSeg(seg, v);
       /* Appearance PREVIEWS live and persists on Save — you cannot judge a
-         theme from its name. Everything else is draft-only. */
+         theme from its name. Everything else is draft-only.
+         `[kind]`, NOT `draftedLook()`: `setDraft` DELETES the entry when the
+         pick equals the stored value, so clicking Terminal and then Minimal
+         again (Minimal being what the server has) left `draftedLook()` empty
+         and re-applied NOTHING — the app stayed on Terminal with no draft
+         behind it, i.e. wearing a theme that neither Save nor Discard nor
+         leaving the page could take off. The axis the user just clicked is
+         always the axis to repaint, drafted or not; `preview: true` reads it
+         through `draftValue`, which falls back to the stored value precisely
+         for this case. */
       if (kind === "theme" || kind === "density" || kind === "colorScheme") {
         setDraft(kind, v);
-        applyLook(draftedLook(), { preview: true });
+        applyLook([kind], { preview: true });
       } else if (kind === "effort") {
         setDraft("ai.effort", v);
       }
@@ -362,12 +403,7 @@ function wire() {
        into the field masks it again, and it leaves the DOM entirely on success
        or on leaving the page (`clearKeyFields`). */
     nw.classList.remove("masked");
-    keyHint(
-      "Generated · ~" +
-        estimateBits(p) +
-        " bits, shown above and selected. Write it down or copy it (⌘C) NOW — nothing here can show it to you again.",
-      false
-    );
+    keyHint("Generated, shown above and selected. Write it down or copy it (⌘C) NOW — nothing here can show it to you again.", false);
     nw.focus();
     nw.select();
   });

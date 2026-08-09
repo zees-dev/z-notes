@@ -15,8 +15,8 @@ import { focusQuiet } from "./tree.js";
 import { changedLineDiff, conflictDialog, orphanDialog, renderDiff } from "./dialogs.js";
 import { flushSecretEdits, vault } from "./secrets.js";
 import { refreshSessionStats } from "./chat.js";
-import { exitSettings, settingAt } from "./settings.js";
-import { closeNav, isDrawer, isSheet, overlayOpen, revealInTree, routeDoc } from "./shell.js";
+import { exitSettings, guardSettingsExit, settingAt } from "./settings.js";
+import { closeNav, isDrawer, isSheet, markerForLayer, overlayOpen, retireLayerMarker, revealInTree, routeDoc } from "./shell.js";
 
 /* ============================================================
    EXIT GUARD (SPEC §4) — leaving Raw with text that is not on disk
@@ -205,7 +205,9 @@ function renderRaw(doc, host) {
   ta.setAttribute("data-enable-grammarly", "false");
   ta.value = doc.markdown;
   ta.setAttribute("aria-label", "Markdown source · " + doc.path);
-  ta.placeholder = "# " + doc.title + "\n\nThis note is empty — write markdown here.";
+  /* the placeholder is a STARTING POINT, not a notice: an empty note announcing
+     its own emptiness says nothing the blank page did not already say */
+  ta.placeholder = "# " + doc.title;
   ta.addEventListener("input", () => {
     doc.markdown = ta.value;
     autoGrow(ta);
@@ -269,17 +271,27 @@ export function renderDoc(opts) {
   if (!doc) return;
   host.classList.toggle("raw-mode", state.mode === "raw");
 
+  /* The `.mode-note` that used to end this line ("raw source · click outside to
+     preview" / "preview · click a line to edit") is gone. It restated an
+     affordance the statusbar's mode chip already names and the pane itself
+     already teaches on the first click, on every doc, forever — and it was the
+     one item in the meta line that was about the CHROME rather than the doc. */
   const meta = el("div", "doc-meta");
   meta.innerHTML =
     '<span class="tag">' + esc(doc.path) + "</span>" +
-    "<span>" + esc(relTime(doc.mtime)) + "</span>" +
-    '<span class="mode-note">' + (state.mode === "raw" ? "raw source · click outside to preview" : "preview · click a line to edit") + "</span>";
+    "<span>" + esc(relTime(doc.mtime)) + "</span>";
   host.appendChild(meta);
 
   if (state.mode === "raw") renderRaw(doc, host);
   else if (!String(doc.markdown).trim()) {
+    /* A NEW NOTE SAYS ITS NAME AND NOTHING ELSE.
+       The instruction that used to sit here ("This note is empty. Switch to
+       Raw (⌘E) to write markdown.") described the blank page it was printed
+       on, and named a chord half the app's widths do not have. What stays is
+       the click TARGET — `previewClickToEdit` opens Raw from `.empty-doc`, so
+       the affordance survives the words being deleted. */
     const e = el("div", "empty-doc");
-    e.innerHTML = '<div class="ring">' + I.note + "</div><h3>" + esc(doc.title) + "</h3>" + "<p>This note is empty. Switch to <b>Raw</b> (<kbd>⌘E</kbd>) to write markdown.</p>";
+    e.innerHTML = '<div class="ring">' + I.note + "</div><h3>" + esc(doc.title) + "</h3>";
     host.appendChild(e);
   } else renderPreview(doc, host);
 
@@ -391,6 +403,15 @@ export async function openDoc(path, opts) {
      the URL on different docs. `force` is the dialog's own way back in. */
   if (path !== state.active && !(opts && (opts.replace || opts.force))) {
     if (!guardRawExit(() => openDoc(path, Object.assign({}, opts || {}, { force: true })))) return;
+  }
+  /* …and the settings page's own unsaved work, on the same terms. NOT gated on
+     `path !== state.active`, the way the Raw guard above is: the settings page
+     keeps `state.active` naming the doc it will return to, so clicking that
+     very doc in the tree is a real exit from a page holding a real draft.
+     `force`/`replace` mean the same thing here as there, and the two guards can
+     never both fire — `rawExitDiff` returns null on the settings view. */
+  if (!(opts && (opts.replace || opts.force))) {
+    if (!guardSettingsExit(() => openDoc(path, Object.assign({}, opts || {}, { force: true })))) return;
   }
   const nav = ++navSeq;
   navTarget = path;
@@ -529,6 +550,16 @@ export function setMode(m, opts) {
        unasked-for focus that throws a keyboard over half the screen. A tablet
        has the room for it; a phone does not. */
     if (!isSheet() || opts.caret != null) focusRaw(opts);
+    /* …and, on a phone only, make sure Back has an entry to spend on leaving
+       Raw. `onPop` intercepts that press, and an interception needs a popstate
+       to intercept — at the bottom of the stack there is none. See
+       `markerForLayer`; it no-ops wherever an entry already exists. */
+    if (isSheet()) markerForLayer();
+  } else {
+    /* …and leaving Raw hands back a press nothing is owed any more, by whichever
+       door it left through — ⌘E, the chip, a click on the whitespace, Esc, or
+       the Back this was reserved for. See `retireLayerMarker`. */
+    retireLayerMarker();
   }
   if (!opts.silent) toast(m === "raw" ? "Raw markdown" : "Rendered preview");
 }

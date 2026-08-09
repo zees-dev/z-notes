@@ -31,7 +31,12 @@ export function confirmDialog(opts) {
   state.confirming = { onOk: opts.onOk, onCancel: opts.onCancel || null };
   $("#cfTitle").textContent = opts.title;
   $("#cfPath").textContent = opts.path;
-  $("#cfBody").textContent = opts.body;
+  /* An EMPTY body takes the body BOX with it, not just the text. A dialog whose
+     whole content is a heading and a footer (askDelete) would otherwise carry a
+     zero-height paragraph and its padding — a band of empty panel between the
+     path and the verbs that reads as a rendering fault. */
+  $("#cfBody").textContent = opts.body || "";
+  $("#cfBody").closest(".modal-body").hidden = !opts.body;
   $("#cfOkTxt").textContent = opts.ok || "Confirm";
   /* THE CHROME IS PER CALLER, not hard-coded for the delete case.
      The warning triangle, the red OK button and the footer line are the app's

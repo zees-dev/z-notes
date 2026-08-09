@@ -16,7 +16,7 @@ import { adoptTrash, refreshTrash } from "./trash.js";
 import { closeExitGuard, guardRawExit, navGate, openDoc, rawExitDiff, renderDoc, saveDoc, setBaseline, setMode, syncRaw, viewedPath } from "./editor.js";
 import { closePP } from "./secrets.js";
 import { closeEffort, closePal, renderChat, updateSessionUI } from "./chat.js";
-import { adoptSettings, cacheLook, exitSettings, paintAiStatus, settingAt, showSettings } from "./settings.js";
+import { adoptSettings, cacheLook, commitFocusedNumber, exitSettings, guardSettingsExit, paintAiStatus, settingAt, settingsDirty, showSettings } from "./settings.js";
 import { loadCommands } from "./terminal.js";
 import { findDoc } from "./app.js";
 
@@ -841,39 +841,248 @@ export function routeSettings(section, replace) {
 export function routeVeil() {
   if (!VEILS.some(isOpen)) return;
   if ((history.state || {}).z === "veil") return;
+  pushLayerMarker();
+}
+
+/** The marker itself. One entry, this URL, a fresh `i`. */
+function pushLayerMarker() {
   /* pushing truncates whatever was ahead, so a settings entry that meant to
      leave by spending a FORWARD entry no longer has one to spend */
   if (state.settingsExit === "forward") state.settingsExit = "open";
   histAt = ++histSeq;
   history.pushState({ z: "veil", i: histAt }, "", location.href);
+  /* A push TRUNCATES, so a reserved marker that was sitting ahead of us is gone
+     and this one stands in exactly its place: a marker over the bottom entry,
+     with a layer still open under it. The reservation moves with it. (Reachable
+     in three gestures on a phone: open the sheet, open the palette, Back — the
+     dismissal walks down to the bottom entry and `routeVeil` re-arms above it.
+     Without the transfer the sheet's press is orphaned and the Back after
+     closing it is dead again.) `reserveI` is 0 when nothing is owed, and this
+     never fires while we are standing ON a marker — both callers return early
+     there — so it can only ever move a reservation onto its own replacement. */
+  if (reserveI) reserveI = histAt;
 }
 
 /**
- * The traversal the exit guard is putting back, or null.
+ * THE ONE BACK PRESS `onPop` CANNOT INTERCEPT.
+ *
+ * Everything Back unwinds below the veils is intercepted rather than routed:
+ * `onPop` hears the press, undoes it with `history.forward()` and spends it (see
+ * `holdPop`). That works everywhere except at the BOTTOM of our own stack —
+ * `history.back()` there has nothing to pop, so no popstate fires at all and
+ * the press goes to the browser, which on Android closes the app.
+ *
+ * Which is exactly where a phone starts: boot ends in a `replaceState`, so a
+ * fresh launch is entry 1, and the two first things anyone does there are tap
+ * the sparkle and tap into the text. So opening a layer with nothing underneath
+ * pushes one marker to be spent on dismissing it — the same entry `routeVeil`
+ * pushes, and deliberately the same SHAPE, so every rule already written for a
+ * spent marker (recycled by `routeDoc`, skipped by `onPop`, never stacked
+ * twice) covers this one for free.
+ *
+ * Two callers OPEN a layer, both phone-scoped by the layer they belong to:
+ * `toggleChat` below W_TRIPANE, and `setMode("raw")` below W_SHEET. Mode is
+ * still not a history entry and still not in the URL (see the ROUTING header) —
+ * this marker names no place and rewrites no address; it is a Back press held
+ * in reserve.
+ *
+ * The third caller opens nothing and HEALS instead: `onPop`'s dismissal branch,
+ * which is the one place a layer can lose its marker without closing. A modal
+ * over the sheet pushes its own marker, that push truncates the sheet's, and
+ * dismissing the modal walks down onto the entry the sheet used to be standing
+ * over. Re-arming there is what keeps the next Back the sheet's instead of the
+ * browser's. Every guard below reads the live stack rather than any memory of
+ * how we got here, which is what makes the same call safe in all three places.
+ *
+ * Only when there is nothing under us. Above the bottom the interception
+ * already works, and a marker per open/close cycle would make Back walk back
+ * through a list of gestures instead of a list of places.
+ */
+export function markerForLayer() {
+  if (!layered()) return; // nothing to spend it on — see `retireLayerMarker`
+  const cur = history.state || {};
+  if (cur.z === "veil" || canPopBack(cur)) return;
+  pushLayerMarker();
+  reserveI = histAt;
+}
+
+/* The entry `markerForLayer` reserved, or 0 — remembered by `i` so `retireLayerMarker`
+   can tell THE press it is holding from any other marker. A stale number is
+   harmless: `histSeq` only ever climbs, so no later entry can wear this one's
+   `i`, and a marker recycled into a real place by `routeDoc` fails the
+   `z === "veil"` half of the same test. */
+let reserveI = 0;
+
+/** Is anything still lying over the document? The three things Back unwinds
+    below the veils, at the widths where each of them is a LAYER rather than
+    part of the layout — the same conditions the `onPop` branches use. */
+function layered() {
+  return (
+    VEILS.some(isOpen) ||
+    (!isTriPane() && app.classList.contains("chat-open")) ||
+    (isSheet() && state.mode === "raw")
+  );
+}
+
+/**
+ * GIVING THE RESERVED PRESS BACK.
+ *
+ * The marker above only ever existed so that closing the last layer had a
+ * popstate to be intercepted at. Once nothing is layered it is an entry with no
+ * job, and the user is STANDING ON IT — so the next Back is spent walking off
+ * it and appears to do nothing at all. That is one dead press on the launch
+ * anyone gets: a fresh phone launch is entry 1, and the first two things anyone
+ * does there are tap the sparkle and tap into the text.
+ *
+ * An entry cannot be removed, so it is spent instead: `history.back()` puts us
+ * under it, where the doc branch of `onPop` recognises the entry below a marker
+ * and stops. The marker stays ahead of us until the next push truncates it, and
+ * Back means "leave" again — which is what it meant before the layer opened.
+ *
+ * Every way the last layer can close calls this, not just Back: the ✕, the chip,
+ * a tap on the document, Esc. Whichever gesture actually spends the layer, the
+ * press held in reserve for it is no longer owed.
+ */
+export function retireLayerMarker() {
+  if (!reserveI) return;
+  if (layered()) return; // something else is still up and still owes a press
+  const cur = history.state || {};
+  /* Nothing is layered and we are not standing on the reserved entry: the
+     marker was walked past, spent or truncated while the layer outlived it. The
+     press it was holding is not ours to give back — but the RESERVATION has to
+     go, or `pushLayerMarker` would transfer a debt nobody owes onto the next
+     marker and `history.back()` here would one day spend a stranger's entry. */
+  if (cur.z !== "veil" || cur.i !== reserveI) {
+    reserveI = 0;
+    return;
+  }
+  reserveI = 0;
+  history.back();
+}
+
+/**
+ * PUTTING A BACK PRESS BACK.
  *
  * A popstate is an announcement, not a request: by the time we hear about a
- * Back it has already happened, so the only way to hold it is to UNDO it with
- * a `history.forward()` and re-issue it if the user says leave.
+ * Back it has already happened, so the only way to hold one is to UNDO it with
+ * a `history.forward()` and act once we are standing where the user was again.
+ * `popHold` is what runs there, and it is nulled before it runs so a handler
+ * that navigates cannot re-enter itself.
  *
- * The dialog is raised on the popstate that lands us back where we were, NOT
- * on the one we intercepted — that ordering is load-bearing. Opening any veil
- * makes `routeVeil` push a marker entry, and a push TRUNCATES everything ahead
- * of it: raising the dialog first would destroy the forward entry the very next
- * line was about to spend.
+ * Whatever the press is spent on happens on the SECOND popstate, not the one we
+ * intercepted — that ordering is load-bearing for anything that raises a
+ * dialog. Opening any veil makes `routeVeil` push a marker entry, and a push
+ * TRUNCATES everything ahead of it: raising the dialog first would destroy the
+ * forward entry the very next line was about to spend.
+ *
+ * Four things use it, in the order Back unwinds them (below the veils, which
+ * `dismissTop` already owns):
+ *
+ *   1. an unsaved SETTINGS draft — ask before the page goes;
+ *   2. the ASSISTANT, while it is an overlay — a layer over the document is
+ *      dismissed by Back before the document itself is;
+ *   3. RAW mode on a phone — Back means "stop editing" one press before it
+ *      means "leave this note", because a phone has no ⌘E and the statusbar
+ *      chip is a 30px target;
+ *   4. an unsaved Raw buffer at every other width — the SPEC §4 exit guard.
  */
-let guardPop = null;
+let popHold = null;
+function holdPop(after, wasBack) {
+  popHold = after;
+  /* histAt deliberately NOT moved: we are about to be put back on the entry it
+     already names, and this traversal is what lands us there — the OPPOSITE of
+     the one we are undoing, which is the only thing the direction is for. */
+  if (wasBack === false) history.back();
+  else history.forward();
+}
 
 export function onPop(e) {
   const st = e.state || {};
-  if (guardPop) {
-    const g = guardPop;
-    guardPop = null;
+  if (popHold) {
+    const run = popHold;
+    popHold = null;
     histAt = st.i || 0;
-    /* we are standing where the user was again; now ask */
-    guardRawExit(g.replay);
+    /* we are standing where the user was again; now spend the press */
+    run();
     return;
   }
   const back = (st.i || 0) < histAt;
+  /**
+   * THE SETTINGS PAGE'S UNSAVED DRAFT (see `guardSettingsExit`).
+   *
+   * First of the non-veil layers, and gated on the entry we LANDED on rather
+   * than on the one we left: `st.z === "settings"` is a section change, which
+   * never leaves the page and so has nothing to ask about. A veil already up
+   * owns the press instead (the dismissal branch below), including this
+   * dialog's own — Back with it open is Cancel, exactly as Esc is.
+   *
+   * The commit is not incidental. A `[data-num]` field records on `change`, and
+   * Back is not a blur — so the draft is still empty while the caret sits in the
+   * edit, `settingsDirty()` reads the page as clean, and the press walks off
+   * with the number. `guardSettingsExit` commits for the same reason; this test
+   * has to as well, because it decides whether the guard is ever reached.
+   *
+   * BOTH DIRECTIONS, unlike every layer below it. The layers are gestures — you
+   * do not dismiss a sheet by pressing Forward — but a draft is WORK, and
+   * Forward off the settings page throws it away exactly as Back does. It is
+   * reachable in one press: open Settings, Back to the doc, Forward, type in a
+   * field, Forward again. So the traversal that puts us back has to be the
+   * OPPOSITE of the one we caught, hence `back` threaded into `holdPop`.
+   *
+   * What the two directions cannot share is how they leave once answered.
+   * Backwards, `history.back()` re-issues the press and the marker the dialog
+   * pushed is skipped on the way down (see the `st.z === "settings"` branch).
+   * Forwards there is nothing left to re-issue: raising the dialog pushes that
+   * marker, and a push TRUNCATES — so the forward entry is destroyed by the act
+   * of asking, whatever the ordering. The destination is therefore taken as a
+   * PLACE from the entry we caught and navigated to. It costs a fresh entry, but
+   * the forward stack it would have preserved no longer exists.
+   *
+   * Which is also why only a `doc` entry is worth catching in that direction. A
+   * spent marker ahead of us is not a page anyone is leaving — the veil branch
+   * below walks past it without moving the pane — and a settings entry is a
+   * section change, excluded here for both directions alike.
+   */
+  if (st.z !== "settings" && !VEILS.some(isOpen) && state.view === "settings" && (back || st.z === "doc")) {
+    commitFocusedNumber();
+    if (settingsDirty()) {
+      const to = st.path;
+      const go = back ? () => history.back() : () => openDoc(to, { force: true });
+      holdPop(() => guardSettingsExit(go), back);
+      return;
+    }
+  }
+  /**
+   * THE ASSISTANT, while it is a layer.
+   *
+   * Above W_TRIPANE the panel is a grid COLUMN — part of the layout, not
+   * something you are behind — so Back there means what it always meant. Below
+   * it the panel is an overlay or a phone sheet lying across the document, and
+   * the platform gesture for "put this layer away" is Back. The draft in the
+   * composer survives, for the same reason it survives Esc: closing is a CSS
+   * collapse and #composer never leaves the DOM.
+   */
+  if (back && !VEILS.some(isOpen) && !isTriPane() && app.classList.contains("chat-open")) {
+    holdPop(dismissChat);
+    return;
+  }
+  /**
+   * RAW → PREVIEW, on a phone, before Back means anything else.
+   *
+   * W_SHEET and not W_DOCK, because this is about the ways OUT of Raw that a
+   * phone actually has: there is no ⌘E without a keyboard, `#stMode` is the
+   * 30px statusbar chip, and the click-on-the-whitespace exit competes with
+   * every tap that is trying to scroll. Back is the one gesture a phone has
+   * plenty of — so it stops editing first and leaves the note second.
+   *
+   * `setMode` carries its own SPEC §4 guard, so a DIRTY buffer still raises the
+   * staged-diff dialog here; Save and Discard both land in Preview instead of
+   * on the previous page, which is what the press asked for.
+   */
+  if (back && !VEILS.some(isOpen) && isSheet() && state.view !== "settings" && state.mode === "raw") {
+    holdPop(() => setMode("preview", { silent: true }));
+    return;
+  }
   /**
    * BROWSER BACK OUT OF A DIRTY RAW BUFFER (SPEC §4).
    *
@@ -889,10 +1098,7 @@ export function onPop(e) {
    */
   const noop = st.z === "doc" && st.path === viewedPath() && !canPopBack(st);
   if (back && !noop && !VEILS.some(isOpen) && rawExitDiff()) {
-    /* histAt deliberately NOT moved: we are about to be put back on the entry
-       it already names, and the forward() below is what lands us there */
-    guardPop = { replay: () => history.back() };
-    history.forward();
+    holdPop(() => guardRawExit(() => history.back()));
     return;
   }
   histAt = st.i || 0;
@@ -915,6 +1121,16 @@ export function onPop(e) {
       if (shown && st.path !== shown) routeDoc(shown, true);
     }
     routeVeil();
+    /* …and a LAYER the modal was lying on top of still owes a press of its own.
+       The dismissal walked us down onto the entry under the marker, which on a
+       phone is the bottom of the stack — so the sheet that reserved a press
+       before the modal opened is now standing on nothing, and the next Back
+       leaves the app instead of putting the sheet away. Re-arm it here, where
+       the walk-down actually happens; `markerForLayer` is a no-op wherever the
+       press is already covered (a veil still up, an app entry underneath, or
+       nothing layered at all) and re-points the reservation at the marker it
+       pushes, healing whatever the truncation left behind. */
+    markerForLayer();
     return;
   }
   /* Walking INTO a settings entry: paint the page, write nothing — the entry we
@@ -1035,15 +1251,18 @@ export function goHome() {
   if (!p) return openFirstDoc();
   if (state.docPaths.has(p)) return openDoc(p);
   confirmDialog({
-    title: "Home doc does not exist",
+    title: "Create your home doc?",
     path: p,
-    body:
-      "Settings › Editing › Home doc names a doc this vault does not have. Create it now, or cancel to open the first doc instead.",
+    /* No body. The heading asks the question, the path answers "which doc", and
+       the footer says where Cancel goes — the paragraph that used to name the
+       setting ("Settings › Editing › Home doc names a doc this vault does not
+       have…") was three lines explaining a two-word answer. */
+    body: "",
     ok: "Create it",
     /* a create is not a delete: no warning glyph, no red button, and a footer
        that says what actually happens */
     danger: false,
-    note: "Creates the file and opens it.",
+    note: "Cancel opens the first doc instead.",
     onOk: () => createHome(p),
     onCancel: () => openFirstDoc(),
   });
@@ -1129,8 +1348,36 @@ export function toggleChat(opts) {
     const c = $("#composer");
     if (c && document.activeElement === c) c.blur();
   }
+  /* opening a LAYER gives Back something to spend on dismissing it, but only
+     where there is nothing under us already — see `markerForLayer`. Closing
+     hands an unspent one back, whichever gesture did the closing. */
+  if (open && !isTriPane()) markerForLayer();
+  else if (!open) retireLayerMarker();
   if (!opts || opts.persist !== false) cacheLook("chat", open ? "open" : "closed");
   syncScrim();
+}
+
+/**
+ * PUT THE LAYER AWAY — the assistant dismissed by something that is not its own
+ * control: a tap on the document or the sidebar behind it (wired in app.js), or
+ * the browser Back button (`onPop`). Returns whether there was anything to
+ * dismiss, so a caller can tell a spent gesture from a wasted one.
+ *
+ * Only meaningful below W_TRIPANE, where `chat-open` is an OVERLAY (a fixed
+ * panel at tablet widths, a bottom sheet on a phone) rather than a grid column
+ * — both callers check that themselves, because at tri-pane widths reaching
+ * "past" the panel is not a gesture at all: nothing is covered.
+ *
+ * `persist: false` on purpose. The remembered flag answers "does this user work
+ * with the assistant up?", and reaching past a layer to touch the thing under
+ * it does not answer that question — it is the same reasoning that makes the
+ * Settings detour non-persistent. The draft in the composer survives either
+ * way: closing is a CSS collapse and nothing unmounts.
+ */
+export function dismissChat() {
+  if (!app.classList.contains("chat-open")) return false;
+  toggleChat({ persist: false });
+  return true;
 }
 
 /**

@@ -59,6 +59,25 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   entangled (14 mutual import pairs, a legacy of the single-file split); new
   cross-feature needs should go through `state.js`, an injected callback, or a
   DOM event rather than adding pairs. No `export let` anywhere in `app/`.
+- **Static, not modules** — `index.html`, `themes/*.css`, `manifest.json` and
+  `icons/*.png`. The icons are drawn and written by `scripts/make-icons.ts`, a
+  generator run by hand when the mark changes; the PNGs are committed and
+  nothing at runtime builds them (ADR 0007).
+
+Two guards on leaving a surface with unsaved work, and they are twins — same
+shape, same `proceed` callback re-issuing the caller's own action with a force
+flag, and the browser Back button reaches both through `onPop`'s `holdPop`
+(a popstate is an announcement, so it is undone with `history.forward()` and
+re-issued if the user says leave):
+
+| Surface | Gate | Raised by |
+|---|---|---|
+| a Raw buffer that differs from disk | `guardRawExit` (editor.js) | ⌘E, the mode chip, a click on the pane, Esc, `openDoc`, `openSettings`, Back |
+| the settings page's unsaved draft | `guardSettingsExit` (settings.js) | the header Back button, `openDoc`, Back |
+
+Below them, Back also unwinds the layers that cover the document — the veils
+(`dismissTop`), then the assistant while it is an overlay, then Raw→Preview on
+a phone. `shell.js onPop` is the one place that order is written down.
 
 ## Tests as the enforcement layer
 

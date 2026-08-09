@@ -1,5 +1,10 @@
 /* ============================================================
-   entropy.js — the passphrase strength gate (research §5.4).
+   entropy.js — the passphrase strength ESTIMATE (research §5.4).
+
+   It was a gate; ADR 0006 removed it. Nothing in this file changed when it did,
+   and nothing in the app calls `estimateBits` any more — what survives is the
+   GENERATOR (which every Generate button uses) and the estimator that proves
+   the generator is worth using. See `MIN_BITS` at the foot of the file.
 
    This is the ONLY protection on the only long-lived secret in the system:
    `.znotes/identity.age` is committed and, per research §7.3, assumed readable
@@ -195,5 +200,13 @@ export function estimateBits(s) {
   return Math.max(0, Math.round(Math.min(sum, charsetBits(str))));
 }
 
-/** The floor the create-identity modal enforces (research §5.4). */
+/**
+ * The historical floor (research §5.4). NOTHING IN THE APP READS THIS.
+ *
+ * It was what create-identity and change-passphrase refused below. ADR 0006
+ * removed both gates and the readout that briefly replaced them, so this
+ * survives for exactly one purpose: `entropy.test.ts` measures `estimateBits`
+ * against it, which is how the estimator stays honest even though no dialog
+ * consults it. `generatePassphrase` below is held to the same number.
+ */
 export const MIN_BITS = 60;

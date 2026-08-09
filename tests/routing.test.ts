@@ -327,8 +327,13 @@ describe("routing — deep links and reloads", () => {
       `after previewing a density: ${JSON.stringify({ theme: "terminal", density: "compact" })}`
     );
 
-    /* leaving reverts the density draft's preview and still leaves the theme alone */
+    /* Leaving with an unsaved draft ASKS now (`guardSettingsExit`) — Back is
+       held with a `history.forward()` and the confirm goes up in front of it.
+       Discarding is what reverts the density preview, and the theme the URL
+       pinned still has to be left alone by that revert. */
     await back();
+    await waitVeil("cfVeil", true);
+    await page.click("#cfOk");
     await waitForSettings(page, false);
     expect(`and after leaving: ${JSON.stringify(await look())}`).toBe(
       `and after leaving: ${JSON.stringify({ theme: "terminal", density: DEFAULTS.density })}`

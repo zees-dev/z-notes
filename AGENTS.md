@@ -12,6 +12,8 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
   → `trash ai-endpoint` → `git terminal` → `ai docs` → `index`.
 - `app/` — the frontend. ES modules, no build step, no runtime deps. Leaf modules
   (`state ui api armor entropy dialogs crypto-worker`) never import feature modules.
+  `manifest.json` + `icons/` make it installable (ADR 0007); the icons are drawn by
+  `bun scripts/make-icons.ts` and committed — regenerate them if the mark changes.
 - `docs/` — the knowledge base; see the taxonomy below. `docs/specs/done/0002-http-api-v0.md` is the
   normative HTTP/SSE contract; `docs/specs/done/0001-z-notes-v1.md` is the product spec.
 - `tests/` — black-box by default (spawn the real server / a real Chromium).
@@ -43,7 +45,9 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   implementation (written by `/spec`); `done/` = the archive. The five founding
   specs live there: 0001 product ("SPEC §N" in code = its section N), 0002 the
   normative HTTP/SSE contract, 0003 theming, 0004 secrets crypto, 0005 the Bun
-  platform research. Their durable rules are ADRs 0002–0004.
+  platform research. Their durable rules are ADRs 0002–0004 — amended later by
+  0006 (0004's passphrase floor is advice, not a gate), 0007 (the app is
+  installable) and 0008 (on a phone, Back unwinds layers before it leaves).
 
 ## Workflow
 

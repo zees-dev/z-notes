@@ -258,14 +258,15 @@ async function restoreFromTrash(e) {
   toast("Restored " + landed);
 }
 
+/* Heading, target, verb, footer — the same four parts `askDelete` was cut down
+   to. The paragraph that used to sit here said "no restore, no undo" twice over
+   a button already labelled "Delete for good", under a footer that names the
+   one recovery that does exist. */
 function askPurgeEntry(e) {
   confirmDialog({
-    title: "Delete permanently",
+    title: e.kind === "folder" ? "Delete folder permanently" : "Delete doc permanently",
     path: e.path,
-    body:
-      "This removes " +
-      (e.kind === "folder" ? "the folder and everything in it" : "the doc") +
-      " from the trash for good. There is no restore after this, and no undo.",
+    body: "",
     ok: "Delete for good",
     note: "The git history is what is left.",
     onOk: () => purgeEntry(e),
@@ -296,7 +297,7 @@ function askEmptyTrash() {
   confirmDialog({
     title: "Empty trash",
     path: n + " item" + (n === 1 ? "" : "s"),
-    body: "Every deleted doc in here is removed for good, including the ones that still had days to run. There is no restore after this, and no undo.",
+    body: "",
     ok: "Empty trash",
     note: "The git history is what is left.",
     onOk: emptyTrash,

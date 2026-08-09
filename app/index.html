@@ -18,6 +18,40 @@
      blinks the cursor in browsers that animate SVG favicons (Firefox); the rest
      render the first frame (cursor on). -->
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='7' fill='%23121412'/%3E%3Ctext x='10.5' y='20.8' font-family='ui-monospace,Menlo,monospace' font-size='17' font-weight='600' fill='%238fbfa2' text-anchor='middle'%3Ez%3C/text%3E%3Crect x='16.5' y='9.5' width='5.5' height='13' fill='%238fbfa2'%3E%3Canimate attributeName='opacity' values='1;1;0;0;1' keyTimes='0;.5;.5;.95;1' dur='1.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3C/svg%3E">
+<!-- ── INSTALLED TO A HOME SCREEN ─────────────────────────────────────────────
+     The block below is the whole difference between a bookmark and an
+     app. `manifest.json` asks for `fullscreen` first and falls back through
+     `standalone` (no URL bar, no browser chrome), plus the `background_color` +
+     icon pair that BOTH platforms build their launch screen out of — Chrome
+     generates the splash from them, and Safari has done the same since iOS
+     15.4. `fullscreen` is honoured on Android and ignored on iOS, which has no
+     such mode for an installed web app; the ordered fallback is what makes that
+     a preference rather than a broken request. The `apple-*` tags are the older
+     iOS spelling of the same facts and are still what a device on an earlier
+     version reads.
+
+     `apple-touch-icon` is a PNG and cannot be the SVG above: iOS takes no SVG
+     icon, and with none it uses a SCREENSHOT of the page as the tile and has
+     nothing to draw a launch screen from. `scripts/make-icons.ts` draws the
+     mark and writes the three rasters; they are committed, so nothing here is
+     a build step.
+
+     `status-bar-style: default` on purpose, not `black-translucent`: the
+     translucent bar puts the topbar under the notch and buys an immersive look
+     with a row of controls nobody can hit. `viewport-fit=cover` above is still
+     right — the BOTTOM inset (the home indicator) overlaps the web view either
+     way, and base.css pays for it with `env(safe-area-inset-bottom)` on the
+     statusbar and the composer. -->
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="z-notes">
+<!-- the chrome the OS paints AROUND the app: the mark's near-black, which is
+     also the manifest's background_color, so the launch screen, the tile and
+     the status bar are one colour rather than three -->
+<meta name="theme-color" content="#121412">
 <link rel="stylesheet" href="./themes/base.css">
 <!-- swapped live by the Settings › Theme control; ?theme=<id> overrides at boot.
      The href below is the DEFAULT theme; the resolver under it rewrites it from
@@ -84,7 +118,19 @@
      (a throw leaves it up, carrying the reason). The serviceWorker loop down
      there is a one-off eviction of any prototype-era worker on this origin,
      not something boot waits on. -->
+<!-- The splash carries the MARK now, not just a line of text. Installed to a
+     home screen this div is the frame directly after the OS launch screen (the
+     one Chrome and Safari generate from manifest.json's icon + background),
+     so showing the same mark is what makes the two read as one launch rather
+     than as a flash of an empty page. In a browser tab it is the same splash it
+     always was, one glyph richer.
+
+     The mark is inline SVG for the reason everything else here is: zero
+     external requests, and an <img> to /icons/*.png would be a round trip in
+     front of the first paint. Not animated — a cursor blinking at the user
+     while the vault loads competes with the progress line under it. -->
 <div class="boot" id="boot">
+  <span class="boot-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="7" fill="#121412"/><text x="10.5" y="20.8" font-family="ui-monospace,Menlo,monospace" font-size="17" font-weight="600" fill="#8fbfa2" text-anchor="middle">z</text><rect x="16.5" y="9.5" width="5.5" height="13" fill="#8fbfa2"/></svg></span>
   <div class="msg" id="bootMsg">starting z-notes…</div>
 </div>
 
@@ -210,8 +256,14 @@
            bottom of the sidebar, which prints its own ⌘/ hint. Two chrome
            affordances for one route — one of them an unlabelled glyph — is the
            duplicate mechanism this move was meant to remove. -->
+      <!-- The SPARK, not a speech bubble: this button opens the panel whose own
+           title wears exactly this mark (`.chat-title .spark` below), and the
+           two are the same thing seen from two places. A bubble said "chat",
+           which is the least of what the assistant does — it proposes edits and
+           asks to run commands — and it was also the sess-chip's glyph, so the
+           topbar and the panel head disagreed about what the icon meant. -->
       <button class="iconbtn" id="chatBtn" data-act="toggle-chat" title="AI panel (⌘J)" aria-expanded="false">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4.2A8 8 0 1 1 21 12z"/></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5 13.9 8 19.5 9.9 13.9 11.8 12 17.3 10.1 11.8 4.5 9.9 10.1 8z" opacity=".95"/><path d="M18.5 14.5 19.4 17l2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z" opacity=".65"/></svg>
       </button>
     </header>
 

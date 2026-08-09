@@ -1161,37 +1161,67 @@ describe("the create-identity modal reads as prose in every theme", () => {
     }, 60000);
   }
 
-  test("the strength meter refuses a repeated dictionary word", async () => {
+  /* NO REQUIREMENTS, AND NO GRADE (ADR 0006).
+     There was a gate; then there was a live meter that graded every keystroke
+     and landed on "weak"; now there is neither. A readout is a requirement in
+     everything but enforcement — it tells the user their passphrase is wrong
+     while accepting it anyway, which is the worst of both. The field says what
+     the field is for, the generator is one click away, and nothing scores what
+     is typed into it.
+
+     `estimateBits` itself is unchanged and still measured — by entropy.test.ts,
+     against MIN_BITS, which is now the generator's floor and nothing else. This
+     test is about what the DIALOG says. */
+  test("typing a weak passphrase is not graded — no bits, no verdict, no colour", async () => {
     const p = await newPage(emptySrv);
     try {
       await openDoc(p, KEYS);
       await clickBlockButton(p, 0, /create vault identity/i);
       await p.waitForFunction(() => document.getElementById("ppVeil")!.classList.contains("show"), { timeout: 8000 });
 
+      const before = await p.$eval("#ppHint", (n) => n.textContent ?? "");
       await p.evaluate(() => (document.getElementById("ppInput") as HTMLInputElement).focus());
       await p.keyboard.type("password password password");
       await sleep(200);
 
-      /* the meter used to read "~135 bits — good" and the gate used to agree */
       const hint = await p.$eval("#ppHint", (n) => ({ text: n.textContent ?? "", cls: n.className }));
-      expect(hint.text).not.toMatch(/good/i);
-      expect(hint.text).toMatch(/too weak/i);
-      expect(hint.cls).toContain("bad");
+      /* the hint did not react to the keystrokes at all */
+      expect(`the hint after typing: ${JSON.stringify(hint.text)}`).toBe(
+        `the hint after typing: ${JSON.stringify(before)}`
+      );
+      expect(`no bit count: ${/bits/i.test(hint.text)}`).toBe("no bit count: false");
+      expect(`no verdict: ${/weak|good|strong/i.test(hint.text)}`).toBe("no verdict: false");
+      expect(hint.cls).not.toContain("bad");
 
-      /* and pressing Create is refused, so no identity is written */
-      await p.evaluate(() => (document.getElementById("ppConfirm") as HTMLInputElement).focus());
-      await p.keyboard.type("password password password");
-      await p.click('#ppVeil [data-act="pp-ok"]');
-      await sleep(800);
-      expect(await p.$eval("#ppHint", (n) => n.textContent ?? "")).toMatch(/too weak/i);
-      expect(existsSync(join(emptyDir, ".znotes", "identity.age"))).toBe(false);
-
-      /* the generator, which is the escape hatch the message points at, passes */
+      /* the generator still speaks — it is the one thing that has something to
+         say — and it says nothing about a minimum either */
       await p.click('#ppVeil [data-act="pp-generate"]');
       await sleep(200);
       const gen = await p.$eval("#ppHint", (n) => ({ text: n.textContent ?? "", cls: n.className }));
       expect(gen.text).toMatch(/generated/i);
+      expect(`the generator quotes no number: ${/bits/i.test(gen.text)}`).toBe("the generator quotes no number: false");
       expect(gen.cls).not.toContain("bad");
+    } finally {
+      await p.close();
+    }
+  }, 60000);
+
+  test("a weak passphrase creates the identity — the floor is advice, not a gate", async () => {
+    const p = await newPage(emptySrv);
+    try {
+      await openDoc(p, KEYS);
+      await clickBlockButton(p, 0, /create vault identity/i);
+      await p.waitForFunction(() => document.getElementById("ppVeil")!.classList.contains("show"), { timeout: 8000 });
+
+      for (const id of ["ppInput", "ppConfirm"]) {
+        await p.evaluate((x) => (document.getElementById(x as string) as HTMLInputElement).focus(), id);
+        await p.keyboard.type("password password password");
+      }
+      await p.click('#ppVeil [data-act="pp-ok"]');
+      await p.waitForFunction(() => !document.getElementById("ppVeil")!.classList.contains("show"), { timeout: 20000 });
+      expect(`the identity was written: ${existsSync(join(emptyDir, ".znotes", "identity.age"))}`).toBe(
+        "the identity was written: true"
+      );
     } finally {
       await p.close();
     }

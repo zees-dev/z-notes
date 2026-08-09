@@ -404,6 +404,24 @@
    ============================================================ */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
+html {
+  /* THE THREE LINES THAT MAKE AN INSTALLED APP STOP FEELING LIKE A PAGE.
+     None of them changes a layout; all three remove a BROWSER behaviour that
+     has no meaning once there is no browser around the app (manifest.json,
+     `display: standalone`):
+       · `text-size-adjust` — iOS silently inflates body text in portrait,
+         which walks straight through the measure floor §11 is built on;
+       · `overscroll-behavior` — the rubber-band that drags the whole app down
+         off the top of the screen, revealing the OS behind it. Every real
+         scroller in here already contains its own (see `.scroll`); this is
+         the outermost one, which had nothing under it to contain;
+       · `tap-highlight-color` — the grey flash a tap leaves on every button
+         and tree row on iOS. `:active` states are the app's own answer. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
 body {
   margin: 0;
   font-family: var(--font);
@@ -823,17 +841,17 @@ kbd {
 
 /* ONE LINE, in both modes.
 
-   This row is the only thing in the document column whose CONTENT differs
-   between Preview and Raw — the mode note is longer in Raw — so a row that is
-   allowed to reflow is a row that is taller in one mode than in the other, and
-   everything below it (i.e. the document itself) shifts on every ⌘E while
-   `#doc` never moves. Measured at 720px in the mono theme: dy=13px, invisible
-   to a parity gate that only measures the container. Ellipsised rather than
-   wrapped: the note is a hint, and the mode it names is also spelled out by the
-   statusbar's mode chip. */
+   This row used to be the only thing in the document column whose CONTENT
+   differed between Preview and Raw — it carried a `.mode-note` that was longer
+   in Raw — so a row allowed to reflow was a row taller in one mode than the
+   other, and everything below it (i.e. the document itself) shifted on every
+   ⌘E while `#doc` never moved. Measured at 720px in the mono theme: dy=13px,
+   invisible to a parity gate that only measures the container. The note is
+   gone (see renderDoc) and the row is now identical in both modes by
+   construction; `white-space: nowrap` stays, because the PATH can be long
+   enough to wrap this row on its own. */
 .doc-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 11.5px; color: var(--muted-2); font-weight: 500; font-family: var(--font); white-space: nowrap; }
 .doc-meta .tag { font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: var(--r-pill); background: var(--panel-3); color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.doc-meta .mode-note { margin-left: auto; font-family: var(--mono); font-size: 11px; letter-spacing: var(--tracking-tight); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* `.seg.mode` — the topbar Raw|Preview segmented control — is gone. The mode is
    the statusbar's `#stMode` chip now; see §8. `.seg` itself stays: settings
@@ -1045,8 +1063,8 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
 
 .empty-doc { text-align: center; padding: 60px 0; color: var(--muted); }
 .empty-doc .ring { width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 15px; display: grid; place-items: center; background: var(--panel-2); border: var(--bd); color: var(--muted-2); box-shadow: var(--sh-1); }
-.empty-doc h3 { margin: 0 0 5px; font-size: 15px; color: var(--text); font-weight: var(--w-semi); }
-.empty-doc p { margin: 0; font-size: 13.5px; }
+/* no `p` rule: an empty note prints its name and nothing else (renderDoc) */
+.empty-doc h3 { margin: 0; font-size: 15px; color: var(--text); font-weight: var(--w-semi); }
 
 /* click-to-edit affordance */
 .md.editable { cursor: text; }
@@ -1570,8 +1588,17 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .scrim.show { opacity: 1; pointer-events: auto; }
 
 /* boot / fatal */
-.boot { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; background: var(--bg); color: var(--muted); font-size: 13px; gap: 10px; transition: opacity .3s var(--ease); }
+/* THE SPLASH. Still `var(--bg)` in the theme's own palette — the resolver in
+   <head> is there precisely so this is the right colour on the first frame —
+   and still `grid` with one column, which is what stacks the mark over the
+   line without either of them knowing about the other. */
+.boot { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; align-content: center; background: var(--bg); color: var(--muted); font-size: 13px; gap: 14px; transition: opacity .3s var(--ease); }
 .boot[hidden] { display: none !important; }
+/* The tile, at the size a launcher would draw it. `--sh-3` and the radius are
+   the app's own tokens, so all three themes have an opinion about the splash
+   without any of them being asked for a new one. */
+.boot-mark { display: block; width: 64px; height: 64px; border-radius: 18px; overflow: hidden; box-shadow: var(--sh-3); }
+.boot-mark svg { display: block; width: 100%; height: 100%; }
 .boot .msg { text-align: center; max-width: 420px; line-height: 1.6; }
 .boot code { font-family: var(--mono); font-size: 12px; }
 
@@ -1689,32 +1716,35 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   }
   .app.nav-open .sidebar { transform: none; pointer-events: auto; }
 
-  /* THE SHEET LEAVES THE DOCUMENT ON SCREEN.
-     Measured at 390x844 the old sheet was 640px — 76% of the display — and the
-     scrim over the remaining 204px was `pointer-events: auto` with a 2px blur,
-     so `elementFromPoint` anywhere above the sheet returned #scrim: you could
-     not read, scroll or even see the document you were asking about, and the
-     one gesture the strip accepted threw the sheet away. 440px keeps the whole
-     upper half of the phone live (see syncScrim in app.js — the scrim is now a
-     drawer-only affair), and `--sheet-h` is one number so the sheet's height
-     and the room the document scrolls clear of it cannot disagree.
+  /* THE SHEET IS THREE QUARTERS OF THE PHONE, and the document keeps the rest.
+     It was 56dvh capped at 440px — 52% of a 390x844 display — which left the
+     history and the composer fighting over ~300px once the head and the
+     session row were paid for: three exchanges of context, and a scrollback you
+     had to scroll to read one answer. 78dvh is the number this sheet is for:
+     enough history to follow a conversation with the input still under it, with
+     the topbar and a strip of the note it is about still visible above (there
+     is no scrim — see syncScrim in app.js — so that strip is live, readable and
+     scrollable, and a tap on it puts the sheet away).
 
-     …AND THE KEYBOARD IS PART OF THAT ONE NUMBER. `.chat` is pinned to
-     `bottom: var(--kb)`, so a raised keyboard moves the sheet up without
-     shortening it and it can end up taller than the room left above the
-     keyboard. MEASURED with `--kb` set exactly as wireVisualViewport publishes
-     it: 360x640 kb=290 gave `chat.top = -8` and `.chat-head.top = -7` — the
-     rounded top edge and the border clipped off screen with 0px of document
-     above them; 375x667 kb=300 gave -7. (390x844 and 412x915 already fit.)
-     Subtracting `--kb` and the topbar fixes those and costs nothing where the
-     sheet already fits, since `min()` keeps the 440px cap.
+     `--sheet-h` is ONE number so the sheet's height and the room the document
+     scrolls clear of it cannot disagree.
+
+     …AND THE KEYBOARD IS PART OF IT. `.chat` is pinned to `bottom: var(--kb)`,
+     so a raised keyboard moves the sheet up without shortening it and it can
+     end up taller than the room left above the keyboard. MEASURED with `--kb`
+     set exactly as wireVisualViewport publishes it: 360x640 kb=290 gave
+     `chat.top = -8` and `.chat-head.top = -7` — the rounded top edge and the
+     border clipped off screen with 0px of document above them; 375x667 kb=300
+     gave -7. The `calc(100dvh - …)` term is what fixes those, and it binds
+     before the 78dvh one at every keyboard height that matters, which is why
+     growing the sheet does not reopen that bug.
 
      The `max(200px, …)` floor is not decoration: the sheet's own fixed chrome
      (head 46 + composer + Send + padding) is ~200px, and a landscape phone
      whose keyboard takes more than half the short side would otherwise shrink
      the sheet below its own Send button — trading a clipped top edge for an
      unreachable primary action, which is the worse of the two. */
-  :root { --sheet-h: max(200px, min(56dvh, 440px, calc(100dvh - var(--kb, 0px) - var(--d-topbar) - 8px))); }
+  :root { --sheet-h: max(200px, min(78dvh, calc(100dvh - var(--kb, 0px) - var(--d-topbar) - 8px))); }
   .chat {
     position: fixed; z-index: 80; left: 0; right: 0; bottom: var(--kb, 0px); height: var(--sheet-h);
     border-left: 0; border-top: var(--bd);
@@ -1735,7 +1765,11 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      bottom room is on the SHARED container and never on #rawArea: a mobile-only
      inset on the textarea is the specific break tests/e2e.test.ts names. */
   .doc { padding: 22px var(--doc-pad-x-sm) calc(34vh + var(--kb, 0px)); }
-  .app.chat-open .doc { padding-bottom: calc(34vh + var(--sheet-h) + var(--kb, 0px)); }
+  /* 10vh, not the 34vh above: `--sheet-h` is most of the viewport now, and the
+     old sum was 112vh of empty scroll under every note whenever the assistant
+     was up. The term that matters is the sheet itself — this is the slack that
+     lets the LAST line clear its top edge, not a second full screen of it. */
+  .app.chat-open .doc { padding-bottom: calc(10vh + var(--sheet-h) + var(--kb, 0px)); }
   .statusbar .hide-sm { display: none; }
   .crumbs .cr-dir { display: none; }
   .crumbs b { font-size: 12.5px; min-width: 4.5em; }
@@ -1780,12 +1814,49 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      prompt literally impossible to type. */
   .send { width: 44px; height: 44px; border-radius: var(--r-lg); }
   .send svg { width: 18px; height: 18px; }
-  /* …and the field ⏎ now fills has to be allowed to show what was typed. The
-     desktop ceiling is 110px, which at the 16px phone floor is four lines; the
-     sheet is the container that has the room, so the ceiling is a fraction of
-     it (~7 lines at the 440px sheet) and shrinks with it rather than with the
-     viewport. `.msgs` is `flex: 1 1 auto; min-height: 0`, so it yields. */
-  .composer textarea { max-height: calc(var(--sheet-h) * .42); }
+  /* THE COMPOSER IS TWO LINES UNTIL YOU ARE IN IT.
+     `autoGrow` writes an inline `height` of the field's own scrollHeight on
+     every keystroke, and `max-height` is what bounds it — so these two rules,
+     not JS, decide how much of the sheet a long prompt is allowed to eat.
+
+     At rest it is capped at TWO lines. On a phone the composer is the bottom of
+     a sheet whose whole point is the history above it, and a prompt pasted or
+     dictated into an unfocused field used to push that history up on its own:
+     a 12-line draft sitting there took ~180px of message list with nobody
+     typing. Two lines still show that a draft is there (and it scrolls, so
+     none of it is lost — the text is one tap away from being fully visible).
+
+     FOCUS is the tap that says "I am writing now", and the ceiling opens to a
+     fraction of the sheet — ~9 lines at 78dvh on a 844px phone — so a real
+     multi-line prompt is visible while it is being written. `.msgs` is
+     `flex: 1 1 auto; min-height: 0`, so it yields and then takes the room back
+     the moment the field is blurred or sent.
+
+     THE FLOOR IS WHAT MAKES THE TAP VISIBLE, not the ceiling. Raising only
+     `max-height` opens room the field does not take: `autoGrow` sizes it to its
+     own `scrollHeight`, so an EMPTY or one-line draft renders one line tall no
+     matter how high the cap goes, and "click it and it expands" — the whole of
+     the request — never happens until enough text exists to hit the resting cap.
+     `min-height` is the half that moves the box on the tap itself; the cap above
+     it is what a long prompt then stops against. Both are capped by the sheet
+     fraction so the pair can never cross.
+
+     `em`, so the cap follows the 16px iOS-zoom floor at the end of this file
+     rather than restating it — 2 × 1.55em is the two rows, and the rest is the
+     textarea's own UA padding (4px), which `box-sizing: border-box` puts inside
+     this number, plus 2px of slack. MEASURED: the resting box is 53.6px, and a
+     cap that lands a sub-pixel UNDER it clips the second row of a two-line
+     draft; 2px over it is still nowhere near a third row (78.4px). */
+  .composer textarea {
+    /* the resting FLOOR is the base rule's 40px, deliberately not restated —
+       that is what holds the two-line box open while nothing is typed */
+    max-height: calc(2 * 1.55em + 6px);
+    transition: min-height var(--dur-2) var(--ease), max-height var(--dur-2) var(--ease);
+  }
+  .composer-box:focus-within textarea {
+    min-height: min(calc(4 * 1.55em + 6px), calc(var(--sheet-h) * .32));
+    max-height: calc(var(--sheet-h) * .32);
+  }
   /* font-size: see the iOS-zoom floor at the end of this file */
   .pop { top: calc(var(--d-topbar) + 42px); left: 9px; right: 9px; }
   .stack { padding: 7px 10px 3px; }
@@ -2030,4 +2101,45 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
     content: ""; position: absolute; left: -4px; right: -4px;
     top: 50%; height: 36px; transform: translateY(-50%);
   }
+}
+
+/* ============================================================
+   14 · THE SAFE AREA (installed to a home screen)
+
+   `viewport-fit=cover` has been in the <meta> since the first phone pass, and
+   the app has always drawn edge to edge. That is correct in a browser tab, and
+   it is correct in an installed app too — with one exception the OS does not
+   let anyone opt out of: the BOTTOM inset. iOS's home indicator and Android's
+   gesture bar sit INSIDE the web view, over whatever is painted at
+   `bottom: 0`, which in this app is the statusbar (and, on a phone with the
+   assistant up, the composer and its Send button).
+
+   `apple-mobile-web-app-status-bar-style` is `default` (see index.html), so
+   the TOP inset is the system's own strip and never overlaps — there is
+   deliberately nothing here for it. Adding a top inset "for symmetry" would
+   double-pad the topbar on every device that reports one.
+
+   LAST IN THE FILE, for the same two reasons §12 and §13 are: a theme sheet
+   links after this one and redeclares `--d-status` at `:root`, so the height
+   below is written as an ELEMENT length; and the phone band of §11 sits above,
+   so a rule there could not have out-declared these anyway.
+
+   `env(…, 0px)` everywhere: on a browser that reports no inset — which is
+   every desktop, and the headless Chromium the gates run in — all four of
+   these evaluate to exactly what they replaced. ============================ */
+.statusbar { height: calc(var(--d-status) + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); }
+/* the assistant's own floor, at every width: above the phone band it is the
+   bottom of a full-height column, and on a phone it is the bottom of the sheet
+   — both of which are the bottom of the screen */
+.composer { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+
+@media (max-width: 1023px) {
+  /* the drawer is `position: fixed; bottom: 0`, so its last row — the Settings
+     link — is the one the gesture bar lands on */
+  .sidebar { padding-bottom: env(safe-area-inset-bottom, 0px); }
+}
+@media (max-width: 767px) {
+  /* §13's phone floor for this bar, plus the inset — restated rather than
+     inherited because §13 sets the height as a bare 36px */
+  .statusbar { height: calc(36px + env(safe-area-inset-bottom, 0px)); }
 }

@@ -10,6 +10,7 @@
 import * as api from "./api.js";
 import { state } from "./state.js";
 import { $, $$, apiFail, cap, el, esc, toast } from "./ui.js";
+import { confirmDialog } from "./dialogs.js";
 import { refreshTrash } from "./trash.js";
 import { autoGrow, guardRawExit, openDoc, syncRaw } from "./editor.js";
 import { applyLockPolicy, clearKeyFields, clearTerminalSecretFields, initSecrets, paintVaultKey } from "./secrets.js";
@@ -415,6 +416,64 @@ function paintSettingsRoute() {
 }
 
 /**
+ * THE GATE ON LEAVING WITH AN UNSAVED DRAFT — the settings twin of
+ * `guardRawExit`, and read the same way: `true` ⇒ the caller may leave now;
+ * `false` ⇒ this dialog took over and will run `proceed` itself if the user
+ * says so.
+ *
+ * It exists because the page used to leave SILENTLY and keep the draft, which
+ * had one failure mode nothing else could reach: the appearance PREVIEW. Every
+ * other drafted setting is a value in a field nobody can see from another page,
+ * but a previewed theme is the whole app's look — so "left without saving"
+ * looked exactly like "saved", and the only thing that would have said
+ * otherwise was a toast that had already faded. (The preview did revert on the
+ * way out; what did not was the case where the user had clicked BACK to the
+ * stored value, which used to leave the draft empty and the preview applied —
+ * fixed at the seg handler in app.js. This dialog is the second half: now
+ * nothing about the look can outlive the page unannounced.)
+ *
+ * The three exits all come through here: the header's Back button
+ * (`leaveSettings`), a tree click / ⌘K pick / [[link]] (`openDoc`), and the
+ * browser Back button (`onPop`, which has to put the traversal back first — see
+ * there). OK DISCARDS, deliberately: the question on screen is "leave without
+ * saving?", and a Yes that quietly kept the answer for next time would be
+ * answering a different one.
+ */
+export function guardSettingsExit(proceed) {
+  if (state.view !== "settings") return true;
+  /* already asking — a second trigger must not stack a second copy or replace
+     the pending destination (the rule `guardRawExit` keeps with `exitGuard`) */
+  if (state.settingsGuard) return false;
+  /* BEFORE the dirty test, not after: a number the caret is still sitting in
+     has not fired `change` yet, so it is not in the draft yet, so an early
+     `settingsDirty()` reads it as clean and waves the exit through — losing the
+     one edit the user was mid-way into making. Committing first is what makes
+     the question below cover the field still under the caret. */
+  commitFocusedNumber();
+  const n = Object.keys(settingsDraft).length;
+  if (!n) return true; // …nothing drafted, or the caret was in a field whose value never moved
+  state.settingsGuard = true;
+  confirmDialog({
+    title: "Leave without saving?",
+    path: n + " unsaved change" + (n === 1 ? "" : "s"),
+    /* no body: the heading is the question and the footer is the consequence */
+    body: "",
+    ok: "Discard and leave",
+    note: "Cancel goes back to the page, where Save (⌘S) keeps them.",
+    onOk: () => {
+      state.settingsGuard = false;
+      /* the discard is what puts the stored look back, cache included */
+      discardSettingsDraft();
+      proceed();
+    },
+    onCancel: () => {
+      state.settingsGuard = false;
+    },
+  });
+  return false;
+}
+
+/**
  * Stop showing the settings page. PAINT ONLY — it writes no history, because
  * every way out of Settings is already a navigation that owns its own entry:
  * Back (the entry under it), a tree click or ⌘K pick (`openDoc` pushes), or the
@@ -428,21 +487,23 @@ export function exitSettings() {
   clearKeyFields();
   clearTerminalSecretFields();
   /* ---------- LEAVING WITH AN UNSAVED DRAFT ----------
-     KEEP the draft, REVERT the preview, and SAY SO. The three exits from this
-     page are browser Back, a tree/⌘K navigation and the header's Back button,
-     and they all land here — but only one of them is a button we could have put
-     a modal in front of. A confirm on a browser Back means catching a popstate
-     that has already happened and pushing the entry back, which is how a page
-     ends up fighting the history stack; and auto-reverting would be exactly the
-     silent discard of edits the user believes they made. So nothing is thrown
-     away: the draft survives, the toast says it survived, and re-entry (⌘, /
-     ⌘/ / the sidebar row / a deep link) paints it again with Save still lit.
+     A draft only ever reaches this line on an exit that was never a person
+     leaving: a popstate we are catching up with, an SSE `moved` echo, an
+     accepted proposal re-homing the pane. Every DELIBERATE exit is gated by
+     `guardSettingsExit` above and arrives here already answered — discarded,
+     or saved. (Yes, the browser Back button too: it is a popstate that has
+     already happened, so `onPop` puts the traversal back with a
+     `history.forward()` and asks from there.)
 
-     The one thing that does NOT survive is the appearance PREVIEW. A theme is
-     the whole app's look, and an unsaved pick must not become the look of a
-     page the user is not even on — the preview is a tool for judging a theme
-     while you are choosing it, not a half-applied setting. It comes back the
-     moment Settings does.
+     For those programmatic exits the old rule still holds and is still the
+     right one: KEEP the draft, REVERT the preview, and SAY SO. Nothing is
+     thrown away by an exit nobody asked for; re-entry (⌘, / ⌘/ / the sidebar
+     row / a deep link) paints it again with Save still lit.
+
+     The preview does not survive either way. A theme is the whole app's look,
+     and an unsaved pick must not become the look of a page the user is not even
+     on — the preview is a tool for judging a theme while you are choosing it,
+     not a half-applied setting. It comes back the moment Settings does.
 
      A reload IS a discard, because the draft is in memory — `beforeunload`
      (wired in `wire()`) is what makes that one loud instead of silent. */
@@ -475,6 +536,10 @@ export function exitSettings() {
  */
 export function leaveSettings() {
   if (state.view !== "settings") return;
+  /* the header's Back button is the one exit that IS a plain button, so the
+     guard is a plain call: the dialog re-enters this function once the draft is
+     gone, and `settingsDirty()` is false by then */
+  if (!guardSettingsExit(leaveSettings)) return;
   if (state.settingsExit === "back" && canPopBack(history.state)) {
     history.back();
     return;

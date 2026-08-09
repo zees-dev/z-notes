@@ -69,6 +69,11 @@ export const state = {
   /* { path, proceed } — the open exit guard and the way out it is holding back
      (SPEC §4). Non-null is what stops a second trigger stacking a second copy. */
   exitGuard: null,
+  /* …and the settings page's twin of it: true while the "leave with unsaved
+     changes?" confirm is up. Same job — a second trigger (a tree click behind
+     the veil, a Back press) must not stack a second dialog over the first and
+     replace the destination the first one is holding. */
+  settingsGuard: false,
   events: null,
   epoch: null, // vault epoch from the last `hello` — see resyncAfterGap()
   /* The sidebar row the user last touched — { path, kind } — and the ONLY

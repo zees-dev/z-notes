@@ -8,7 +8,9 @@
 "use strict";
 
 import * as api from "./api.js";
-import { MIN_BITS, estimateBits } from "./entropy.js";
+/* NO entropy import here any more. This file used to enforce `MIN_BITS` in two
+   places; both gates are gone (see `createIdentity`), and nothing here grades a
+   passphrase. `generatePassphrase` is app.js's, beside the Generate buttons. */
 import { dedentArmor, indentArmor, isArmorShape } from "./armor.js";
 import { state } from "./state.js";
 import { $, $$, I, activeDoc, el, esc, toast } from "./ui.js";
@@ -457,13 +459,8 @@ export async function changeVaultPassphrase() {
   if (!next) return keyHint("Enter the new passphrase.", true);
   if (next !== confirm) return keyHint("The two new passphrases do not match.", true);
   if (next === cur) return keyHint("That is the passphrase you already have.", true);
-  /* the same floor `createIdentity` enforces — a change is not a way around it */
-  const bits = estimateBits(next);
-  if (bits < MIN_BITS)
-    return keyHint(
-      "Too weak (~" + bits + " bits). Use Generate, or a longer passphrase — " + MIN_BITS + " bits minimum.",
-      true
-    );
+  /* No entropy FLOOR — see `createIdentity` for the whole reasoning. The
+     estimate is still measured and still printed; it just no longer refuses. */
 
   const btn = $("#keyChangeBtn");
   btn.disabled = true;
@@ -535,7 +532,7 @@ function openPP(mode) {
   $("#ppGen").hidden = !create;
   $("#ppOkTxt").textContent = create ? "Create" : "Unlock";
   $("#ppHint").textContent = create
-    ? "Generate one, or type at least 60 bits' worth. There is no recovery: lose it and the blocks stay encrypted forever."
+    ? "Generate one, or type your own. There is no recovery: lose it and the blocks stay encrypted forever."
     : "Decrypted in the crypto worker; never sent to the server.";
   $("#ppHint").className = "note";
   $("#ppVeil").classList.add("show");
@@ -553,8 +550,8 @@ function askCreate() {
   openPP("create");
 }
 
-/* estimateBits / WORDS / generatePassphrase now live in ./entropy.js — the
-   gate they implement is security-critical and needs its own unit tests. */
+/* estimateBits / WORDS / generatePassphrase live in ./entropy.js — the
+   generator is security-critical and needs its own unit tests. */
 
 export async function doPassphraseOk() {
   const pass = $("#ppInput").value;
@@ -653,10 +650,31 @@ async function repairRecipient(identityArmor, recipient) {
   }
 }
 
+/**
+ * THE ENTROPY FLOOR IS GONE, AND SO IS THE GRADE.
+ *
+ * It used to refuse anything under `MIN_BITS`, here and in
+ * `changeVaultPassphrase`. Both refusals are gone, and so is the live readout
+ * that replaced them: a meter that grades every keystroke and settles on "weak"
+ * states a requirement whether or not it enforces one. The only things this app
+ * blocks on are an EMPTY passphrase (there is nothing to wrap the identity
+ * with) and a mismatched confirmation (the user cannot have meant both).
+ *
+ * The arithmetic behind the old floor has NOT changed, which is why this is a
+ * product decision and not a security claim: `.znotes/identity.age` is
+ * COMMITTED and, per research §7.3, assumed readable by the adversary, so what
+ * protects it is exactly scrypt(2^18) × the entropy of this string. A weak
+ * passphrase is a weak vault. Generate is one click away and still produces the
+ * strong answer; the choice is simply the vault owner's to make, which is the
+ * same rule the rest of this app follows about destructive-but-deliberate acts.
+ * `entropy.js` keeps the estimator and its unit tests either way.
+ *
+ * (ADR 0006 records this; spec 0004 §5.4 and its decision table describe the
+ * floor as it shipped and are an archive, not the live contract.)
+ */
 async function createIdentity(pass, confirm) {
-  const bits = estimateBits(pass);
-  if (!pass || bits < MIN_BITS) {
-    ppHint("Too weak (~" + bits + " bits). Use the generator or a longer passphrase — " + MIN_BITS + " bits minimum.", true);
+  if (!pass) {
+    ppHint("Enter a passphrase, or press Generate.", true);
     return;
   }
   if (pass !== confirm) {

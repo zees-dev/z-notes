@@ -337,8 +337,11 @@ describe("after a delete, the neighbour opens", () => {
     await pressRowDelete(page, "a-seq/a1.md");
     const c = await confirmText(page);
     expect(`the note says: ${c.note}`).toBe("the note says: Recoverable only from git history.");
-    expect(`it does not promise a trash: ${!/trash/i.test(c.body)}`).toBe("it does not promise a trash: true");
-    expect(`and it still warns about links: ${/BROKEN/.test(c.body)}`).toBe("and it still warns about links: true");
+    /* the FOOTER is the whole promise now — the dialog has no body at all (see
+       askDelete), so a trash this server does not have cannot be implied by
+       prose either */
+    expect(`it does not promise a trash: ${!/trash/i.test(c.note)}`).toBe("it does not promise a trash: true");
+    expect(`and it says nothing else: ${JSON.stringify(c.body)}`).toBe('and it says nothing else: ""');
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.getElementById("cfVeil")!.classList.contains("show"), { timeout: 5000 });
     expect(`a1 is untouched: ${vaultHasDoc("a-seq/a1.md")}`).toBe("a1 is untouched: true");
@@ -350,17 +353,42 @@ describe("after a delete, the neighbour opens", () => {
     expect(`now the block is mounted: ${(await trashState(page)).mounted}`).toBe("now the block is mounted: true");
   }, 90000);
 
-  test("the delete dialog now says trash, for how long, and still says BROKEN", async () => {
+  /* The dialog is a HEADING, the path and the footer — nothing else (askDelete).
+     What the footer says is still forked on whether the trash route answered,
+     and that fork is the assertion worth keeping: it is the last sentence
+     anyone reads before a delete, and it must never promise a recovery this
+     server cannot perform. */
+  test("the delete dialog says trash and for how long, with no body at all", async () => {
     await pressRowDelete(page, "a-seq/a2.md");
     const c = await confirmText(page);
     expect(`the note: ${c.note}`).toBe(`the note: In the trash for ${RETENTION_DAYS} days, then purged for good.`);
     expect(`no git-history promise: ${!/git history/i.test(c.note + c.body)}`).toBe("no git-history promise: true");
-    expect(`the body says where it goes: ${/goes to the trash/.test(c.body)}`).toBe(
-      "the body says where it goes: true"
-    );
-    expect(`…and that links break until it is restored: ${/BROKEN until it is restored/.test(c.body)}`).toBe(
-      "…and that links break until it is restored: true"
-    );
+    expect(`the heading: ${c.title}`).toBe("the heading: Delete doc");
+    expect(`the path: ${c.path}`).toBe("the path: a-seq/a2.md");
+    expect(`and no description: ${JSON.stringify(c.body)}`).toBe('and no description: ""');
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.getElementById("cfVeil")!.classList.contains("show"), { timeout: 5000 });
+  }, 60000);
+
+  /* the SCOPE moved into the heading when the body went: "delete this folder"
+     and "delete this folder and the docs under it" are different acts, and the
+     button says only the first */
+  test("a folder's delete heading carries the count that used to be in the body", async () => {
+    /* the folder row is `.row.folder[data-path]`, not the `.row.file[data-doc]`
+       shape `pressRowDelete` looks for */
+    await page.waitForSelector('#tree .row.folder[data-path="a-seq"]', { timeout: 15000 });
+    const opened = await page.evaluate(() => {
+      const row = document.querySelector('#tree .row.folder[data-path="a-seq"]');
+      const btn = row?.parentElement?.querySelector(".rowacts")?.lastElementChild as HTMLElement | null;
+      if (!btn) return false;
+      btn.click();
+      return true;
+    });
+    if (!opened) throw new Error("no delete affordance beside the a-seq folder");
+    await page.waitForFunction(() => document.getElementById("cfVeil")!.classList.contains("show"), { timeout: 8000 });
+    const c = await confirmText(page);
+    expect(`the heading: ${c.title}`).toBe("the heading: Delete folder and 3 docs");
+    expect(`and no description: ${JSON.stringify(c.body)}`).toBe('and no description: ""');
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.getElementById("cfVeil")!.classList.contains("show"), { timeout: 5000 });
   }, 60000);
@@ -572,11 +600,18 @@ describe("the sidebar trash", () => {
     await pressTrashAct(page, 0, "purge");
     await page.waitForFunction(() => document.getElementById("cfVeil")!.classList.contains("show"), { timeout: 8000 });
     const c = await confirmText(page);
-    expect(`the dialog: ${c.title} / ${c.ok}`).toBe("the dialog: Delete permanently / Delete for good");
+    /* The heading says DOC or FOLDER now, because the body it replaced was the
+       only thing that ever said which — and "the folder and everything in it" is
+       the one fact of that paragraph a heading can carry on its own. */
+    expect(`the dialog: ${c.title} / ${c.ok}`).toBe("the dialog: Delete doc permanently / Delete for good");
     expect(`it names the doc: ${c.path}`).toBe(`it names the doc: ${before[0]}`);
-    expect(`and says there is no way back: ${/no restore after this, and no undo/.test(c.body)}`).toBe(
-      "and says there is no way back: true"
-    );
+    /* The PERMANENT delete wears the same four parts as the ordinary one:
+       heading, path, verb, footer — no body. The paragraph that used to sit here
+       said "no restore, no undo" twice over a button reading "Delete for good",
+       under a footer naming the one recovery that does exist. The footer is
+       where that sentence lives now, and it is the only one. */
+    expect(`and no description: ${JSON.stringify(c.body)}`).toBe('and no description: ""');
+    expect(`the footer says what is left: ${c.note}`).toBe("the footer says what is left: The git history is what is left.");
 
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.getElementById("cfVeil")!.classList.contains("show"), { timeout: 8000 });

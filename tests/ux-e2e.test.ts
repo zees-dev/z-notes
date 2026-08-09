@@ -1183,7 +1183,9 @@ describe("ux — the home button", () => {
     expect(`create dialog OK button: ${create.ok}`).toBe("create dialog OK button: btn primary");
     expect(`create dialog wears the safe chrome: ${create.safe}`).toBe("create dialog wears the safe chrome: true");
     expect(`create dialog warning glyph: ${create.warnShown}`).toBe("create dialog warning glyph: none");
-    expect(`create dialog footer: ${create.note}`).toBe("create dialog footer: Creates the file and opens it.");
+    expect(`create dialog footer: ${create.note}`).toBe(
+      "create dialog footer: Cancel opens the first doc instead."
+    );
 
     await page.click('#cfVeil [data-act="cf-cancel"]');
     await app.waitVeil("cfVeil", false);

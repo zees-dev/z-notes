@@ -167,11 +167,13 @@ describe("phone — the chat composer", () => {
     expect(`send is ${empty.send.w}x${empty.send.h}`).toBe("send is 44x44");
 
     await page.focus("#composer");
+    await sleep(320); // the focus floor's transition — see the next test
+    const opened = await read();
     await page.type("#composer", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
     await sleep(150);
     const grown = await read();
 
-    /* the field tracks its content instead of sitting at two rows */
+    /* the field tracks its content instead of sitting at the box focus opened */
     expect(`composer grew past its two-row box: ${grown.h > empty.h + 20}`).toBe(
       "composer grew past its two-row box: true"
     );
@@ -190,7 +192,11 @@ describe("phone — the chat composer", () => {
     });
     expect(`send stayed inside the sheet: ${sendOnScreen}`).toBe("send stayed inside the sheet: true");
 
-    /* and the field shrinks back rather than leaving its own hole */
+    /* and the field shrinks back rather than leaving its own hole. Back to the
+       FOCUSED box, not the resting one: the caret is still in the field, and the
+       focus floor is a floor — emptying the draft returns the room the text took
+       and nothing else. The resting height is what blur restores, which is the
+       next test's business. */
     await page.evaluate(() => {
       const ta = document.getElementById("composer") as HTMLTextAreaElement;
       ta.value = "";
@@ -198,8 +204,41 @@ describe("phone — the chat composer", () => {
     });
     await sleep(100);
     const back = await read();
-    expect(`composer returned to ${back.h} (empty was ${empty.h})`).toBe(
-      `composer returned to ${empty.h} (empty was ${empty.h})`
+    expect(`composer returned to ${back.h} (focused empty was ${opened.h})`).toBe(
+      `composer returned to ${opened.h} (focused empty was ${opened.h})`
+    );
+  }, 90000);
+
+  /* The resting field is TWO lines and tapping it opens a taller one — the
+     requirement is that the tap is visibly worth making. The floor is what does
+     that, not the ceiling: `autoGrow` sizes the field to its own `scrollHeight`,
+     so raising only `max-height` opens room an EMPTY field does not take and a
+     one-line prompt stays exactly one line however focused it is. Measured on an
+     empty composer for precisely that reason. */
+  test("focus alone opens the field — the resting two lines are a floor, not a cap", async () => {
+    await app.boot("/");
+    await page.evaluate(() => (document.getElementById("chatBtn") as HTMLElement).click());
+    await sleep(380);
+
+    const rest = await read();
+    /* two rows at rest, not one: 16px text at 1.55 line-height ≈ 25px a row */
+    expect(`the resting field holds two rows: ${rest.h >= 38}`).toBe("the resting field holds two rows: true");
+
+    await page.focus("#composer");
+    await sleep(320); // the min-height transition
+    const open = await read();
+    expect(`focus alone grew it from ${rest.h}px: ${open.h > rest.h + 10}`).toBe(
+      `focus alone grew it from ${rest.h}px: true`
+    );
+    /* …and it is still inside the sheet, with Send beside it */
+    expect(`send survived the expansion: ${open.send.w}x${open.send.h}`).toBe("send survived the expansion: 44x44");
+
+    /* blurring puts it back — the open field is a focus affordance, not a mode */
+    await page.evaluate(() => (document.getElementById("composer") as HTMLTextAreaElement).blur());
+    await sleep(320);
+    const closed = await read();
+    expect(`blur returned it to ${closed.h}px (rest was ${rest.h}px)`).toBe(
+      `blur returned it to ${rest.h}px (rest was ${rest.h}px)`
     );
   }, 90000);
 });
@@ -241,12 +280,24 @@ describe("phone — the bottom sheet is keyboard-aware", () => {
     }
   }, 120000);
 
-  test("…and with no keyboard the 440px cap is untouched", async () => {
+  /* With no keyboard the sheet is 78dvh — the number `--sheet-h` exists to be.
+     It was 56dvh capped at 440px, which on this phone was 52% of the display
+     and left the history and the composer sharing ~300px; the whole point of a
+     sheet you consult a document through is that the conversation fits in it.
+     The document strip above stays live: no scrim, and a tap on it dismisses. */
+  test("…and with no keyboard the sheet takes 78dvh, leaving the document above it", async () => {
     await app.boot("/");
     await page.evaluate(() => (document.getElementById("chatBtn") as HTMLElement).click());
     await sleep(380);
     const m = await sheetAt(390, 844, 0);
-    expect(`390x844 kb=0: the sheet is ${m.height}px`).toBe("390x844 kb=0: the sheet is 440px");
+    expect(`390x844 kb=0: the sheet is ${m.height}px`).toBe(
+      `390x844 kb=0: the sheet is ${Math.round(844 * 0.78)}px`
+    );
+    /* …and what is left above it is the topbar plus a readable strip, not a
+       sliver: the sheet may never reach the top of the screen */
+    expect(`and it starts ${m.top}px down, below the topbar: ${m.top > 40}`).toBe(
+      `and it starts ${m.top}px down, below the topbar: true`
+    );
   }, 90000);
 });
 
@@ -254,6 +305,176 @@ const openDrawer = async () => {
   await page.evaluate(() => (document.querySelector('.topbar [data-act="nav-open"]') as HTMLElement)?.click());
   await sleep(340);
 };
+
+/* ==================================================================
+   THE SHEET IS A LAYER, AND IT IS DISMISSED LIKE ONE
+
+   There is no scrim over the document (syncScrim: the assistant is a panel you
+   consult a document ALONGSIDE, not a modal), which is what makes the strip
+   above the sheet readable, scrollable and tappable. The other half of that
+   bargain is that reaching PAST the sheet has to put it away — otherwise the
+   only way back to the note is a 15px close button in the sheet's head.
+
+   `page.mouse`/`page.click`, never `element.click()`: the dismissal is wired on
+   `pointerdown`, and a synthetic `.click()` dispatches no pointer event at all.
+   ================================================================== */
+describe("phone — the sheet is a layer", () => {
+  const chatOpen = () => page.evaluate(() => document.getElementById("app")!.classList.contains("chat-open"));
+  const openChat = async () => {
+    await page.evaluate(() => (document.getElementById("chatBtn") as HTMLElement).click());
+    await sleep(380);
+    expect(`the sheet is up: ${await chatOpen()}`).toBe("the sheet is up: true");
+  };
+
+  test("a tap on the document above it dismisses it — and the tap still reaches the document", async () => {
+    await app.boot("/");
+    await openChat();
+
+    /* the strip of document left visible between the topbar and the sheet */
+    const at = await page.evaluate(() => {
+      const sheet = (document.querySelector(".chat") as HTMLElement).getBoundingClientRect();
+      const bar = (document.querySelector(".topbar") as HTMLElement).getBoundingClientRect();
+      return { x: 40, y: Math.round((bar.bottom + sheet.top) / 2), room: Math.round(sheet.top - bar.bottom) };
+    });
+    expect(`there is document to tap: ${at.room > 60}`).toBe("there is document to tap: true");
+    /* …and it is the DOCUMENT under the pointer there, not a scrim */
+    const hit = await page.evaluate(
+      (x, y) => {
+        const n = document.elementFromPoint(x as number, y as number);
+        return !!n && !!n.closest("#scroll");
+      },
+      at.x,
+      at.y
+    );
+    expect(`what is under the tap: the document: ${hit}`).toBe("what is under the tap: the document: true");
+
+    await page.mouse.click(at.x, at.y);
+    await sleep(420);
+    expect(`the sheet went away: ${!(await chatOpen())}`).toBe("the sheet went away: true");
+    /* the draft is a CSS collapse away, not an unmount */
+    expect(`the composer is still in the DOM: ${!!(await page.$("#composer"))}`).toBe(
+      "the composer is still in the DOM: true"
+    );
+  }, 90000);
+
+  test("a tap in the sidebar drawer dismisses it too", async () => {
+    await app.boot("/");
+    await openChat();
+    await openDrawer();
+
+    const at = await page.evaluate(() => {
+      const r = (document.querySelector("#sidebar .sb-search") as HTMLElement).getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    });
+    await page.mouse.click(at.x, at.y);
+    await sleep(420);
+    expect(`the sheet went away: ${!(await chatOpen())}`).toBe("the sheet went away: true");
+  }, 90000);
+
+  test("Back dismisses the sheet before it leaves the note", async () => {
+    await app.boot("/");
+    const before = await page.evaluate(() => location.pathname);
+    await openChat();
+
+    await page.evaluate(() => history.back());
+    await sleep(500);
+    expect(`the sheet took the press: ${!(await chatOpen())}`).toBe("the sheet took the press: true");
+    expect(`and the note is still open: ${await page.evaluate(() => location.pathname)}`).toBe(
+      `and the note is still open: ${before}`
+    );
+  }, 90000);
+
+  /* A phone has no ⌘E, and `#stMode` is a 30px chip in a 36px bar — so Back is
+     the gesture that actually exists for "stop editing". It leaves Raw one
+     press before it leaves the note. */
+  test("Back leaves Raw for Preview before it leaves the note", async () => {
+    await app.boot("/");
+    const before = await page.evaluate(() => location.pathname);
+    await page.evaluate(() => (document.getElementById("stMode") as HTMLElement).click());
+    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "raw", { timeout: 8000 });
+
+    await page.evaluate(() => history.back());
+    await sleep(500);
+    expect(`the mode after Back: ${await page.evaluate(() => document.getElementById("stMode")!.dataset.mode)}`).toBe(
+      "the mode after Back: preview"
+    );
+    expect(`and the note is still open: ${await page.evaluate(() => location.pathname)}`).toBe(
+      `and the note is still open: ${before}`
+    );
+  }, 90000);
+
+  /* REGRESSION — the press held in reserve, and given back.
+     A phone launches at the BOTTOM of the stack, where `history.back()` pops
+     nothing and no popstate fires at all, so opening a layer there pushes a
+     marker for Back to be intercepted at. Closing it by any OTHER gesture — the
+     ✕, the chip, a tap on the document, Esc — left that marker standing with the
+     user on it, and the next Back was spent walking off it: a press that
+     visibly did nothing, on the two things anyone does first after launching.
+
+     Measured as the ENTRY WE ARE STANDING ON, not `history.length`: an entry
+     cannot be removed, so retiring the marker walks back UNDER it and the length
+     is unchanged either way. What the user feels is which entry the next Back
+     starts from — a marker (`z: "veil"`, the dead press) or the doc. */
+  const standingOn = () => page.evaluate(() => (history.state || {}).z ?? "(none)");
+
+  test("closing the sheet by its own control does not leave a dead Back behind", async () => {
+    await app.boot("/");
+    expect(`a fresh launch stands on: ${await standingOn()}`).toBe("a fresh launch stands on: doc");
+
+    await openChat();
+    expect(`the open sheet reserved a press: ${await standingOn()}`).toBe("the open sheet reserved a press: veil");
+
+    /* the ✕ / chat button — NOT Back, which is the press the marker was for */
+    await page.evaluate(() => (document.getElementById("chatBtn") as HTMLElement).click());
+    await page.waitForFunction(() => !document.getElementById("app")!.classList.contains("chat-open"), { timeout: 8000 });
+    await sleep(420);
+    expect(`and closing gave it back: ${await standingOn()}`).toBe("and closing gave it back: doc");
+  }, 90000);
+
+  test("leaving Raw by the statusbar chip gives its reserved press back too", async () => {
+    await app.boot("/");
+    expect(`a fresh launch stands on: ${await standingOn()}`).toBe("a fresh launch stands on: doc");
+
+    await page.evaluate(() => (document.getElementById("stMode") as HTMLElement).click());
+    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "raw", { timeout: 8000 });
+    await sleep(300);
+    expect(`Raw reserved a press: ${await standingOn()}`).toBe("Raw reserved a press: veil");
+
+    await page.evaluate(() => (document.getElementById("stMode") as HTMLElement).click());
+    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", { timeout: 8000 });
+    await sleep(420);
+    expect(`and Preview gave it back: ${await standingOn()}`).toBe("and Preview gave it back: doc");
+  }, 90000);
+
+  /* Opening a modal OVER the sheet pushes a second marker, which truncates the
+     first — so the reservation has to move onto the replacement or the sheet's
+     press is orphaned and the dead Back is back. Three gestures from launch. */
+  test("a modal over the sheet does not strand the press the sheet reserved", async () => {
+    await app.boot("/");
+    await openChat();
+
+    /* the "?" shortcuts overlay: a veil that closes on Esc alone, so it cannot
+       take the sheet down with it */
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("Slash");
+    await page.keyboard.up("Shift");
+    await page.waitForFunction(() => document.getElementById("scVeil")!.classList.contains("show"), { timeout: 8000 });
+
+    /* Back dismisses the modal and leaves the sheet up… */
+    await page.evaluate(() => history.back());
+    await page.waitForFunction(() => !document.getElementById("scVeil")!.classList.contains("show"), { timeout: 8000 });
+    await sleep(420);
+    expect(`the sheet is still up: ${await chatOpen()}`).toBe("the sheet is still up: true");
+
+    /* …the next Back is still the sheet's, not a wasted one… */
+    await page.evaluate(() => history.back());
+    await sleep(500);
+    expect(`the sheet took the press: ${!(await chatOpen())}`).toBe("the sheet took the press: true");
+
+    /* …and it left nothing standing above the doc afterwards */
+    expect(`what the next Back starts from: ${await standingOn()}`).toBe("what the next Back starts from: doc");
+  }, 90000);
+});
 
 describe("phone — touch targets", () => {
   test("the tree, the row menu, the dialog verbs and the two bars clear their floors", async () => {

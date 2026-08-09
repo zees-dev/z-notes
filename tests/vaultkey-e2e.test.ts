@@ -234,14 +234,41 @@ describe("vault key — the refusals write nothing (SPEC §6)", () => {
     expect(`identity.age untouched: ${identityOnDisk() === identityBefore}`).toBe("identity.age untouched: true");
   }, 120000);
 
-  test("a weak new passphrase hits the same entropy floor first-run enforces", async () => {
-    await fill(OLD_PASS, "hunter2", "hunter2");
+  /* THE ENTROPY FLOOR IS GONE, AND SO IS THE GRADE (ADR 0006). It used to
+     refuse anything under 60 estimated bits here and at first run; now the only
+     refusals are the ones the operation cannot proceed without — a wrong current
+     passphrase, an empty new one, a mismatched confirmation — and a weak
+     passphrase is the vault owner's own call. Nothing scores it on the way past
+     either: a readout that grades every keystroke and lands on "weak" is a
+     requirement in everything but enforcement.
+
+     Asserted by round trip, and put back at the end: the rest of this file
+     unwraps with OLD_PASS, so a test that really does change the passphrase has
+     to really change it back. */
+  test("a weak new passphrase is accepted — the floor is advice, not a gate", async () => {
+    const WEAK = "hunter2";
+    await fill(OLD_PASS, WEAK, WEAK);
     await submit();
+    /* the hint is back to the field's own description — `keyHint("")` restores
+       it — rather than holding a refusal */
     const h = await hint();
-    expect(`refused for entropy: ${h.startsWith("Too weak")}`).toBe("refused for entropy: true");
-    expect(`names the floor: ${h.includes("60 bits minimum")}`).toBe("names the floor: true");
-    expect(`identity.age untouched: ${identityOnDisk() === identityBefore}`).toBe("identity.age untouched: true");
-  }, 120000);
+    expect(`no refusal in the hint: ${!/too weak/i.test(h) && h.includes("still decrypts")}`).toBe(
+      "no refusal in the hint: true"
+    );
+    expect(`identity.age was rewritten: ${identityOnDisk() !== identityBefore}`).toBe(
+      "identity.age was rewritten: true"
+    );
+    /* …and it is the SAME key underneath, which is the whole promise of a
+       re-wrap: the weak passphrase unwraps the identity the strong one did */
+    expect(`the weak passphrase unwraps it: ${(await unwrapOnDisk(WEAK)).startsWith("AGE-SECRET-KEY-")}`).toBe(
+      "the weak passphrase unwraps it: true"
+    );
+
+    await fill(WEAK, OLD_PASS, OLD_PASS);
+    await submit();
+    expect(`put back: ${(await unwrapOnDisk(OLD_PASS)).startsWith("AGE-SECRET-KEY-")}`).toBe("put back: true");
+    identityBefore = identityOnDisk();
+  }, 180000);
 
   test("a mismatched confirmation is refused", async () => {
     await fill(OLD_PASS, NEW_PASS, NEW_PASS + "x");
@@ -467,11 +494,15 @@ describe("vault key — the change itself, proved out of band", () => {
     /* the recorder has to have been working, or "nothing leaked" is vacuous */
     expect(`requests recorded: ${reqs.length > 0}`).toBe("requests recorded: true");
     const wrote = reqs.filter((r) => r.method === "PUT" && r.url.includes("/api/vault/identity"));
-    expect(`the identity was PUT ${wrote.length} time(s)`).toBe("the identity was PUT 1 time(s)");
-    /* …and that PUT really carried the new wrapped key, so the body under
-       examination is the one that matters */
-    expect(`the PUT carried age armor: ${wrote[0].body.includes("BEGIN AGE ENCRYPTED FILE")}`).toBe(
-      "the PUT carried age armor: true"
+    /* THREE re-wraps happened on this page: the weak-passphrase round trip
+       above (change, and change back — the entropy floor is advice now, ADR
+       0006) and the real change below it. Every one of them is a write of the
+       identity and every one is under examination here. */
+    expect(`the identity was PUT ${wrote.length} time(s)`).toBe("the identity was PUT 3 time(s)");
+    /* …and each PUT really carried a wrapped key, so the bodies under
+       examination are the ones that matter */
+    expect(`every PUT carried age armor: ${wrote.every((r) => r.body.includes("BEGIN AGE ENCRYPTED FILE"))}`).toBe(
+      "every PUT carried age armor: true"
     );
 
     const wire = reqs.map((r) => `${r.method} ${r.url}\n${r.body}`).join("\n");

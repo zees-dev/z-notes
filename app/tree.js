@@ -704,40 +704,42 @@ async function commitRename(node, value) {
 }
 
 /**
- * The delete confirmation.
+ * The delete confirmation: a HEADING, the path, and the footer. Nothing else.
  *
- * The copy is FORKED on whether the trash is actually there. It used to promise
- * "Recoverable only from git history", which stopped being true the moment a
- * trash existed — but it is still true of a server that has no trash route, and
- * this dialog is the last thing a user reads before pressing Delete. So the
- * sentence follows `state.trash.available`, which is set by a GET that answered
- * and by nothing else: the app never promises a trash it has not seen.
+ * The two paragraphs that used to fill the body — how the delete reaches disk,
+ * and what happens to the `[[link]]`s pointing here — were read once and
+ * skimmed forever after. What survives is what the reader cannot reconstruct
+ * from the button they are about to press:
  *
- * The BROKEN-LINK warning stays either way. That is SPEC §5 on purpose — a
- * rename rewrites every `[[link]]` that resolved to the doc, a delete rewrites
- * none, because the broken link is the record that something used to be there.
- * With a trash behind it the sentence gains an end: the links come back when
- * the doc does, so the damage is now as reversible as the delete is.
+ *   · the SCOPE, folded into the heading, because "delete this folder" and
+ *     "delete this folder and the 12 docs under it" are different acts and only
+ *     one of them is written on the button;
+ *   · the FOOTER, which is still FORKED on whether the trash is really there.
+ *     `state.trash.available` is set by a GET that answered and by nothing
+ *     else, so the app never promises a trash it has not seen — "in the trash
+ *     for N days" and "recoverable only from git history" are the two honest
+ *     answers and this line is the last one a user reads before Delete.
+ *
+ * The broken-link behaviour is unchanged and still SPEC §5: a rename rewrites
+ * every `[[link]]` that resolved to the doc, a delete rewrites none, because
+ * the broken link is the record that something used to be there. It is simply
+ * no longer restated in front of every delete — the preview flags each one
+ * where it actually is.
  */
 function askDelete(path, kind) {
-  const inSubtree = kind === "folder" ? [...state.docPaths].filter((p) => p.indexOf(path + "/") === 0) : [];
-  const what =
-    kind === "folder"
-      ? "This folder and everything inside it (" + inSubtree.length + " doc" + (inSubtree.length === 1 ? "" : "s") + ")"
-      : "This doc";
-  const trashed = state.trash.available;
-  const detail = trashed
-    ? what + " goes to the trash, in one commit — restore it from the sidebar."
-    : what + " is removed from disk in one commit.";
-  const links = trashed
-    ? " Any [[link]] pointing here is left BROKEN until it is restored — flagged in the preview, never silently rewritten."
-    : " Any [[link]] pointing here is left BROKEN — flagged in the preview, never silently rewritten.";
+  const n = kind === "folder" ? [...state.docPaths].filter((p) => p.indexOf(path + "/") === 0).length : 0;
+  const title =
+    kind !== "folder"
+      ? "Delete doc"
+      : n === 0
+      ? "Delete folder"
+      : "Delete folder and " + n + " doc" + (n === 1 ? "" : "s");
   confirmDialog({
-    title: "Delete " + (kind === "folder" ? "folder" : "doc"),
+    title: title,
     path: path,
-    body: detail + links,
+    body: "",
     ok: "Delete",
-    note: trashed ? trashRetentionNote() : "Recoverable only from git history.",
+    note: state.trash.available ? trashRetentionNote() : "Recoverable only from git history.",
     onOk: () => doDelete(path, kind),
   });
 }
