@@ -28,7 +28,7 @@ import { type Browser, type Page } from "puppeteer-core";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { startServer, type SeedMap, type TestServer } from "./helpers";
-import { ensureMode, launchTestBrowser, waitForFocusedInput } from "./browser";
+import { ensureMode, launchTestBrowser, pressChord, waitForFocusedInput } from "./browser";
 
 /* ------------------------------------------------------------------
    fixtures
@@ -1199,6 +1199,135 @@ describe("e2e — creation is context-aware and path-aware (SPEC §5)", () => {
       ).toBe("the new row is visible: true");
     } finally {
       await del("deep");
+    }
+  }, 60000);
+});
+
+/* ------------------------------------------------------------------
+   THE THREE GESTURES — rename and create without going through a menu.
+
+   Everything below already had a route: rename lived on F2 and on the
+   hover pencil, create on ⌘N. What was missing was the gesture the hand
+   already knows, and in one case a chord that a browser tab is even
+   capable of receiving:
+
+     · DOUBLE-CLICK a row → rename. The pointer twin of ⏎, and the
+       gesture every file manager on both platforms has trained.
+     · ⏎ on the focused row → rename. The row is a <button>, so Enter and
+       Space were the SAME gesture and one was spare. Enter goes to
+       rename (the file-manager rule) and Space keeps open/toggle — which
+       is why "Space still opens" is a test here and not an afterthought:
+       spending Enter would be a regression if it left the row with no
+       keyboard way to open at all.
+     · ⌥N / ⌥⇧N → create. ⌘N is the BROWSER's "new window" and a tab
+       never sees it, so the old binding was unreachable outside an
+       installed app. ⌘N stays bound and its own tests above still pass;
+       these prove the chord that actually arrives.
+
+   One thing these tests CANNOT prove, stated so nobody deletes the
+   guard that handles it: puppeteer synthesises `e.key` from its own key
+   table, so ⌥N arrives here as `key: "n"`. On real macOS ⌥N is a DEAD
+   KEY and `e.key` is "Dead" — which is why app.js matches on `e.code`,
+   and why removing that branch would pass this suite and break the
+   feature on every Mac.
+   ------------------------------------------------------------------ */
+
+describe("e2e — rename and create are reachable by gesture (⏎, double-click, ⌥N)", () => {
+  const NEWROW = "#tree .newrow input";
+  const RENAMING = "#tree .newrow.renaming input";
+  const FOLDER_ROW = (p: string) => `#tree .row.folder[data-path="${p}"]`;
+
+  const focusRow = (path: string) =>
+    page.evaluate((p) => (document.querySelector(`#tree .row[data-path="${p}"]`) as HTMLElement).focus(), path);
+  const del = (p: string) => srv.api("DELETE", "/api/docs/" + p.split("/").map(encodeURIComponent).join("/"));
+  /** the path the inline editor is carrying — a rename row is seeded with it */
+  const editing = () => page.$eval(RENAMING, (n) => (n as HTMLInputElement).value);
+  const ctx = () => page.$eval(NEWROW, (n) => n.getAttribute("aria-label")!);
+  const escape = async () => {
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("#tree .newrow input"), { timeout: 5000 });
+  };
+  /** park the app on a known doc with NOTHING picked, so context is unambiguous */
+  const parkOn = async (path: string) => {
+    await openDoc(page, path);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  };
+
+  test("double-clicking a doc row opens the rename editor on THAT doc", async () => {
+    await parkOn(KEEPER);
+    await page.click(ROW("inbox.md"), { count: 2 });
+    await waitForFocusedInput(page, RENAMING);
+    expect(`editing: ${await editing()}`).toBe("editing: inbox.md");
+    await escape();
+  }, 45000);
+
+  test("double-clicking a FOLDER row renames the folder, not something inside it", async () => {
+    await parkOn(KEEPER);
+    await page.click(FOLDER_ROW("dest"), { count: 2 });
+    await waitForFocusedInput(page, RENAMING);
+    /* the two clicks toggle the folder twice and startRename reveals it again,
+       so it ends up OPEN — showing what would travel with the move */
+    expect(`editing: ${await editing()}`).toBe("editing: dest");
+    await escape();
+  }, 45000);
+
+  test("⏎ on a focused row renames it — and does NOT open the doc", async () => {
+    await parkOn(KEEPER);
+    await focusRow("inbox.md");
+    await page.keyboard.press("Enter");
+    await waitForFocusedInput(page, RENAMING);
+    expect(`editing: ${await editing()}`).toBe("editing: inbox.md");
+    /* the whole point of preventDefault in rowKeys: without it the button's
+       native Enter→click still fires and inbox.md opens behind the row */
+    expect(`still on: ${await statusPath(page)}`).toBe(`still on: ${KEEPER}`);
+    await escape();
+  }, 45000);
+
+  test("Space still OPENS the focused row — ⏎ took rename, not the row's only key", async () => {
+    await parkOn(KEEPER);
+    await focusRow("inbox.md");
+    await page.keyboard.press("Space");
+    await page.waitForFunction(() => document.getElementById("stPath")!.textContent === "inbox.md", { timeout: 10000 });
+    expect(`opened: ${await statusPath(page)}`).toBe("opened: inbox.md");
+    /* and it opened INSTEAD of renaming — no inline editor was mounted */
+    expect(`no rename row: ${!(await page.$(RENAMING))}`).toBe("no rename row: true");
+  }, 45000);
+
+  test("⌥N opens the create row with the same context ⌘N resolves", async () => {
+    await parkOn(KEEPER); // notes/keeper.md
+    await pressChord(page, "KeyN", "Alt");
+    await waitForFocusedInput(page, NEWROW);
+    expect(`context: ${await ctx()}`).toBe("context: New doc in notes");
+    await escape();
+  }, 45000);
+
+  test("⌥⇧N creates a FOLDER in that same context", async () => {
+    await parkOn(KEEPER);
+    await pressChord(page, "KeyN", "Alt", "Shift");
+    await waitForFocusedInput(page, NEWROW);
+    expect(`context: ${await ctx()}`).toBe("context: New folder in notes");
+    await escape();
+  }, 45000);
+
+  test("a double-click rename reaches DISK, not just the input", async () => {
+    const from = "notes/gesture-src.md";
+    const to = "notes/gesture-dst.md";
+    await srv.api("POST", "/api/docs", { path: from, type: "doc", markdown: "# gesture\n" });
+    await page.waitForSelector(ROW(from), { timeout: 10000 });
+    try {
+      await page.click(ROW(from), { count: 2 });
+      await waitForFocusedInput(page, RENAMING);
+      /* the row seeds the FULL PATH with only the basename preselected, so a
+         bare name replaces the name and leaves the folder alone — typing a
+         path here would nest it. Same contract F2 has. */
+      await page.keyboard.type("gesture-dst", { delay: 4 });
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(ROW(to), { timeout: 10000 });
+      expect(`on disk: ${existsSync(join(srv.vault, to))}`).toBe("on disk: true");
+      expect(`old path gone: ${!existsSync(join(srv.vault, from))}`).toBe("old path gone: true");
+    } finally {
+      await del(to).catch(() => {});
+      await del(from).catch(() => {});
     }
   }, 60000);
 });

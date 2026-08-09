@@ -746,7 +746,7 @@ export async function openDoc(path, opts) {
   for (const [k, e] of [...state.reveal]) if (e.path !== path) state.reveal.delete(k);
   state.active = path;
   /* Opening a doc IS a change of context, so the sidebar pick stops speaking
-     for ⌘N: the open doc's folder is the context from here (`createParent`).
+     for ⌥N: the open doc's folder is the context from here (`createParent`).
      Without this, opening a doc from the palette or a [[link]] would still
      create beside whatever folder was last clicked. */
   state.pick = null;

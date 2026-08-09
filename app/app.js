@@ -702,6 +702,27 @@ function wire() {
       else app.classList.toggle("sidebar-collapsed");
       return;
     }
+    /* NEW DOC ANSWERS TO ⌥N, and ⌥N is the chord that actually ARRIVES. ⌘N is
+       the browser's own "new window" on every platform and a tab never sees
+       it; it is kept below only because an INSTALLED app does deliver it
+       (ADR 0007), so the muscle memory still pays off where it can.
+
+       `e.code`, not `e.key` — on macOS ⌥N is a DEAD KEY (it opens the ñ/ã/õ
+       composition), so `e.key` arrives as "Dead" and the physical key is the
+       only thing left to match on. ⌥Z above reads `e.code` for the same
+       reason. `e.key` is accepted too, for the layouts where Alt composes
+       nothing and the letter comes through intact.
+
+       The cost is real and taken deliberately: swallowing the keydown means
+       ⌥N no longer starts an ñ composition anywhere in the app, including the
+       raw editor. Reaching the chord only outside text fields was the
+       alternative, and it would have made the shortcut dead in the one place
+       a note is usually being written. */
+    if (e.altKey && !e.metaKey && !e.ctrlKey && (e.code === "KeyN" || e.key === "n" || e.key === "N")) {
+      e.preventDefault();
+      startCreate(e.shiftKey ? "folder" : "doc");
+      return;
+    }
     if (mod && (e.key === "n" || e.key === "N")) {
       e.preventDefault();
       startCreate(e.shiftKey ? "folder" : "doc");

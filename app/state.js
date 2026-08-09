@@ -80,7 +80,7 @@ export const state = {
   events: null,
   epoch: null, // vault epoch from the last `hello` — see resyncAfterGap()
   /* The sidebar row the user last touched — { path, kind } — and the ONLY
-     thing that makes ⌘N context-aware (see `createParent`). Set by a click or
+     thing that makes ⌥N context-aware (see `createParent`). Set by a click or
      a focus on a tree row, cleared by `openDoc` so that opening a doc hands the
      context back to `state.active`. Never trusted blind: `createParent`
      re-checks it against the current tree, because a rename or a delete can

@@ -190,11 +190,11 @@
     </div>
 
     <div class="sb-foot">
-      <button class="mini" data-act="new-doc" title="New doc (⌘N) — in the folder you picked, or the open doc's folder">
+      <button class="mini" data-act="new-doc" title="New doc (⌥N) — in the folder you picked, or the open doc's folder">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         New doc
       </button>
-      <button class="mini" data-act="new-folder" title="New folder (⇧⌘N) — same context as ⌘N">
+      <button class="mini" data-act="new-folder" title="New folder (⌥⇧N) — same context as ⌥N">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.4h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg>
         Folder
       </button>
@@ -966,11 +966,16 @@
              text surface. ⌘J is unconditional. -->
         <div class="sc-row">Toggle AI panel — ⌘C only with no selection and no field focused<span class="k"><kbd>⌘C</kbd><kbd>⌘J</kbd></span></div>
         <div class="sc-row">Toggle sidebar<span class="k"><kbd>⌘B</kbd></span></div>
-        <div class="sc-row">New doc — in the picked folder, else the open doc's<span class="k"><kbd>⌘N</kbd></span></div>
-        <div class="sc-row">New folder — same context as ⌘N<span class="k"><kbd>⇧⌘N</kbd></span></div>
+        <!-- ⌥N, not ⌘N: a browser tab never sees ⌘N (it is "new window"). ⌘N is
+             still bound because an INSTALLED app does deliver it. -->
+        <div class="sc-row">New doc — in the picked folder, else the open doc's<span class="k"><kbd>⌥N</kbd><kbd>⌘N</kbd></span></div>
+        <div class="sc-row">New folder — same context as ⌥N<span class="k"><kbd>⌥⇧N</kbd><kbd>⇧⌘N</kbd></span></div>
         <div class="sc-row">…then type a path: <code>a/b/c.md</code> nests, <code>abc/</code> is a folder<span class="k"><kbd>⏎</kbd></span></div>
-        <!-- on the focused sidebar row: one input renames AND moves (type a path) -->
-        <div class="sc-row">Rename / move (sidebar row)<span class="k"><kbd>F2</kbd></span></div>
+        <!-- on the focused sidebar row: one input renames AND moves (type a path).
+             ⏎ is rename, so Space is what opens the row now — both are listed
+             because the swap is the surprising half. -->
+        <div class="sc-row">Rename / move (sidebar row) — or double-click it<span class="k"><kbd>⏎</kbd><kbd>F2</kbd></span></div>
+        <div class="sc-row">Open the focused sidebar row<span class="k"><kbd>Space</kbd></span></div>
         <div class="sc-row">Delete (sidebar row)<span class="k"><kbd>Del</kbd></span></div>
         <!-- the same menu right-click opens, for people who do not right-click.
              Both keys open it (app.js), and both are listed for the same reason

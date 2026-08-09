@@ -67,7 +67,7 @@ export function renderTree() {
 
   /* Rename / delete affordances. They live BESIDE the row, never inside it:
      `.row` is a <button> and a button inside a button is not a thing. Both are
-     tabindex=-1 — the row itself is the tab stop, and F2 / Delete on the
+     tabindex=-1 — the row itself is the tab stop, and ⏎ / F2 / Delete on the
      focused row do the same two jobs from the keyboard. */
   const rowActs = (path, kind, name) => {
     const box = el("span", "rowacts");
@@ -88,6 +88,22 @@ export function renderTree() {
     box.appendChild(mk("Delete", I.trash, () => askDelete(path, kind)));
     return box;
   };
+
+  /* Double-click renames — the pointer twin of ⏎ on a focused row, and the
+     gesture every file manager has trained into the hand.
+
+     Both underlying clicks still land, deliberately. A doc therefore OPENS and
+     then goes into rename, which is the right way round: the rename row names
+     a doc you can now see. A folder toggles twice and would land back where it
+     started, except `startRename` reveals its own ancestors — so a closed
+     folder ends up open, showing what is about to be moved with it. Neither is
+     a race with the rename row: `renderTree` mounts that row from
+     `state.renaming`, so whichever repaint lands last still draws it. */
+  const renameOnDouble = (row, path, kind) =>
+    row.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      startRename(path, kind);
+    });
 
   const node = (n, depth, parent) => {
     if (state.renaming && state.renaming.path === n.path) {
@@ -123,6 +139,7 @@ export function renderTree() {
       });
       row.addEventListener("focus", () => (state.pick = { path: n.path, kind: "folder" }));
       row.addEventListener("keydown", (e) => rowKeys(e, n.path, "folder"));
+      renameOnDouble(row, n.path, "folder");
       wrap.appendChild(row);
       wrap.appendChild(rowActs(n.path, "folder", n.name));
       parent.appendChild(wrap);
@@ -139,6 +156,7 @@ export function renderTree() {
       row.addEventListener("click", () => openDoc(n.path));
       row.addEventListener("focus", () => (state.pick = { path: n.path, kind: "doc" }));
       row.addEventListener("keydown", (e) => rowKeys(e, n.path, "doc"));
+      renameOnDouble(row, n.path, "doc");
       wrap.appendChild(row);
       wrap.appendChild(rowActs(n.path, "doc", n.name));
       parent.appendChild(wrap);
@@ -194,7 +212,7 @@ export function renderTree() {
 /* ============================================================
    CREATION — context, path grammar, refusal (SPEC §5)
 
-   THE CONTEXT. ⌘N (doc) and ⇧⌘N (folder) create RELATIVE to whatever the user
+   THE CONTEXT. ⌥N (doc) and ⌥⇧N (folder) create RELATIVE to whatever the user
    is looking at, because "new" without a place is a guess the user then has to
    undo with a move:
 
@@ -447,10 +465,10 @@ function inlineRow(o) {
  * menu puts the new item in the right place — right-click a folder and it is
  * that folder, right-click empty space and it is `""`, the vault root.
  *
- * Left undefined (⌘N, ⇧⌘N, the footer buttons) the context is `createParent()`
+ * Left undefined (⌥N, ⌥⇧N, the footer buttons) the context is `createParent()`
  * — the picked folder, else the picked-or-open doc's folder, else the root —
  * and it is the SAME context for both kinds. The old rule gave a new folder to
- * the vault root unconditionally, which meant ⇧⌘N inside a project could not
+ * the vault root unconditionally, which meant ⌥⇧N inside a project could not
  * make a subfolder without a follow-up move.
  *
  * Deliberately the same entry point either way — `renderTree()` mounts ONE
@@ -568,7 +586,21 @@ export async function createFromLink(name) {
    ============================================================ */
 
 function rowKeys(e, path, kind) {
-  if (e.key === "F2") {
+  /* ⏎ RENAMES. It does not open — SPACE opens now, and nothing was lost.
+     A `.row` is a <button>, so Enter and Space were the same gesture (both
+     synthesise a click) and one of the two was spare. Enter is the one every
+     file manager spends on rename, and spending it here is what puts the
+     tree's most-used file op on the home row instead of on F2, which no
+     laptop keyboard reaches without a modifier.
+
+     `preventDefault` is load-bearing, not decoration: a <button>'s Enter
+     activation is the DEFAULT ACTION of this very keydown, so without it the
+     click still fires and the doc opens behind the rename row that just
+     mounted. Space is left alone and keeps the native activation. */
+  if (e.key === "Enter" && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+    e.preventDefault();
+    startRename(path, kind);
+  } else if (e.key === "F2") {
     e.preventDefault();
     startRename(path, kind);
   } else if (e.key === "Delete" || (e.key === "Backspace" && (e.metaKey || e.ctrlKey))) {
@@ -877,7 +909,7 @@ async function doDelete(path, kind, opts) {
    one create flow (the `inlineRow` in the tree), one rename flow and one delete
    confirm. The menu owns no file operation of its own.
 
-   What it adds that nothing else had: PLACEMENT. `⌘N` puts a new doc beside the
+   What it adds that nothing else had: PLACEMENT. `⌥N` puts a new doc beside the
    doc you are editing and a new folder at the root, which is the right default
    for a keyboard gesture and the wrong one for a pointer that is resting on a
    specific folder. Right-click a folder → inside that folder. Right-click empty
@@ -927,7 +959,7 @@ function ctxItems(t) {
      complete set of things you can do to a row */
   if (t.kind !== "root") {
     items.push({ sep: true });
-    items.push({ label: "Rename / move", hint: "F2", icon: I.pencil, run: () => startRename(t.path, t.kind) });
+    items.push({ label: "Rename / move", hint: "⏎", icon: I.pencil, run: () => startRename(t.path, t.kind) });
     items.push({ label: "Delete", hint: "Del", icon: I.trash, danger: true, run: () => askDelete(t.path, t.kind) });
   }
   return items;
