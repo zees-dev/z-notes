@@ -721,8 +721,11 @@ spans). None of that is visible here: the frontend sees sessions, messages and p
 `content` is inline markdown (`**bold**`, `` `code` ``, `[[wiki-link]]`) — the client renders
 it with the same inline renderer it uses for docs, so no HTML crosses the boundary.
 `tokensEstimated` is the server's estimate for the thread **plus** whatever context it would
-attach; the client displays it and never computes its own. (Real backend: a true `o200k_base`
-BPE count, not a character heuristic.) A session also carries `degraded` — the same array as
+attach; the client displays it and never computes its own. (Real backend: a character
+estimate, ~3.9 chars/token, measured against this repo's own corpora to hold aggregate error
+inside ±2%. It was an exact `o200k_base` BPE count until ADR 0011 — the exactness cost ~123 MB
+of resident memory and no consumer of the number was ever anything but advisory.) A session
+also carries `degraded` — the same array as
 `meta.ai.degraded` — whenever the relay has had to downgrade the request shape.
 
 #### `GET /api/ai/sessions/current`

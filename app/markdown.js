@@ -10,6 +10,7 @@
 import { $, I, copyText, el, esc, hl, inline } from "./ui.js";
 import { markDirty, saveDoc, updateMeta } from "./editor.js";
 import { secretEl } from "./secrets.js";
+import { mermaidEl } from "./mermaid.js";
 
 /* ============================================================
    MARKDOWN → PREVIEW
@@ -171,6 +172,12 @@ export function renderPreview(doc, host) {
         const ord = fenceOrd.get(body) || 0;
         fenceOrd.set(body, ord + 1);
         node = secretEl(doc.path, body, (/^[ \t>]*/.exec(line) || [""])[0], ord);
+      } else if (/^mermaid$/i.test(lang) && body.trim()) {
+        /* the SECOND fence language that renders rather than prints. An empty
+           one stays a code block: a diagram being typed starts as an empty
+           fence, and swapping a "could not be drawn" panel in front of the
+           author on the first keystroke is noise, not feedback. */
+        node = mermaidEl(body);
       } else node = codeEl(lang, body);
       put(node, start);
       continue;

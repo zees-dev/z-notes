@@ -582,7 +582,16 @@ describe("secrets — the server has no plaintext surface (SPEC §3 delta 1, §6
       const imports =
         /\bfrom\s*["']age-encryption["']/.test(src) ||
         /\brequire\(\s*["']age-encryption["']\s*\)/.test(src) ||
-        /\bimport\(\s*["']age-encryption["']\s*\)/.test(src);
+        /\bimport\(\s*["']age-encryption["']\s*\)/.test(src) ||
+        /* …and the SAME LIBRARY under its local name. `server/age-entry.js` is
+           deliberately exempt from this scan (it is the bundler's entry, never
+           imported), but that exemption is only sound while nothing imports
+           IT: `import * as age from "./age-entry.js"` would pull typage into
+           the backend graph while matching none of the specifiers above, and
+           the structural guarantee would be gone with the test still green. */
+        /\bfrom\s*["'][^"']*age-entry/.test(src) ||
+        /\brequire\(\s*["'][^"']*age-entry/.test(src) ||
+        /\bimport\(\s*["'][^"']*age-entry/.test(src);
       const decrypts = /\bnew\s+Decrypter\b/.test(src) || /\.addPassphrase\s*\(/.test(src) || /\.addIdentity\s*\(/.test(src);
       if (imports || decrypts) offenders.push(f);
     }

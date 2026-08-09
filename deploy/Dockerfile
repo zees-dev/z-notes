@@ -25,6 +25,13 @@
 #   away. If prod serving ever moves to a dist/ tree, add the build here AND
 #   point APP_DIR at it in the same change.
 #
+#   MERMAID IS NOT THAT, deliberately (ADR 0010). It is a devDependency and
+#   `app/vendor/mermaid.js` is a COMMITTED artifact, so it arrives via
+#   `COPY app ./app` like any other static file and `--production` leaves its
+#   181 MB of node_modules behind. Bundling it at boot the way age is bundled
+#   would have required it at runtime and grown this image by that much, for a
+#   library only ever executed in a browser. Do not "tidy" it into buildVendor().
+#
 # NOT `bun build --compile`: the compiled binary reports import.meta.dir as
 #   /$bunfs/root (research §5), and server/index.ts derives APP_DIR, VENDOR_ENTRY
 #   and LOCKFILE from import.meta.dir. The vault and DB are already immune (they

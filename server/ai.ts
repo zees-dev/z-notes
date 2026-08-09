@@ -34,7 +34,6 @@
    any reasoning effort but `none` there — and this app needs both (research §2).
    ============================================================ */
 
-import { encode } from "gpt-tokenizer/encoding/o200k_base";
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { OPS,
@@ -219,16 +218,37 @@ class AiError extends Error {
    Tokens
    ============================================================ */
 
-/** o200k_base, the tokenizer gpt-5-* uses (research §1). Pure JS, no addon. */
-function countTokens(text: string): number {
-  if (!text) return 0;
-  try {
-    return encode(text).length;
-  } catch {
-    // a lone surrogate or similar — never let an estimate throw a turn away
-    return Math.ceil(text.length / 3.6);
-  }
-}
+/**
+ * An ESTIMATE of the token count, in characters. Not a BPE tokenizer, and
+ * deliberately not one any more (ADR 0011).
+ *
+ * This used to call `gpt-tokenizer`'s real `o200k_base` encoder. That was
+ * exact, and exactness turned out to be worth nothing here while costing a
+ * great deal: measured, the encoder's rank table is **~123 MB of resident
+ * memory**, built at boot from a static top-level import whether or not anyone
+ * ever opens the AI panel, in a process whose deployment budgets 192Mi
+ * (deploy/k3s/20-deployment.yaml) — plus 55 MB in the image, the single
+ * largest thing in node_modules.
+ *
+ * What it bought: every consumer of this number is ADVISORY. The chat panel
+ * paints it with a literal "~". `assembleContext` uses it to pick which
+ * OPTIONAL block to drop and then sends the turn regardless — there is no
+ * refusal anywhere that depends on it, and the real limits are enforced
+ * upstream, by the endpoint, out of a 256k window this app fills to 200k. The
+ * old implementation made the argument itself: its own catch block already
+ * treated `length / 3.6` as a correct answer.
+ *
+ * The divisor is measured against this repo's own corpora rather than folklore
+ * — markdown 3.85, TypeScript 3.99, JavaScript 3.91 chars/token under real
+ * o200k_base. 3.9 holds the aggregate error inside ±2%, which is an order of
+ * magnitude smaller than the undercount `estimateTokens` already carries by
+ * design for the blocks it cannot cheaply predict. (3.6, the old fallback, was
+ * the worse constant: it over-counted by 7-11%.)
+ *
+ * A character count cannot throw, so the lone-surrogate guard that used to
+ * wrap the encoder is gone with it.
+ */
+const countTokens = (text: string): number => (text ? Math.ceil(text.length / 3.9) : 0);
 
 /** Cut `text` to at most `tokens`, on a line boundary where possible. */
 function clampToTokens(text: string, tokens: number): { text: string; truncated: boolean } {

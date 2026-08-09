@@ -377,7 +377,26 @@ export function buildDiff(files: FileImage[]): { diff: Array<{ marker: string; t
   let removed = 0;
   for (const f of files) {
     if (files.length > 1) diff.push({ marker: " ", text: `— ${f.path} —` });
-    const patch = structuredPatch(f.path, f.path, f.pre, f.post, "", "", { context: 2 });
+    /* THE TIMEOUT IS LOAD-BEARING, not tidiness. Myers is O(N·D), and `f.post`
+       is a post-image the MODEL wrote — a `rewrite` of a long note is a
+       perfectly ordinary request whose two sides share almost no lines, which
+       is the worst case. Measured, unbounded: 4k lines/side = 3.4s, 10k lines
+       = 19.9s. There is one replica, ever (deploy/k3s/20-deployment.yaml), so
+       that is the whole server stopped, on a request nobody meant as an
+       attack. Bounded at 1s the same input bails in ~1s and the user gets a
+       proposal with no rendered diff instead of a dead app.
+
+       Passing `timeout` switches jsdiff to its abortable overload: the return
+       type becomes `| undefined`, which is what forces the branch below. */
+    const patch = structuredPatch(f.path, f.path, f.pre, f.post, "", "", { context: 2, timeout: 1000 });
+    if (!patch) {
+      /* The diff is a VIEW of the proposal, never the proposal itself — the
+         edits are already applied to `f.post` and are what Accept writes. So a
+         diff that cannot be computed in time costs the preview, not the edit,
+         and saying so beats a silent empty hunk list. */
+      diff.push({ marker: " ", text: `— ${f.path}: diff too large to render; the edit itself is unaffected —` });
+      continue;
+    }
     for (const h of patch.hunks) {
       for (const line of h.lines) {
         if (line.startsWith("\\")) continue; // "\ No newline at end of file"

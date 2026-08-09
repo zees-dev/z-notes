@@ -204,10 +204,15 @@ spec:
           # /vendor/age.js bundle — comfortably inside 192Mi, and near-zero CPU
           # while nobody is typing.
           #
-          # limits cover the three genuine spikes: the boot-time Bun.build of
-          # the age bundle, a full Glob+stat+hash reconcile of the vault, and an
-          # AI turn streaming through gpt-tokenizer. 1 CPU lets each of those
-          # finish fast instead of being throttled into a probe timeout.
+          # That claim was WRONG between the AI panel landing and ADR 0011:
+          # gpt-tokenizer built a ~123MB BPE rank table at boot, unconditionally,
+          # which is roughly twice this entire request. Dropping it for a
+          # character estimate is what made the number above honest again.
+          #
+          # limits cover the two genuine spikes: the boot-time Bun.build of the
+          # age bundle, and a full Glob+stat+hash reconcile of the vault. 1 CPU
+          # lets each finish fast instead of being throttled into a probe
+          # timeout.
           #
           # The memory limit is the load-bearing one: without it a runaway
           # reconcile evicts other workloads on a single-node k3s box. With it,

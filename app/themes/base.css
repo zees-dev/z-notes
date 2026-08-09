@@ -1025,6 +1025,35 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
 .tk-key { color: var(--tk-key); } .tk-str { color: var(--tk-str); } .tk-com { color: var(--tk-com); font-style: italic; }
 .tk-num { color: var(--tk-num); } .tk-fn { color: var(--tk-fn); }
 
+/* ---- ```mermaid — a fence that DRAWS (app/mermaid.js) ----
+
+   It wears `.code` so a diagram reads as the same kind of object a fence
+   always was; everything below is only what a picture needs and text does not.
+
+   The diagram sits on --panel rather than --code-bg: the SVG's own palette is
+   built from the panel tokens (themeConfig()), and drawing it on the code
+   well's darker fill would put its labels on the wrong ground. The SOURCE
+   underneath keeps the code well, because there it really is code.
+
+   `.mmd-body` is centred and scrolls SIDEWAYS if it has to, which is the one
+   place this app allows that (SPEC §4 forbids it for code, where a long line
+   is text to be read — a diagram is one indivisible object and shrinking it to
+   the column would make it unreadable rather than wrapped). */
+.mmd .mmd-body { padding: var(--d-pre-pad); background: var(--panel); overflow-x: auto; text-align: center; }
+.mmd .mmd-body svg { max-width: 100%; height: auto; }
+/* the source is present in the DOM at all times — it is what a selection over
+   the block copies — and revealed by the bar's Source toggle */
+.mmd .mmd-text { display: none; }
+.mmd.show-src .mmd-text { display: block; }
+.mmd.show-src .mmd-body { display: none; }
+/* a diagram that will not compile is the ordinary state of one being WRITTEN:
+   the reason on top, the source kept underneath, nothing thrown away */
+.mmd.bad .mmd-body { text-align: left; background: var(--danger-soft); }
+.mmd .mmd-err { font-family: var(--mono); font-size: var(--d-code-fs); color: var(--danger); margin-bottom: 8px; white-space: pre-wrap; }
+/* `.code pre` above already gives it the mono/wrap treatment; it only has to
+   drop that rule's padding, since .mmd-body is already padded */
+.mmd .mmd-src { padding: 0; }
+
 .secret { border-radius: var(--r); border: var(--bd); background: var(--secret-bg); box-shadow: var(--sh-1); overflow: hidden; transition: border-color var(--dur-2), box-shadow var(--dur-2); }
 .secret.open { border-color: var(--secret-open-bd); box-shadow: 0 0 0 3px rgba(18, 161, 80, .08), var(--sh-1); }
 /* A fence that is NOT valid armor, or whose ciphertext failed its MAC, must

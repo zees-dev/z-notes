@@ -14,11 +14,16 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
   (`state ui api armor entropy dialogs crypto-worker`) never import feature modules.
   `manifest.json` + `icons/` make it installable (ADR 0007); the icons are drawn by
   `bun scripts/make-icons.ts` and committed — regenerate them if the mark changes.
+  `vendor/mermaid.js` is the same deal (ADR 0010): a COMMITTED bundle written by
+  `bun scripts/build-mermaid.ts`, regenerated when the pinned mermaid version
+  moves. Both are generators, not build steps.
 - `docs/` — the knowledge base; see the taxonomy below. `docs/specs/done/0002-http-api-v0.md` is the
   normative HTTP/SSE contract; `docs/specs/done/0001-z-notes-v1.md` is the product spec.
 - `tests/` — black-box by default (spawn the real server / a real Chromium).
   `helpers.ts` + `browser.ts` are the shared harness; `mock-upstream.ts` fakes the
-  AI endpoint. `bun run gates` = the five acceptance suites.
+  AI endpoint. `bun run gates` = the five acceptance suites, plus
+  `mermaid-e2e` — a fence is untrusted input (ADR 0010) and its hardening is
+  the one thing here that must not regress quietly.
 - `deploy/` — Dockerfile + k3s manifests. Live at https://znotes.home.arpa.
 
 ## Commands
@@ -27,7 +32,7 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
 bun run dev          # bun --hot server/index.ts on :4700
 bun test             # full suite (~12 min: spawns servers + headless Chromium)
 bun test tests/X.test.ts   # one file — do this while iterating
-bun run gates        # the 5 acceptance gates (~70 s) — run before every commit
+bun run gates        # the 6 acceptance gates (~70 s) — run before every commit
 bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
 ```
 
@@ -48,6 +53,8 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   platform research. Their durable rules are ADRs 0002–0004 — amended later by
   0006 (0004's passphrase floor is advice, not a gate), 0007 (the app is
   installable) and 0008 (on a phone, Back unwinds layers before it leaves).
+  0010 (mermaid is a committed bundle, and a fence is untrusted input) and
+  0011 (token counts are an estimate) came out of the dependency audit.
 
 ## Workflow
 
@@ -66,5 +73,5 @@ durable decision to an ADR in the same change.
   greps the source of all three `ai*.ts` modules to prove it.
 - One deploy replica, ever (sqlite + fs.watch + git working tree; see
   `deploy/k3s/20-deployment.yaml`).
-- Zero runtime deps beyond `age-encryption`, `diff`, `gpt-tokenizer`; no frontend
+- Zero runtime deps beyond `age-encryption` and `diff`; no frontend
   build step. Adding a dependency is an ADR-sized decision.
