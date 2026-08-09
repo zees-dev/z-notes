@@ -30,6 +30,9 @@ export const state = {
   settingsExit: "open",
   settingsSection: "", // the `/settings/<section>` the address bar carries, if any
   mode: "preview",
+  /* Raw word wrapping is a view choice, like mode rather than file content.
+     It is remembered per browser and never changes the markdown bytes. */
+  wordWrap: true,
   dirty: false,
   saving: new Set(), // paths with a PUT in flight
   settings: null,

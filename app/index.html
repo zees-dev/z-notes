@@ -362,6 +362,13 @@
               </div>
             </div>
             <div class="field">
+              <div class="lab"><b>Tab width</b><span>Spaces inserted by Tab in Raw, and the display width of literal tabs.</span></div>
+              <div class="ctl num">
+                <input class="inp w-sm mono" data-num="editor.tabSize" value="" aria-label="Tab width">
+                <span class="unit"></span>
+              </div>
+            </div>
+            <div class="field">
               <div class="lab"><b>Click preview to edit</b><span>Clicking rendered text jumps to that line in Raw.</span></div>
               <div class="ctl"><button class="sw" data-sw="editor.clickToEdit"></button></div>
             </div>
@@ -652,6 +659,9 @@
       <button class="sb-i mode" id="stMode" data-act="toggle-mode" data-mode="preview" aria-label="Editor mode" title="Rendered preview — click (or ⌘E) for Raw">
         <span id="stModeTxt">Preview</span>
       </button>
+      <button class="sb-i wrap" id="stWrap" data-act="toggle-wrap" data-wrap="on" aria-label="Word wrapping" title="Disable Raw word wrapping (⌥Z)" hidden>
+        <span id="stWrapTxt">Wrap</span>
+      </button>
       <span class="spacer"></span>
       <span class="sb-i hintset hide-sm" title="Keyboard shortcuts (?)">
         <span><kbd>⌘K</kbd> search</span>
@@ -807,7 +817,7 @@
       <div class="spacer"></div>
       <button class="btn" id="ppGen" data-act="pp-generate" hidden>Generate</button>
       <button class="btn" data-act="pp-cancel">Cancel</button>
-      <button class="btn primary" id="ppOk" data-act="pp-ok">
+      <button class="btn primary" id="ppOk" data-act="pp-ok" data-default>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 7.5-2"/></svg>
         <span id="ppOkTxt">Unlock</span>
       </button>
@@ -838,7 +848,7 @@
       <span class="note" id="cfNote">Recoverable only from git history.</span>
       <div class="spacer"></div>
       <button class="btn" data-act="cf-cancel">Cancel</button>
-      <button class="btn danger" id="cfOk" data-act="cf-ok"><span id="cfOkTxt">Delete</span></button>
+      <button class="btn danger" id="cfOk" data-act="cf-ok" data-default><span id="cfOkTxt">Delete</span></button>
     </div>
   </div>
 </div>
@@ -871,7 +881,7 @@
            Recreate is a BUTTON on purpose: nothing here may resurrect a doc
            that was deliberately deleted somewhere else. -->
       <button class="btn" id="cxDisk" data-act="cx-take-disk">Take disk</button>
-      <button class="btn primary" id="cxMine" data-act="cx-keep-mine">Keep mine</button>
+      <button class="btn primary" id="cxMine" data-act="cx-keep-mine" data-default>Keep mine</button>
       <button class="btn" id="cxDiscard" data-act="cx-discard" hidden>Discard</button>
       <button class="btn primary" id="cxRecreate" data-act="cx-recreate" hidden>Recreate</button>
     </div>
@@ -897,12 +907,10 @@
       <p class="note" id="xgBody" style="margin:0 0 8px;line-height:1.55"></p>
       <div class="diff-body" id="xgDiff" style="max-height:220px;overflow:auto"></div>
     </div>
-    <div class="modal-foot">
-      <span class="note">Your changes remain staged in this tab until you choose.</span>
-      <div class="spacer"></div>
-      <button class="btn" data-act="xg-keep">Keep editing</button>
-      <button class="btn danger" data-act="xg-discard">Exit without saving</button>
-      <button class="btn primary" data-act="xg-save">Save &amp; exit</button>
+    <div class="modal-foot xg-foot">
+      <span class="note">Click outside this dialog to keep editing.</span>
+      <button class="btn danger" data-act="xg-discard">Discard changes</button>
+      <button class="btn primary" data-act="xg-save" data-default>Save &amp; exit</button>
     </div>
   </div>
 </div>
@@ -945,6 +953,7 @@
         <!-- the same toggle the statusbar's mode word is; there is no longer a
              segmented control in the topbar -->
         <div class="sc-row">Toggle Preview / Raw — or click the mode in the statusbar<span class="k"><kbd>⌘E</kbd></span></div>
+        <div class="sc-row">Toggle Raw word wrapping — or click Wrap in the statusbar<span class="k"><kbd>⌥Z</kbd></span></div>
         <!-- one chord, one meaning: "save what is in front of me". On the
              settings page that is the settings draft, because there is no
              document there — the topbar's Save is hidden for the same reason. -->

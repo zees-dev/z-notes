@@ -18,11 +18,11 @@ const RE_FENCE = /^\s*```/;
 const RE_HEAD = /^(#{1,3})\s+(.+)$/;
 const RE_RULE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
 const RE_QUOTE = /^\s*>/;
-const RE_LI = /^\s*[-*+]\s+/;
+const RE_LIST = /^([ \t]*)([-*+]|\d+[.)])([ \t]+)(.*)$/;
 const RE_ROW = /^\s*\|/;
 const RE_ALIGN = /^\s*\|[\s:|-]+\|\s*$/;
 
-const isBlockStart = (l) => RE_FENCE.test(l) || RE_HEAD.test(l) || RE_RULE.test(l) || RE_QUOTE.test(l) || RE_LI.test(l) || RE_ROW.test(l);
+const isBlockStart = (l) => RE_FENCE.test(l) || RE_HEAD.test(l) || RE_RULE.test(l) || RE_QUOTE.test(l) || RE_LIST.test(l) || RE_ROW.test(l);
 
 export const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
 
@@ -70,8 +70,16 @@ function codeEl(lang, src) {
   return w;
 }
 
-function listItemEl(doc, raw, lineNo) {
-  const t = raw.replace(RE_LI, "");
+function listLine(raw) {
+  const m = RE_LIST.exec(raw);
+  if (!m) return null;
+  let indent = 0;
+  for (const c of m[1]) indent = c === "\t" ? indent + (4 - (indent % 4)) : indent + 1;
+  return { indent, marker: m[2], text: m[4] };
+}
+
+function listItemEl(doc, item, lineNo) {
+  const t = item.text;
   const box = /^\[([ xX])\]\s*/.exec(t);
   if (box) {
     const done = box[1].toLowerCase() === "x";
@@ -86,7 +94,9 @@ function listItemEl(doc, raw, lineNo) {
     li.appendChild(sp);
     return li;
   }
-  const li = el("li", "bul");
+  const ordered = /^\d/.test(item.marker);
+  const li = el("li", ordered ? "ord" : "bul");
+  if (ordered) li.appendChild(el("span", "li-marker", esc(item.marker)));
   const sp = el("span", "tx");
   sp.innerHTML = inline(t);
   li.appendChild(sp);
@@ -203,12 +213,28 @@ export function renderPreview(doc, host) {
       continue;
     }
 
-    if (RE_LI.test(line)) {
+    if (RE_LIST.test(line)) {
       const ul = el("ul");
-      while (i < lines.length && RE_LI.test(lines[i])) {
-        const li = listItemEl(doc, lines[i], i);
+      const first = listLine(line);
+      const stack = [{ indent: first.indent, list: ul, last: null }];
+      while (i < lines.length) {
+        const item = listLine(lines[i]);
+        if (!item) break;
+        let top = stack[stack.length - 1];
+        while (stack.length > 1 && item.indent < top.indent) {
+          stack.pop();
+          top = stack[stack.length - 1];
+        }
+        if (item.indent > top.indent && top.last) {
+          const nested = el("ul");
+          top.last.appendChild(nested);
+          top = { indent: item.indent, list: nested, last: null };
+          stack.push(top);
+        }
+        const li = listItemEl(doc, item, i);
         li.dataset.line = i;
-        ul.appendChild(li);
+        top.list.appendChild(li);
+        top.last = li;
         i++;
       }
       put(ul, start);

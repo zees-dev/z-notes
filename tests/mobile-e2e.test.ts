@@ -384,6 +384,30 @@ describe("phone — the sheet is a layer", () => {
     );
   }, 90000);
 
+  test("Back dismisses the sidebar drawer before it leaves the note", async () => {
+    await app.boot("/");
+    const before = await page.evaluate(() => location.pathname);
+    await openDrawer();
+    expect(await page.evaluate(() => document.getElementById("app")!.classList.contains("nav-open"))).toBe(true);
+
+    await page.evaluate(() => history.back());
+    await sleep(500);
+    expect(await page.evaluate(() => document.getElementById("app")!.classList.contains("nav-open"))).toBe(false);
+    expect(await page.evaluate(() => location.pathname)).toBe(before);
+  }, 90000);
+
+  test("closing the sidebar drawer by its own control gives its reserved Back press back", async () => {
+    await app.boot("/");
+    expect(await page.evaluate(() => (history.state || {}).z)).toBe("doc");
+    await openDrawer();
+    expect(await page.evaluate(() => (history.state || {}).z)).toBe("veil");
+
+    await page.click('#sidebar [data-act="nav-close"]');
+    await page.waitForFunction(() => !document.getElementById("app")!.classList.contains("nav-open"), { timeout: 8000 });
+    await sleep(420);
+    expect(await page.evaluate(() => (history.state || {}).z)).toBe("doc");
+  }, 90000);
+
   /* A phone has no ⌘E, and `#stMode` is a 30px chip in a 36px bar — so Back is
      the gesture that actually exists for "stop editing". It leaves Raw one
      press before it leaves the note. */

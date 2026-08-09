@@ -112,7 +112,7 @@
   --cb-on-bd: var(--accent);
   --cb-mark: var(--accent);
 
-  --bullet-radius: 0;
+  --bullet-radius: 50%;
   --bullet-bg: var(--muted);
 
   --quote-bd-w: 1px;

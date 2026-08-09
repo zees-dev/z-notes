@@ -761,9 +761,25 @@ kbd {
 .crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; overflow: hidden; white-space: nowrap; font-size: 13px; color: var(--muted); font-weight: 500; }
 .crumbs > * { flex: 0 0 auto; }
 .crumbs .cr-dir { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
-.crumbs b { flex: 0 1 auto; min-width: 5.5em; overflow: hidden; text-overflow: ellipsis; color: var(--text); font-weight: var(--w-semi); }
+.crumbs b { flex: 0 1 auto; min-width: 5.5em; overflow: hidden; color: var(--text); font-weight: var(--w-semi); }
 .crumbs .sep { color: var(--muted-2); }
 .crumbs .chip-mono { font-family: var(--mono); font-size: 12px; }
+/* The final crumb is the doc's rename affordance. The button keeps the old
+   heading's exact typography and truncation; only the pointer/focus treatment
+   reveals that the filename is editable. */
+.crumb-name {
+  display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border: 0; border-radius: var(--r-sm); padding: 2px 3px; margin: -2px -3px;
+  background: none; color: inherit; font: inherit; font-weight: inherit; text-align: left; cursor: text;
+}
+.crumb-name:hover { background: var(--panel-3); }
+.crumb-name:focus-visible { outline: none; box-shadow: var(--sh-focus); }
+.crumb-rename {
+  display: block; width: min(28ch, 42vw); min-width: 5.5em; height: 24px;
+  border: var(--input-bd); border-radius: var(--r-sm); padding: 2px 5px;
+  background: var(--input-bg); color: var(--input-fg); font: inherit; outline: none;
+}
+.crumb-rename:focus { border-color: var(--accent); box-shadow: var(--sh-focus); }
 
 .iconbtn {
   width: var(--d-ctl-h); height: var(--d-ctl-h); border-radius: var(--r-sm); flex: 0 0 auto;
@@ -865,6 +881,7 @@ kbd {
   font-family: var(--mono); font-size: var(--d-raw-fs); line-height: var(--d-raw-lh);
   color: var(--text-2); tab-size: 2; caret-color: var(--accent);
 }
+.raw.no-wrap { white-space: pre; overflow-x: auto; overflow-y: hidden; }
 .raw::placeholder { color: var(--muted-2); }
 .raw:focus, .raw:focus-visible { background: transparent; border: 0; box-shadow: none; outline: none; }
 
@@ -911,10 +928,16 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
 
 .md ul { margin: 0; padding: 0; list-style: none; }
 .md li + li { margin-top: var(--d-list-gap); }
-.md li.bul { display: flex; gap: 10px; line-height: var(--d-lh); color: var(--text-2); }
+.md li.bul, .md li.ord { display: flex; flex-wrap: wrap; gap: 0 10px; line-height: var(--d-lh); color: var(--text-2); }
 .md li.bul::before { content: ""; flex: 0 0 auto; width: var(--bullet-size); height: var(--bullet-size); border-radius: var(--bullet-radius); background: var(--bullet-bg); margin-top: calc(var(--d-lh) * .5em - 2px); }
+.md li.ord > .li-marker { flex: 0 0 auto; min-width: 2ch; text-align: right; color: var(--muted); font-family: var(--mono); }
+.md li > .tx { flex: 1 1 0; min-width: 0; }
+/* A nested source indent becomes a nested DOM list instead of another
+   top-level sibling. `flex-basis:100%` puts the child hierarchy below the
+   parent row even though bullet/task rows use flex for their marker. */
+.md li > ul { flex: 0 0 100%; width: 100%; padding-left: calc(var(--bullet-size) + 10px); margin-top: var(--d-list-gap); }
 
-.task { display: flex; gap: 10px; align-items: flex-start; line-height: var(--d-lh); }
+.task { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: flex-start; line-height: var(--d-lh); }
 .cb {
   flex: 0 0 auto; width: var(--cb-size); height: var(--cb-size); border-radius: var(--cb-radius);
   margin-top: calc(var(--d-lh) * .5em - (var(--cb-size) / 2));
@@ -924,9 +947,9 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
 .cb:hover { border-color: var(--accent); }
 .cb:active { transform: scale(.9); }
 .cb svg { opacity: 0; transform: scale(.6); transition: opacity var(--dur-1), transform .18s var(--ease); color: var(--cb-mark); }
-.task.done .cb { background: var(--cb-on-bg); border-color: var(--cb-on-bd); }
-.task.done .cb svg { opacity: 1; transform: none; }
-.task.done .tx { color: var(--task-done-fg); text-decoration: var(--task-done-decoration); text-decoration-color: var(--muted-2); }
+.task.done > .cb { background: var(--cb-on-bg); border-color: var(--cb-on-bd); }
+.task.done > .cb svg { opacity: 1; transform: none; }
+.task.done > .tx { color: var(--task-done-fg); text-decoration: var(--task-done-decoration); text-decoration-color: var(--muted-2); }
 .tx { color: var(--text-2); }
 
 .wl {
@@ -1120,13 +1143,15 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
    inset padding keeps the hover fill off the neighbouring dividers without
    changing where the word sits. Never shed at any width — below 768px there is
    no ⌘E, so this is the ONLY way to reach Raw on a phone. */
-#stMode {
+#stMode, #stWrap {
   border: 0; background: none; padding: 0 4px; margin: 0 -4px; font: inherit; color: inherit;
   font-weight: 500; cursor: pointer; border-radius: var(--r-sm); flex: 0 0 auto;
   transition: color var(--dur-1, .12s) var(--ease), background var(--dur-1, .12s) var(--ease);
 }
-#stMode:hover { color: var(--text-2); background: var(--panel-3); }
-#stMode:focus-visible { outline: none; box-shadow: var(--sh-focus); }
+#stMode:hover, #stWrap:hover { color: var(--text-2); background: var(--panel-3); }
+#stMode:focus-visible, #stWrap:focus-visible { outline: none; box-shadow: var(--sh-focus); }
+#stWrap { margin-left: 6px; }
+#stWrap[data-wrap="off"] { color: var(--warn); }
 /* Both words are typeset identically on purpose: the chip must not resize as it
    toggles, or the whole left cluster of the bar twitches on every ⌘E. */
 /* The bar sheds its least important items before it squeezes the doc path.
@@ -1398,6 +1423,12 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .modal-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 18px; border-top: var(--bd-2); background: var(--panel-2); }
 .modal-foot .note { font-size: 11.5px; color: var(--muted); flex: 1 0 100%; order: -1; min-width: 0; }
 .modal-foot .note.bad { color: var(--danger); }
+/* The Raw-exit question has exactly two outcomes. Dismissing the scrim is how
+   the user keeps editing; the two verbs that remain share one row and one hit
+   area so neither is presented as a cramped afterthought. */
+.xg-foot { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.xg-foot .note { grid-column: 1 / -1; }
+.xg-foot .btn { width: 100%; justify-content: center; }
 
 /* ------------------------------------------------------------
    SETTINGS — the routed page (/settings, /settings/<section>)
@@ -1425,6 +1456,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    the dead affordance this rule exists to remove. */
 .app.route-settings .topbar .crumbs,
 .app.route-settings .statusbar #stMode,
+.app.route-settings .statusbar #stWrap,
 .app.route-settings .statusbar .sb-mode-div,
 .app.route-settings .topbar .saved,
 .app.route-settings .topbar #encBtn,
@@ -1746,14 +1778,18 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      unreachable primary action, which is the worse of the two. */
   :root { --sheet-h: max(200px, min(78dvh, calc(100dvh - var(--kb, 0px) - var(--d-topbar) - 8px))); }
   .chat {
-    position: fixed; z-index: 80; left: 0; right: 0; bottom: var(--kb, 0px); height: var(--sheet-h);
+    /* A CLOSED sheet belongs below the layout viewport, not above the soft
+       keyboard. Otherwise --kb lifts the translated-away panel back on screen
+       while the user is editing the doc. The keyboard offset applies only to
+       the open state below. */
+    position: fixed; z-index: 80; left: 0; right: 0; bottom: 0; height: var(--sheet-h);
     border-left: 0; border-top: var(--bd);
     border-radius: var(--r-xl) var(--r-xl) 0 0;
     box-shadow: var(--sh-4);
     transform: translateY(102%); transition: transform var(--dur-3) var(--ease);
     pointer-events: none;                      /* see .chat in the band above */
   }
-  .app.chat-open .chat { transform: none; pointer-events: auto; }
+  .app.chat-open .chat { bottom: var(--kb, 0px); transform: none; pointer-events: auto; }
   /* The grab handle is GONE. It was a `::before` pill with no drag handler
      anywhere in the codebase — a gesture affordance for a gesture that did not
      exist — and the sheet already carries a labelled close button in its head,
@@ -1764,7 +1800,10 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   /* identical in both modes — the parity gate measures exactly this. The extra
      bottom room is on the SHARED container and never on #rawArea: a mobile-only
      inset on the textarea is the specific break tests/e2e.test.ts names. */
-  .doc { padding: 22px var(--doc-pad-x-sm) calc(34vh + var(--kb, 0px)); }
+  /* Keyboard room must land in the same frame as --kb. The desktop density
+     transition also animated this padding accidentally, leaving the caret with
+     nowhere to scroll while the keyboard was already covering it. */
+  .doc { padding: 22px var(--doc-pad-x-sm) calc(34vh + var(--kb, 0px)); transition: none; }
   /* 10vh, not the 34vh above: `--sheet-h` is most of the viewport now, and the
      old sum was 112vh of empty scroll under every note whenever the assistant
      was up. The term that matters is the sheet itself — this is the slack that

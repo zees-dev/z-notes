@@ -46,6 +46,7 @@ type NumberSpec = {
 
 export const NUMBERS: Record<string, NumberSpec> = {
   "editor.autosaveSeconds": { min: 1, max: 3600, step: 1, unit: "seconds" },
+  "editor.tabSize": { min: 1, max: 8, step: 1, unit: "spaces" },
   "trash.retentionDays": { min: 1, max: 365, step: 1, unit: "days", code: "bad-retention-days" },
   "git.autoSyncSeconds": {
     min: AUTOSYNC_MIN_SECONDS,
@@ -101,7 +102,7 @@ export const DEFAULTS = {
   theme: "minimal",
   density: "comfy",
   colorScheme: "system",
-  editor: { autosaveSeconds: 10, clickToEdit: true, homeDoc: HOME_DOC_DEFAULT },
+  editor: { autosaveSeconds: 10, tabSize: 2, clickToEdit: true, homeDoc: HOME_DOC_DEFAULT },
   trash: { retentionDays: TRASH_RETENTION_DEFAULT_DAYS },
   git: { branch: "main", autoSync: true, autoSyncSeconds: 60 },
   /* Browser-side auto-lock policy (research §5.2 / §7.2). It lives here rather
@@ -1172,6 +1173,7 @@ const KEY_DOC: Record<string, string> = {
   density: "comfy | compact. Comfy is the everyday scale; compact is tighter still.",
   colorScheme: "system | dark | light. `system` follows the OS and repaints live.",
   "editor.autosaveSeconds": "Write to disk this long after you stop typing.",
+  "editor.tabSize": "Spaces inserted by Tab in Raw mode, and the width used to display literal tab bytes.",
   "editor.clickToEdit": "Clicking rendered text jumps to that line in Raw.",
   "editor.homeDoc":
     "Doc the vault button (top left) opens. Vault-relative path; empty means the first doc.",

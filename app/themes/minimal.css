@@ -154,12 +154,9 @@
                                           that is enough signal without taking
                                           a done line to 2.5:1 */
 
-  /* the prototype marks list items with a short rule, not a disc. --bullet-size
-     is one value for both axes, so the dash is painted *inside* the 6px box by
-     a gradient — no selector, no height override. */
-  --bullet-size: 6px;
-  --bullet-radius: 0px;
-  --bullet-bg: linear-gradient(to bottom, transparent 42%, var(--muted-2) 42%, var(--muted-2) 58%, transparent 58%);
+  --bullet-size: 5px;
+  --bullet-radius: 50%;
+  --bullet-bg: var(--muted-2);
 
   --quote-bd-w: 1px;
   --quote-bd: var(--line);

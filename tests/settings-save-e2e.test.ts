@@ -319,7 +319,7 @@ describe("Save issues exactly one PUT carrying exactly what moved", () => {
   }, 120000);
 
   test("⌘S saves a NUMERIC field that has not been blurred yet", async () => {
-    /* The nine `[data-num]` controls record their draft on `change`, which
+    /* The ten `[data-num]` controls record their draft on `change`, which
        fires on blur or Enter — and ⌘S is neither. So the chord the Save
        button's own tooltip advertises used to reach the dirty guard with an
        EMPTY draft and return, `preventDefault` already spent: no PUT, no toast,
@@ -588,7 +588,7 @@ describe("appearance previews live but only Save persists it", () => {
   }, 120000);
 
   /* REGRESSION. The guard read `settingsDirty()` BEFORE flushing the numeric
-     field the caret was sitting in — and the nine `[data-num]` controls record
+     field the caret was sitting in — and the ten `[data-num]` controls record
      on `change`, which a history traversal is not. So the page looked clean at
      the exact moment it was asked, the guard waved the press through, and the
      number went with it: no dialog, no toast, no pill. Exactly the failure ⌘S

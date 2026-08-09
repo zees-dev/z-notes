@@ -513,7 +513,7 @@ export function overlayOpen() {
 /* The exit guard is LAST, one layer above the editor it guards and below every
    other modal: Esc with the palette (or a confirm, or the conflict banner) open
    over it must close that first, and only the Esc that reaches the bottom of the
-   modal stack is the one that means "Keep editing". */
+   modal stack is the one that means "keep editing". */
 export const VEILS = ["#palVeil", "#scVeil", "#ppVeil", "#cxVeil", "#cfVeil", "#xgVeil"];
 export const hide = (sel) => $(sel).classList.remove("show");
 /* veils whose close is more than hiding the node; the rest fall back to hide */
@@ -880,8 +880,9 @@ function pushLayerMarker() {
  * spent marker (recycled by `routeDoc`, skipped by `onPop`, never stacked
  * twice) covers this one for free.
  *
- * Two callers OPEN a layer, both phone-scoped by the layer they belong to:
- * `toggleChat` below W_TRIPANE, and `setMode("raw")` below W_SHEET. Mode is
+ * Three callers OPEN a layer, each width-scoped by the layer it belongs to:
+ * `openNav` below W_DOCK, `toggleChat` below W_TRIPANE, and `setMode("raw")`
+ * below W_SHEET. Mode is
  * still not a history entry and still not in the URL (see the ROUTING header) —
  * this marker names no place and rewrites no address; it is a Back press held
  * in reserve.
@@ -913,12 +914,13 @@ export function markerForLayer() {
    `z === "veil"` half of the same test. */
 let reserveI = 0;
 
-/** Is anything still lying over the document? The three things Back unwinds
+/** Is anything still lying over the document? The four things Back unwinds
     below the veils, at the widths where each of them is a LAYER rather than
     part of the layout — the same conditions the `onPop` branches use. */
 function layered() {
   return (
     VEILS.some(isOpen) ||
+    (isDrawer() && app.classList.contains("nav-open")) ||
     (!isTriPane() && app.classList.contains("chat-open")) ||
     (isSheet() && state.mode === "raw")
   );
@@ -975,16 +977,18 @@ export function retireLayerMarker() {
  * TRUNCATES everything ahead of it: raising the dialog first would destroy the
  * forward entry the very next line was about to spend.
  *
- * Four things use it, in the order Back unwinds them (below the veils, which
+ * Five things use it, in the order Back unwinds them (below the veils, which
  * `dismissTop` already owns):
  *
  *   1. an unsaved SETTINGS draft — ask before the page goes;
- *   2. the ASSISTANT, while it is an overlay — a layer over the document is
+ *   2. the SIDEBAR, while it is a drawer — Back closes the navigation before
+ *      it navigates away from the current doc;
+ *   3. the ASSISTANT, while it is an overlay — a layer over the document is
  *      dismissed by Back before the document itself is;
- *   3. RAW mode on a phone — Back means "stop editing" one press before it
+ *   4. RAW mode on a phone — Back means "stop editing" one press before it
  *      means "leave this note", because a phone has no ⌘E and the statusbar
  *      chip is a 30px target;
- *   4. an unsaved Raw buffer at every other width — the SPEC §4 exit guard.
+ *   5. an unsaved Raw buffer at every other width — the SPEC §4 exit guard.
  */
 let popHold = null;
 function holdPop(after, wasBack) {
@@ -1052,6 +1056,13 @@ export function onPop(e) {
       return;
     }
   }
+  /** THE SIDEBAR, while it is an off-canvas drawer. It is the most modal panel
+   * over the doc — it owns the scrim — so Back closes it before the assistant,
+   * Raw mode or the current place gets a chance to consume the press. */
+  if (back && !VEILS.some(isOpen) && isDrawer() && app.classList.contains("nav-open")) {
+    holdPop(closeNav);
+    return;
+  }
   /**
    * THE ASSISTANT, while it is a layer.
    *
@@ -1094,7 +1105,7 @@ export function onPop(e) {
    *
    * A veil already up owns this press (the branch below dismisses it), so the
    * guard never competes with the dismissal — including with ITSELF: Back with
-   * this dialog open is Keep editing, exactly as Esc is.
+   * this dialog open keeps editing, exactly as Esc does.
    */
   const noop = st.z === "doc" && st.path === viewedPath() && !canPopBack(st);
   if (back && !noop && !VEILS.some(isOpen) && rawExitDiff()) {
@@ -1316,12 +1327,16 @@ export const isDrawer = () => window.innerWidth < W_DOCK;
 export const isTriPane = () => window.innerWidth >= W_TRIPANE;
 
 export function openNav() {
+  const wasOpen = app.classList.contains("nav-open");
   app.classList.add("nav-open");
+  if (!wasOpen && isDrawer()) markerForLayer();
   syncScrim();
 }
 export function closeNav() {
+  const wasOpen = app.classList.contains("nav-open");
   app.classList.remove("nav-open");
   syncScrim();
+  if (wasOpen) retireLayerMarker();
 }
 
 /**
@@ -1437,13 +1452,15 @@ export function syncScrim() {
  * mode-parity break the SPEC §11 gate exists to catch, and the gate could not
  * catch this one: headless there is no keyboard, so `--kb` is always 0 there.
  */
-export function wireVisualViewport() {
+export function wireVisualViewport(onChange) {
   const vv = window.visualViewport;
   if (!vv) return;
   const publish = () => {
     const overlap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     document.documentElement.style.setProperty("--kb", Math.round(overlap) + "px");
+    if (onChange) onChange();
   };
   vv.addEventListener("resize", publish);
+  vv.addEventListener("scroll", publish);
   publish();
 }

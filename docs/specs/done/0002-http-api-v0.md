@@ -407,7 +407,7 @@ An empty `q` returns every doc as `kind:"doc"`, unscored, path-ordered.
     "theme": "minimal",
     "density": "comfy",
     "colorScheme": "system",
-    "editor": { "autosaveSeconds": 10, "clickToEdit": true, "homeDoc": "index.md" },
+    "editor": { "autosaveSeconds": 10, "tabSize": 2, "clickToEdit": true, "homeDoc": "index.md" },
     "trash": { "retentionDays": 7 },
     "git": { "branch": "main", "autoSync": true, "autoSyncSeconds": 60,
              "tokenMasked": "ghp_9f3kx2Qm7Lp0" },
@@ -430,6 +430,7 @@ An empty `q` returns every doc as `kind:"doc"`, unscored, path-ordered.
     "homeDocDefault": "index.md",
     "numbers": {
       "editor.autosaveSeconds":        { "min": 1, "max": 3600, "step": 1, "unit": "seconds" },
+      "editor.tabSize":                { "min": 1, "max": 8, "step": 1, "unit": "spaces" },
       "trash.retentionDays":           { "min": 1, "max": 365, "step": 1, "unit": "days" },
       "git.autoSyncSeconds":           { "min": 1, "max": 3600, "step": 1, "unit": "seconds" },
       "secrets.idleLockMinutes":       { "min": 1, "max": 480, "step": 1, "unit": "minutes" },

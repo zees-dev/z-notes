@@ -577,9 +577,13 @@ function rowKeys(e, path, kind) {
   }
 }
 
-function startRename(path, kind) {
+export function startRename(path, kind) {
   state.creating = null;
   state.renaming = { path, kind };
+  /* A rename started from the row menu may name an item inside a folder whose
+     disclosure state changed while the menu was open. Reveal every ancestor
+     before mounting the sidebar's inline editor. */
+  revealFolder(kind === "folder" ? path : dirname(path));
   if (isDrawer()) openNav();
   renderTree();
 }
@@ -617,7 +621,7 @@ function renameRow(n, depth) {
 const remap = (path, from, to) =>
   path === from ? to : path && path.indexOf(from + "/") === 0 ? to + path.slice(from.length) : path;
 
-async function commitRename(node, value) {
+export async function commitRename(node, value) {
   const kind = node.type === "folder" ? "folder" : "doc";
   state.renaming = null;
   /* Latched HERE, before any await: the whole move is one operation, and the
@@ -1049,4 +1053,3 @@ export function ctxKeys(e) {
 }
 
 /* ---------- themed confirm (same veil + modal chrome as everything else) ---------- */
-

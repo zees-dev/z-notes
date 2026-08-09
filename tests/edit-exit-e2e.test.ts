@@ -154,7 +154,7 @@ describe("unsaved Raw exit", () => {
     expect(pageErrors).toEqual([]);
   }, 30000);
 
-  test("Esc shows only changed lines; Esc keeps editing; Exit without saving lands in Preview", async () => {
+  test("Esc shows only changed lines; Esc keeps editing; Discard changes lands in Preview", async () => {
     await enterRaw();
     await typeMarkdown(EDITED);
 
@@ -213,7 +213,7 @@ describe("unsaved Raw exit", () => {
     expect(pageErrors).toEqual([]);
   }, 60000);
 
-  test("browser Back is guarded and Exit without saving replays that navigation", async () => {
+  test("browser Back is guarded and Discard changes replays that navigation", async () => {
     await app.clickDoc(BETA);
     await enterRaw();
     const betaEdited = "# Beta\n\nunsaved back-navigation edit\n";

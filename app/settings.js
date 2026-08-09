@@ -690,7 +690,7 @@ export const settingsDirty = () => Object.keys(settingsDraft).length > 0;
 /**
  * Flush the numeric field the caret is sitting in into the draft.
  *
- * The nine `[data-num]` controls record on `change` alone, because the clamp
+ * The ten `[data-num]` controls record on `change` alone, because the clamp
  * and the step-snap rewrite `value` and doing that on every keystroke would
  * fight the typing. `change` fires on blur or Enter — and `⌘S` is neither, so
  * a field typed into and saved without leaving first had an EMPTY draft: the
@@ -860,6 +860,13 @@ function applySavedSettings(paths) {
   applyLook(paths.filter((p) => LOOK_PATHS.indexOf(p) >= 0), { preview: false });
   applyLockPolicy(); // the crypto worker's idle / hidden / session clocks
   paintHome(); // editor.homeDoc — the vault button's target and title
+  if (paths.indexOf("editor.tabSize") >= 0) {
+    const ta = $("#rawArea");
+    if (ta) {
+      ta.style.tabSize = String(settingAt("editor.tabSize"));
+      autoGrow(ta);
+    }
+  }
   if (state.session) {
     state.session.effort = s.ai.effort;
     state.session.model = s.ai.model;

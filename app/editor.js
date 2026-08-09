@@ -11,7 +11,7 @@ import * as api from "./api.js";
 import { state } from "./state.js";
 import { $, $$, I, activeDoc, apiFail, countWords, el, esc, toast } from "./ui.js";
 import { renderPreview } from "./markdown.js";
-import { focusQuiet } from "./tree.js";
+import { commitRename, focusQuiet } from "./tree.js";
 import { changedLineDiff, conflictDialog, orphanDialog, renderDiff } from "./dialogs.js";
 import { flushSecretEdits, vault } from "./secrets.js";
 import { refreshSessionStats } from "./chat.js";
@@ -114,7 +114,7 @@ export function guardRawExit(proceed) {
   return false;
 }
 
-/** KEEP EDITING — Esc, the button, a click on the scrim, Back. Same thing. */
+/** KEEP EDITING — Esc, a click on the scrim, Back. Same thing. */
 export function closeExitGuard() {
   const g = state.exitGuard;
   state.exitGuard = null;
@@ -187,9 +187,249 @@ export async function exitGuardSave() {
    RAW MODE
    ============================================================ */
 export function autoGrow(ta) {
+  /* Measuring an auto-growing textarea means briefly collapsing it. In a long
+     Raw doc that collapse clamps the OUTER scroll container; restoring the
+     textarea's height does not restore the line the user was looking at. Keep
+     the container's position across the measurement so one character cannot
+     move the doc out from under its own caret. */
+  const sc = ta.id === "rawArea" ? $("#scroll") : null;
+  const keep = sc ? sc.scrollTop : 0;
   ta.style.height = "auto";
   ta.style.height = ta.scrollHeight + "px";
+  if (sc) sc.scrollTop = keep;
 }
+
+/** The caret has no DOM box of its own. Mirror the bytes before it with the
+ * textarea's real typography so wrapped lines count exactly as they do in Raw. */
+function rawCaretBox(ta) {
+  const cs = getComputedStyle(ta);
+  const tr = ta.getBoundingClientRect();
+  const mirror = document.createElement("div");
+  const marker = document.createElement("span");
+  Object.assign(mirror.style, {
+    position: "fixed",
+    left: tr.left + "px",
+    top: tr.top + "px",
+    width: tr.width + "px",
+    boxSizing: "border-box",
+    visibility: "hidden",
+    pointerEvents: "none",
+    overflow: "visible",
+    whiteSpace: ta.wrap === "off" ? "pre" : "pre-wrap",
+    overflowWrap: ta.wrap === "off" ? "normal" : "break-word",
+    wordBreak: cs.wordBreak,
+    fontFamily: cs.fontFamily,
+    fontSize: cs.fontSize,
+    fontWeight: cs.fontWeight,
+    fontStyle: cs.fontStyle,
+    fontVariant: cs.fontVariant,
+    lineHeight: cs.lineHeight,
+    letterSpacing: cs.letterSpacing,
+    wordSpacing: cs.wordSpacing,
+    textIndent: cs.textIndent,
+    textAlign: cs.textAlign,
+    textTransform: cs.textTransform,
+    direction: cs.direction,
+    padding: cs.padding,
+    borderWidth: cs.borderWidth,
+    borderStyle: cs.borderStyle,
+    tabSize: cs.tabSize,
+  });
+  marker.textContent = "\u200b";
+  mirror.append(document.createTextNode(ta.value.slice(0, ta.selectionEnd)), marker);
+  document.body.appendChild(mirror);
+  const mr = marker.getBoundingClientRect();
+  const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
+  mirror.remove();
+  return { top: mr.top, bottom: mr.top + lineHeight };
+}
+
+function revealRawCaret() {
+  const ta = $("#rawArea");
+  const sc = $("#scroll");
+  if (!ta || !sc || document.activeElement !== ta) return;
+  const cssKeyboard = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--kb")) || 0;
+  const vv = window.visualViewport;
+  const vvTop = vv ? vv.offsetTop : 0;
+  const vvBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  const visibleTop = Math.max(sc.getBoundingClientRect().top, vvTop) + 12;
+  const visibleBottom = Math.min(sc.getBoundingClientRect().bottom, vvBottom, window.innerHeight - cssKeyboard) - 12;
+  if (visibleBottom <= visibleTop) return;
+  const caret = rawCaretBox(ta);
+  if (caret.bottom > visibleBottom) sc.scrollTop += caret.bottom - visibleBottom;
+  else if (caret.top < visibleTop) sc.scrollTop -= visibleTop - caret.top;
+}
+
+let caretFrame = 0;
+let caretSettle = 0;
+/** Keep the Raw insertion point inside the visual viewport, not merely inside
+ * the taller layout viewport that continues underneath a soft keyboard. */
+export function keepRawCaretVisible() {
+  cancelAnimationFrame(caretFrame);
+  clearTimeout(caretSettle);
+  caretFrame = requestAnimationFrame(revealRawCaret);
+  /* Mobile viewport changes and the keyboard animation do not always finish in
+     one frame. Recheck once settled; calls during typing coalesce here. */
+  caretSettle = setTimeout(revealRawCaret, 220);
+}
+
+function emitRawInput(ta, inputType, data) {
+  ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType, data: data == null ? null : data }));
+}
+
+function applyWordWrap(ta) {
+  if (!ta) return;
+  ta.wrap = state.wordWrap ? "soft" : "off";
+  ta.classList.toggle("no-wrap", !state.wordWrap);
+  autoGrow(ta);
+}
+
+export function syncWrapUI() {
+  const chip = $("#stWrap");
+  if (!chip) return;
+  const raw = state.view === "doc" && state.mode === "raw";
+  chip.hidden = !raw;
+  chip.dataset.wrap = state.wordWrap ? "on" : "off";
+  chip.title = (state.wordWrap ? "Disable" : "Enable") + " Raw word wrapping (⌥Z)";
+  const txt = $("#stWrapTxt");
+  if (txt) txt.textContent = state.wordWrap ? "Wrap" : "No wrap";
+}
+
+export function initWordWrap() {
+  try {
+    state.wordWrap = localStorage.getItem("znotes.wrap") !== "off";
+  } catch (_) {
+    state.wordWrap = true;
+  }
+  syncWrapUI();
+}
+
+export function toggleWordWrap() {
+  if (state.view !== "doc" || state.mode !== "raw") return;
+  state.wordWrap = !state.wordWrap;
+  try {
+    localStorage.setItem("znotes.wrap", state.wordWrap ? "on" : "off");
+  } catch (_) {}
+  applyWordWrap($("#rawArea"));
+  syncWrapUI();
+}
+
+/**
+ * The prefix a markdown editor carries onto the next line.
+ *
+ * Whitespace is copied byte-for-byte. Bullets keep their marker, tasks restart
+ * unchecked, and ordered items advance while retaining `.` versus `)`. A plain
+ * indented line keeps only its indentation. Returning null means the browser
+ * should perform its ordinary newline.
+ */
+function markdownContinuation(value, caret) {
+  const lineStart = value.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
+  const before = value.slice(lineStart, caret);
+  const list = /^(?<indent>[ \t]*)(?:(?<bullet>[-*+])|(?<number>\d+)(?<delim>[.)]))(?<gap>[ \t]+)(?:\[(?<check>[ xX])\](?<checkGap>[ \t]+))?/.exec(before);
+  if (list) {
+    const g = list.groups || {};
+    const marker = g.bullet || String(Number(g.number) + 1) + g.delim;
+    return {
+      lineStart,
+      prefix: g.indent + marker + g.gap + (g.check == null ? "" : "[ ]" + g.checkGap),
+      emptyItem: !before.slice(list[0].length).trim(),
+    };
+  }
+  const indent = /^[ \t]+/.exec(before);
+  return indent ? { lineStart, prefix: indent[0], emptyItem: false } : null;
+}
+
+function continueMarkdownLine(e, ta) {
+  if (e.key !== "Enter" || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+  /* A modal over the editor owns Enter. In particular, the unsaved-exit guard
+     opens before its delayed focus move has necessarily landed. */
+  if (overlayOpen()) return;
+  const a = ta.selectionStart;
+  const b = ta.selectionEnd;
+  const next = markdownContinuation(ta.value, a);
+  if (!next) return;
+  e.preventDefault();
+  const lineEnd = ta.value.indexOf("\n", a);
+  if (next.emptyItem && a === b && (lineEnd < 0 || a === lineEnd)) {
+    /* An empty list item already IS the next line. Enter exits the list by
+       removing its prefix instead of producing an endless run of markers. */
+    ta.setRangeText("", next.lineStart, a, "end");
+  } else {
+    ta.setRangeText("\n" + next.prefix, a, b, "end");
+  }
+  emitRawInput(ta, "insertLineBreak", null);
+}
+
+const RAW_LIST = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/;
+
+function leadingOutdent(line, size) {
+  if (line[0] === "\t") return line.slice(1);
+  const m = /^ +/.exec(line);
+  return m ? line.slice(Math.min(size, m[0].length)) : line;
+}
+
+/** Tab is source editing in Raw, never focus navigation. On a list line it
+ * moves the whole item one hierarchy level; elsewhere it inserts configured
+ * spaces. Shift-Tab removes one level from every touched line. */
+function editRawTab(e, ta) {
+  if (e.key !== "Tab" || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  if (overlayOpen()) return true;
+  const size = Number(settingAt("editor.tabSize"));
+  const spaces = " ".repeat(Number.isFinite(size) && size > 0 ? size : 2);
+  const value = ta.value;
+  const a = ta.selectionStart;
+  const b = ta.selectionEnd;
+  const lineStart = value.lastIndexOf("\n", Math.max(0, a - 1)) + 1;
+  let touchedEnd = b;
+  if (b > a && value[b - 1] === "\n") touchedEnd--;
+  let lineEnd = value.indexOf("\n", touchedEnd);
+  if (lineEnd < 0) lineEnd = value.length;
+  const block = value.slice(lineStart, lineEnd);
+  const multi = block.includes("\n");
+  const currentLine = block.slice(0, block.indexOf("\n") < 0 ? block.length : block.indexOf("\n"));
+
+  if (!e.shiftKey && !multi && !RAW_LIST.test(currentLine) && a === b) {
+    ta.setRangeText(spaces, a, b, "end");
+    emitRawInput(ta, "insertText", spaces);
+    return true;
+  }
+
+  const lines = block.split("\n");
+  const changed = lines.map((line) => (e.shiftKey ? leadingOutdent(line, spaces.length) : spaces + line));
+  const replacement = changed.join("\n");
+  if (replacement === block) return true;
+  const firstDelta = changed[0].length - lines[0].length;
+  const totalDelta = replacement.length - block.length;
+  ta.setRangeText(replacement, lineStart, lineEnd, "end");
+  if (a === b) {
+    const caret = Math.max(lineStart, a + firstDelta);
+    ta.setSelectionRange(caret, caret);
+  } else {
+    ta.setSelectionRange(Math.max(lineStart, a + firstDelta), Math.max(lineStart, b + totalDelta));
+  }
+  emitRawInput(ta, e.shiftKey ? "deleteContentBackward" : "insertText", e.shiftKey ? null : spaces);
+  return true;
+}
+
+function moveListGutterCaret(ta) {
+  if (ta.selectionStart !== ta.selectionEnd) return;
+  const pos = ta.selectionStart;
+  const start = ta.value.lastIndexOf("\n", Math.max(0, pos - 1)) + 1;
+  let end = ta.value.indexOf("\n", pos);
+  if (end < 0) end = ta.value.length;
+  const line = ta.value.slice(start, end);
+  const m = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+/.exec(line);
+  if (!m || pos > start + m[1].length) return;
+  ta.setSelectionRange(end, end);
+}
+
+function rawKeydown(e, ta) {
+  if (editRawTab(e, ta)) return;
+  continueMarkdownLine(e, ta);
+}
+
 function renderRaw(doc, host) {
   const ta = el("textarea", "raw");
   ta.id = "rawArea";
@@ -208,14 +448,23 @@ function renderRaw(doc, host) {
   /* the placeholder is a STARTING POINT, not a notice: an empty note announcing
      its own emptiness says nothing the blank page did not already say */
   ta.placeholder = "# " + doc.title;
+  ta.style.tabSize = String(settingAt("editor.tabSize"));
   ta.addEventListener("input", () => {
     doc.markdown = ta.value;
     autoGrow(ta);
     markDirty();
     updateMeta();
+    keepRawCaretVisible();
+  });
+  ta.addEventListener("keydown", (e) => rawKeydown(e, ta));
+  ta.addEventListener("focus", keepRawCaretVisible);
+  ta.addEventListener("select", keepRawCaretVisible);
+  ta.addEventListener("click", () => {
+    moveListGutterCaret(ta);
+    keepRawCaretVisible();
   });
   host.appendChild(ta);
-  autoGrow(ta);
+  applyWordWrap(ta);
 }
 
 /* pull pending textarea edits into the cache before anything re-renders */
@@ -263,6 +512,61 @@ export function updateMeta() {
   $("#stWords").textContent = countWords(md) + " words";
 }
 
+function renderCrumbs(doc) {
+  $("#crumbs").innerHTML = doc.path
+    .split("/")
+    .map((p, i, a) =>
+      i === a.length - 1
+        ? '<b class="chip-mono"><button class="crumb-name" data-act="rename-active" title="Rename ' +
+          esc(doc.path) +
+          '" aria-label="Rename ' +
+          esc(doc.path) +
+          '">' +
+          esc(p) +
+          "</button></b>"
+        : '<span class="cr-dir">' + esc(p) + "</span>"
+    )
+    .join('<span class="sep cr-dir">/</span>');
+}
+
+export function startHeaderRename() {
+  const doc = activeDoc();
+  const button = $("#crumbs .crumb-name");
+  if (!doc || !button) return;
+  const holder = button.parentElement;
+  const input = document.createElement("input");
+  input.className = "crumb-rename";
+  input.setAttribute("aria-label", "Rename " + doc.path);
+  const slash = doc.path.lastIndexOf("/");
+  const parent = slash < 0 ? "" : doc.path.slice(0, slash + 1);
+  input.value = doc.path.slice(slash + 1);
+  holder.replaceChildren(input);
+  let finished = false;
+  const finish = async (commit) => {
+    if (finished) return;
+    finished = true;
+    if (commit) {
+      input.disabled = true;
+      await commitRename({ path: doc.path, type: "file" }, parent + input.value);
+    }
+    if (!input.isConnected) return;
+    const now = activeDoc();
+    if (now) renderCrumbs(now);
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    void finish(e.key === "Enter");
+  });
+  input.addEventListener("blur", () => void finish(true));
+  focusQuiet(input);
+  const stemEnd = input.value.replace(/\.md$/i, "").length;
+  try {
+    input.setSelectionRange(0, stemEnd);
+  } catch (_) {}
+}
+
 export function renderDoc(opts) {
   opts = opts || {};
   const doc = activeDoc();
@@ -303,10 +607,7 @@ export function renderDoc(opts) {
     host.classList.add("fade-in");
   }
 
-  $("#crumbs").innerHTML = doc.path
-    .split("/")
-    .map((p, i, a) => (i === a.length - 1 ? '<b class="chip-mono">' + esc(p) + "</b>" : '<span class="cr-dir">' + esc(p) + "</span>"))
-    .join('<span class="sep cr-dir">/</span>');
+  renderCrumbs(doc);
   /* `.statusbar .path` is the one item with a shrink budget, so it is the one
      that ends up ellipsised — and with no `title` a truncated path could not be
      recovered by hover either */
@@ -492,6 +793,7 @@ export function syncModeUI() {
      an error toast is the dead affordance SPEC §6's degradation rules out. */
   const enc = $("#encBtn");
   if (enc) enc.hidden = state.mode !== "raw" || vault.state === "disabled";
+  syncWrapUI();
 }
 
 function lineOffset(md, lineNo) {

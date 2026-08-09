@@ -20,7 +20,7 @@ import { $, $$, clearStickyToast, lookupLink, toast } from "./ui.js";
 import { LONGPRESS_MS, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
 import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, wireDialogs } from "./dialogs.js";
 import { refreshTrash, toggleTrash } from "./trash.js";
-import { autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, syncModeUI, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
+import { autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, initWordWrap, keepRawCaretVisible, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, startHeaderRename, syncModeUI, toggleWordWrap, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
 import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
@@ -69,6 +69,7 @@ function wire() {
          Silent: the chip you just clicked already shows the outcome, and a
          toast on top of it would be the app reading its own statusbar back. */
       if (a === "toggle-mode") setMode(state.mode === "raw" ? "preview" : "raw", { silent: true });
+      if (a === "toggle-wrap") toggleWordWrap();
       if (a === "nav-open") openNav();
       if (a === "nav-close") closeNav();
       if (a === "pp-cancel") closePP();
@@ -86,6 +87,7 @@ function wire() {
       if (a === "close-shortcuts") hide("#scVeil");
       if (a === "new-doc") startCreate("doc");
       if (a === "new-folder") startCreate("folder");
+      if (a === "rename-active" && state.active) startHeaderRename();
       if (a === "trash") toggleTrash();
       if (a === "home") goHome();
       if (a === "cf-cancel") closeConfirm();
@@ -94,7 +96,6 @@ function wire() {
       if (a === "cx-keep-mine") conflictKeepMine();
       if (a === "cx-recreate") conflictRecreate();
       if (a === "cx-discard") conflictDiscardOrphan();
-      if (a === "xg-keep") closeExitGuard();
       if (a === "xg-discard") exitGuardDiscard();
       if (a === "xg-save") exitGuardSave();
       /* mutual exclusion between the two chat-head popovers is the
@@ -243,7 +244,7 @@ function wire() {
      already drifted: #palVeil fell through to the bare class-toggle, so a
      backdrop click closed the palette without closePal's focus release. Every
      veil with teardown beyond hiding must be in CLOSERS, and now there is one
-     place that says so. A click on the exit guard's scrim is Keep editing —
+     place that says so. A click on the exit guard's scrim keeps editing —
      the least destructive answer, which is what closeExitGuard does. */
   $$(".veil").forEach((v) =>
     v.addEventListener("mousedown", (e) => {
@@ -592,6 +593,22 @@ function wire() {
       return;
     }
     if (e.key === "Tab") return trapTab(e);
+    /* Enter activates the visible modal's declared primary action even when
+       focus is on the dialog container (the safe choice for a modal raised
+       from under a caret). A focused button keeps its native Enter, and a
+       textarea keeps its newline. */
+    if (e.key === "Enter" && !e.defaultPrevented && !e.isComposing && !e.repeat) {
+      const target = e.target;
+      if (target && target.closest && !target.closest("button, textarea, [contenteditable=true]")) {
+        const sel = VEILS.find(isOpen);
+        const primary = sel && $$("[data-default]", $(sel)).find((b) => !b.hidden && !b.disabled && b.offsetParent !== null);
+        if (primary) {
+          e.preventDefault();
+          primary.click();
+          return;
+        }
+      }
+    }
     /* ⇧F10 / the Menu key — the keyboard equivalent of the right-click, and the
        reason the menu is not a pointer-only affordance. Scoped to the sidebar:
        elsewhere both keys keep whatever the browser does with them. */
@@ -602,6 +619,12 @@ function wire() {
       if (!row && !inSidebar) return;
       e.preventDefault();
       openCtxFrom(row || $("#tree"));
+      return;
+    }
+    if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && (e.code === "KeyZ" || e.key === "z" || e.key === "Z")) {
+      if (state.view !== "doc" || state.mode !== "raw") return;
+      e.preventDefault();
+      toggleWordWrap();
       return;
     }
     if (mod && (e.key === "k" || e.key === "K" || e.key === "p" || e.key === "P")) {
@@ -696,7 +719,7 @@ function wire() {
        Dropping it at 768 stranded a tablet's open drawer as dead state — the
        CSS still had the sidebar off-canvas, and the class that brings it back
        had just been removed underneath it. */
-    if (!isDrawer()) app.classList.remove("nav-open");
+    if (!isDrawer()) closeNav();
     syncScrim();
     const ta = $("#rawArea");
     if (ta) autoGrow(ta);
@@ -818,6 +841,7 @@ export async function start() {
     findDoc(state.tree, (n) => !n.empty) ||
     findDoc(state.tree, () => true);
   wire();
+  initWordWrap();
   syncModeUI();
   seedHistory();
   /* replace: the entry the browser gave us IS this doc's entry — pushing would
@@ -834,7 +858,7 @@ export async function start() {
 
   /* the remembered assistant state, and the width rules that override it */
   initChatOpen();
-  wireVisualViewport();
+  wireVisualViewport(keepRawCaretVisible);
   connect();
 
   /* The terminal's real state, off the critical path for the same reason the
