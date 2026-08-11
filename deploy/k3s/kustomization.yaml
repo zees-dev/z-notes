@@ -30,10 +30,10 @@ labels:
 
 images:
   # Change the tag in ONE place when you rebuild:
-  #   kustomize edit set image z-notes=ghcr.io/zees-dev/z-notes:0.2.0
+  #   kustomize edit set image z-notes=ghcr.io/zees-dev/z-notes:0.3.0
   # The registry name lives here, not in 20-deployment.yaml — the deployment
   # keeps the bare `z-notes` and this block is the single place that says
   # where images actually come from (ADR 0005).
   - name: z-notes
     newName: ghcr.io/zees-dev/z-notes
-    newTag: "0.2.0"
+    newTag: "0.3.0"
