@@ -11,7 +11,9 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
   (enforced by `bun run lint:docs`): `vault db http sse` → `settings watch ai-edits`
   → `trash ai-endpoint` → `git terminal` → `ai docs` → `index`.
 - `app/` — the frontend. ES modules, no build step, no runtime deps. Leaf modules
-  (`state ui api armor entropy dialogs crypto-worker`) never import feature modules.
+  (`state ui api armor entropy dialogs crypto-worker history`) never import
+  feature modules — `history` reaches editor.js and tree.js through callbacks
+  the composition root injects (ADR 0014), the same shape `wireDialogs` uses.
   `manifest.json` + `icons/` make it installable (ADR 0007); the icons are drawn by
   `bun scripts/make-icons.ts` and committed — regenerate them if the mark changes.
   `vendor/mermaid.js` is the same deal (ADR 0010): a COMMITTED bundle written by
@@ -54,7 +56,13 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   0006 (0004's passphrase floor is advice, not a gate), 0007 (the app is
   installable) and 0008 (on a phone, Back unwinds layers before it leaves).
   0010 (mermaid is a committed bundle, and a fence is untrusted input) and
-  0011 (token counts are an estimate) came out of the dependency audit.
+  0011 (token counts are an estimate) came out of the dependency audit. 0012
+  moves 0001's save chrome (the topbar Save button and its permanent pill) to a
+  statusbar pip plus a topbar mark that appears only when there is something to
+  save; 0013 gives a collapsed caret in Raw the whole-line ⌘X/⌘C/⌘V; 0014
+  makes ⌘Z/⌘⇧Z ONE app-owned timeline across documents — text edits and file
+  operations in the order they happened, navigating to the doc each step is
+  about, with the file ones behind a prompt (`app/history.js`).
 
 ## Workflow
 

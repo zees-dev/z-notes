@@ -13,8 +13,9 @@ import { $, $$, I, apiFail, clearStickyToast, dirname, el, esc, normTarget, toas
 import { cells } from "./markdown.js";
 import { confirmDialog } from "./dialogs.js";
 import { refreshTrash, trashRetentionNote } from "./trash.js";
-import { guardRawExit, navGate, openDoc, renderDoc, saveDoc, setBaseline, setMode, setSaveIndicator } from "./editor.js";
-import { app, isDrawer, openFirstDoc, openNav } from "./shell.js";
+import { flushTextRun, guardRawExit, navGate, openDoc, renderDoc, saveDoc, setBaseline, setMode, setSaveIndicator } from "./editor.js";
+import { app, isDrawer, openFirstDoc, openNav, revealInTree } from "./shell.js";
+import { recordHistory } from "./history.js";
 
 /* ============================================================
    SIDEBAR TREE
@@ -524,6 +525,7 @@ async function commitCreate(plan) {
     return;
   }
   state.creating = null;
+  rememberFileOp({ kind: "create", path: plan.path, type: plan.kind, markdown: "" });
   /* the intermediate folders were made server-side; open them here so the new
      entry is visible in the tree rather than buried in a collapsed subtree */
   revealFolder(plan.kind === "folder" ? plan.path : dirname(plan.path));
@@ -556,6 +558,7 @@ export async function createFromLink(name) {
   const path = t.indexOf("/") >= 0 ? t + ".md" : (here ? here + "/" : "") + t + ".md";
   try {
     await api.createEntry({ path, type: "doc", markdown: "# " + t.split("/").pop() + "\n\n" });
+    rememberFileOp({ kind: "create", path, type: "doc", markdown: "" });
     await loadTree();
     await openDoc(path);
     setMode("raw", { silent: true });
@@ -863,6 +866,196 @@ function neighbourDoc(path) {
   return null;
 }
 
+/* ============================================================
+   FILE-OPERATION UNDO (⌘Z / ⌘⇧Z outside a text surface)
+
+   ⌘Z in the Raw textarea is the browser's own text undo and stays that way
+   (ADR 0013). Everywhere else — the tree, the preview pane, nothing focused —
+   the last thing that happened was a FILE operation, and that is what ⌘Z
+   should take back. A delete undoes to a restore; a create undoes to a delete.
+
+   EVERY ONE OF THESE ASKS FIRST. That is not the usual undo contract, and it
+   is deliberate: a text undo is instant and reversible in the same keystroke,
+   whereas these move a file on disk, through git, on a path some other device
+   may also be looking at. The chord is also one keystroke away from a chord
+   people press reflexively in an editor — the cost of a mis-fired ⌘Z here is a
+   doc that vanishes, and the cost of the prompt is one Return.
+
+   THE STACK IS SHALLOW ON PURPOSE (`FILE_HISTORY_MAX`). It exists to take back
+   the thing you just did, not to replay a session — and every entry is a claim
+   about the vault that a sync from another device can quietly invalidate. The
+   trash drawer is the durable route back; this is the shortcut.
+
+   A DELETE IS NOT REMEMBERED BY ITS TRASH ID. The id is resolved at undo time,
+   from the newest trash entry that names the path, because between the delete
+   and the ⌘Z the entry may have been restored elsewhere, purged, or aged out —
+   in which case the answer is "it is not in the trash any more", not a 404
+   from a stale id. */
+/** Record a completed file operation on the SHARED timeline — the same list
+    the text edits go on, in the order they happened, which is what lets ⌘Z
+    walk back through "edited a.md, edited b.md, deleted a.md" one step at a
+    time. `flushTextRun` first, so a run that is still open is ordered BEFORE
+    the file operation rather than after it. */
+function rememberFileOp(entry) {
+  flushTextRun();
+  recordHistory(entry);
+}
+
+/** The newest trash entry naming `path`, or null. `state.trash.entries` is
+    kept fresh by `trash-changed` and by the refresh every delete already does;
+    this re-reads the server anyway, because the whole question is whether the
+    entry is still there NOW. */
+async function trashEntryFor(path) {
+  let entries = [];
+  try {
+    entries = (await api.getTrash()).entries || [];
+  } catch (_) {
+    entries = state.trash.entries || [];
+  }
+  /* newest first per the contract, so the first match is the right one */
+  return entries.find((e) => e.path === path) || null;
+}
+
+/** PUT IT BACK. The trash first, always: a file that was deleted still has its
+    bytes there, and re-creating it from the empty string would be a different
+    file wearing the same name. Only when the trash has no entry for it — never
+    deleted, already restored elsewhere, purged, aged out — does this fall back
+    to creating it, and then it uses whatever markdown the history captured. */
+async function putFileBack(entry) {
+  const found = await trashEntryFor(entry.path);
+  if (found) {
+    try {
+      const r = await api.restoreTrash(found.id);
+      const landed = (r && r.path) || entry.path;
+      await loadTree();
+      refreshTrash();
+      if (state.docPaths.has(landed)) {
+        revealInTree(landed);
+        await openDoc(landed);
+      }
+      toast("Restored " + landed);
+      return true;
+    } catch (err) {
+      /* The one error the trash panel renders in place rather than as a toast;
+         here there is no row to render it on, so it is a toast that names the
+         way out. */
+      if (err && (err.status === 409 || err.code === "exists")) {
+        toast(entry.path + " is taken — rename what is there, then restore it from the trash");
+        return false;
+      }
+      apiFail(err, "Could not restore " + entry.path);
+      return false;
+    }
+  }
+  if (entry.type === "doc" && entry.markdown == null) {
+    toast(entry.path + " is no longer in the trash — nothing to restore");
+    return false;
+  }
+  try {
+    await api.createEntry({ path: entry.path, type: entry.type, markdown: entry.markdown || "" });
+  } catch (err) {
+    apiFail(err, "Could not create " + entry.path);
+    return false;
+  }
+  await loadTree();
+  if (state.docPaths.has(entry.path)) {
+    revealInTree(entry.path);
+    await openDoc(entry.path);
+  }
+  toast("Created " + entry.path);
+  return true;
+}
+
+/** TAKE IT AWAY, through the same `doDelete` a delete the user asked for by
+    name goes through — so the active-buffer guard, the neighbour walk and the
+    trash refresh all behave identically. `noRecord` keeps it off the stack: it
+    IS the undo, and the opposite stack is what puts it back.
+
+    The doc's text is captured first. It goes to the trash, so the bytes are
+    not lost either way, but an entry that carries them can still put the file
+    back after the trash has been emptied. */
+function takeFileAway(entry, done) {
+  if (entry.type === "doc") {
+    const doc = state.docs.get(entry.path);
+    if (doc && typeof doc.markdown === "string") entry.markdown = doc.markdown;
+  }
+  /* `onDone` rather than a returned boolean, because a dirty active buffer
+     DEFERS the delete behind the Raw exit guard: `doDelete` returns false to
+     say "not now", and the user may still choose Keep editing, in which case
+     nothing happened and the undo must stay on offer. Only the callback can
+     tell the difference between "refused" and "not yet". */
+  doDelete(entry.path, entry.type, { noRecord: true, onDone: done });
+}
+
+/** The question each direction asks, and the verb it asks for. A restore is
+    CONSTRUCTIVE — it wears the safe chrome, because the destructive pattern
+    (red button, warning triangle, a footer about what is lost) over a button
+    that puts a file back says the opposite of what the button does. */
+function fileOpPrompt(entry, restoring) {
+  const noun = entry.type === "folder" ? "folder" : "doc";
+  return restoring
+    ? { title: "Restore " + noun, ok: "Restore", danger: false, note: "Put back where it was, with its contents." }
+    : {
+        title: "Delete " + noun,
+        ok: "Delete",
+        danger: true,
+        note: state.trash.available ? trashRetentionNote() : "Recoverable only from git history.",
+      };
+}
+
+/** What the dialog says is about to happen, in the user's terms rather than
+    the timeline's. Four explicit sentences instead of one assembled from the
+    entry's fields: an entry can be several steps back by the time it is
+    reached, so the sentence has to name the ACT, not the moment. */
+function fileOpBody(entry, undoing) {
+  const noun = entry.type === "folder" ? "folder" : "doc";
+  return entry.kind === "delete"
+    ? undoing
+      ? "Undo — put back the " + noun + " you deleted."
+      : "Redo — delete it again."
+    : undoing
+    ? "Undo — remove the " + noun + " you created."
+    : "Redo — create it again.";
+}
+
+/**
+ * The timeline's FILE half: put this operation's subject back, or take it away
+ * again, having asked first.
+ *
+ * Asking is the whole difference from the text half, and it is deliberate. A
+ * text undo is instant and reversible by the same keystroke; this moves a file
+ * on disk, through git, on a path another device may be looking at — and the
+ * chord is one keystroke from one people press reflexively in an editor. The
+ * cost of a mis-fired ⌘Z here is a doc that vanishes; the cost of the prompt
+ * is one Return.
+ *
+ * Resolves false on every way out that is not the deed done — Cancel, Esc, a
+ * restore blocked by something now occupying the path, a delete still behind
+ * the Raw exit guard — which is what leaves the entry on the timeline, still
+ * offering.
+ */
+export function applyFileHistory(entry, undoing) {
+  /* a delete undoes to a restore and redoes to a delete; a create is the
+     mirror of that */
+  const restoring = entry.kind === "delete" ? undoing : !undoing;
+  const p = fileOpPrompt(entry, restoring);
+  return new Promise((resolve) => {
+    confirmDialog({
+      title: p.title,
+      path: entry.path,
+      body: fileOpBody(entry, undoing),
+      ok: p.ok,
+      danger: p.danger,
+      note: p.note,
+      onOk: () => {
+        if (restoring) putFileBack(entry).then((ok) => resolve(ok !== false));
+        else takeFileAway(entry, (ok) => resolve(ok !== false));
+      },
+      onCancel: () => resolve(false),
+    });
+  });
+}
+
 async function doDelete(path, kind, opts) {
   const affects = state.active === path || (kind === "folder" && state.active && state.active.indexOf(path + "/") === 0);
   /* Confirming a delete is also an attempt to leave the active Raw buffer.
@@ -870,16 +1063,41 @@ async function doDelete(path, kind, opts) {
      cancels the removal, Save & exit puts the bytes into the retained copy,
      and Exit without saving retains exactly the last server-confirmed file. */
   if (affects && !(opts && opts.force)) {
-    if (!guardRawExit(() => doDelete(path, kind, { force: true }))) return;
+    /* The guard defers the delete rather than performing it — so this call has
+       not deleted anything, and must not be recorded as if it had. The
+       deferred one records itself, and carries `onDone` with it.
+
+       The cancel hook is what closes the loop for a caller that is AWAITING
+       this delete (the undo timeline): Keep editing means the delete never
+       happens, and `onDone(false)` is the only way to say so. Reporting false
+       here instead — at defer time — would be wrong in the other direction: a
+       user who then picks Save & exit really does delete the file, and the
+       caller would have already been told it did not happen. */
+    const deferred = guardRawExit(
+      () => doDelete(path, kind, opts ? Object.assign({}, opts, { force: true }) : { force: true }),
+      opts && opts.onDone ? () => opts.onDone(false) : null
+    );
+    if (!deferred) return false;
   }
   /* read while the tree still knows where this doc was — see the note above */
   const next = affects ? neighbourDoc(path) : null;
+  /* captured before it goes: an entry that carries the text can put the doc
+     back even after the trash has been emptied */
+  const doc = kind === "doc" ? state.docs.get(path) : null;
+  const markdown = doc && typeof doc.markdown === "string" ? doc.markdown : null;
   try {
     await api.deleteDoc(path);
   } catch (err) {
     apiFail(err, "Could not delete " + path);
-    return;
+    return false;
   }
+  /* The doc's earlier TEXT entries stay on the timeline, deliberately. They
+     are older than this delete, so ⌘Z always reaches the delete first and the
+     file is back before any of them is applied — and dropping them is what
+     made "undo, undo, undo" stop one step short of the edit it was walking
+     back to. `applyTextHistory` still refuses an entry whose doc is missing,
+     for the one path that can produce it: a restore the user declined. */
+  if (!(opts && opts.noRecord)) rememberFileOp({ kind: "delete", path, type: kind, markdown });
   if (affects) {
     state.docs.delete(state.active);
     state.active = null;
@@ -898,6 +1116,8 @@ async function doDelete(path, kind, opts) {
      the one moment the user might look at it */
   refreshTrash();
   toast("Deleted " + path);
+  if (opts && opts.onDone) opts.onDone(true);
+  return true;
 }
 
 /* ============================================================

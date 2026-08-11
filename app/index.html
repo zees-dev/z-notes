@@ -232,6 +232,27 @@
       </button>
       <div class="crumbs" id="crumbs"></div>
       <div class="spacer"></div>
+      <!-- THE UNSAVED MARK — present only when there is something to save.
+
+           Not the pill this replaced (ADR 0012): that one was up permanently,
+           spending ~110px to say "Saved" for the 99% of the time when nothing
+           had happened. This is the tab-dot every editor uses — it appears when
+           the buffer diverges from the file, blinks to a tick when the write
+           lands, and goes. A clean document has NO mark, which is the whole
+           point: the chrome only speaks when it has something to say.
+
+           It leads the RIGHT-HAND CLUSTER, immediately before the lock: the
+           three marks there are the three things that can be true of the
+           document you are looking at — it has unwritten changes, it can take
+           an encrypted block, the assistant is listening — and the one that
+           speaks least often reads first. Its box is 13px whether or not it is
+           painted, so appearing and disappearing costs no neighbour a pixel of
+           movement. The statusbar pip remains the PERSISTENT answer (and the
+           click target); this is the notice. -->
+      <span class="tb-save" id="tbSave" aria-hidden="true">
+        <span class="pip"></span>
+        <svg class="tick" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+      </span>
       <!-- The Raw/Preview SEGMENTED CONTROL used to sit here. It is gone: which
            of two views of the same document you are looking at is *state*, and
            the statusbar is where this app says state. The replacement is the
@@ -243,11 +264,17 @@
       <button class="iconbtn" id="encBtn" data-act="encrypt-selection" title="Encrypt selection (⌘⇧E)" hidden>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
       </button>
-      <div class="saved" id="saveInd" title="Autosave status"><span class="pip"></span><span class="save-txt" id="saveTxt">Saved</span></div>
-      <button class="btn primary no-mobile" data-act="save" title="Save now">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
-        Save <kbd>⌘S</kbd>
-      </button>
+      <!-- The Save BUTTON and the saved/unsaved PILL used to sit here. Both are
+           gone from the desktop topbar, and for the same reason the mode
+           control left it: whether the buffer is on disk is *state*, and the
+           statusbar is where this app says state. Autosave writes it anyway —
+           a 90px primary button beside a pill that repeats what the button is
+           for was two pieces of chrome for a fact the eye only needs to
+           glance at. Both are now the `#saveInd` pip down in the statusbar,
+           which is also the manual-save affordance (still ⌘S).
+
+           The PHONE keeps its button: below 768px there is no ⌘S to fall back
+           on, so this icon is the only way to force a write by hand. -->
       <button class="iconbtn only-mobile" data-act="save" title="Save (⌘S)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
       </button>
@@ -689,6 +716,24 @@
         <span class="hide-sm">Vault unlocked</span>
       </button>
       <span class="divider-v hide-sm"></span>
+      <!-- DISK STATE — the ex-topbar Save button and its pill, at statusbar
+           weight. One 6px pip: muted when the buffer matches the file, amber
+           while there are unwritten keystrokes, a green blink when a write
+           lands. It is also a button — click (or ⌘S) writes now — because the
+           thing you look at to ask "is this saved?" is the same thing you
+           reach for to make it so.
+
+           It shares the divider with #stSync deliberately: disk, then remote,
+           then the live connection — three states of the same question,
+           reading left to right, in one cluster at the end of the bar. No
+           divider of its own, so the narrowest bar pays 12px for it, not 30.
+
+           The WORD stays in the DOM (`.sb-vh`, clipped to a pixel) rather
+           than living only in the `title`: it is what a screen reader
+           announces, and what `aria-live` has to have a node to speak. -->
+      <button class="sb-i save" id="saveInd" data-act="save" title="Saved — click (or ⌘S) to save now">
+        <span class="pip"></span><span class="save-txt sb-vh" id="saveTxt" aria-live="polite">Saved</span>
+      </button>
       <span class="sb-i ok" id="stSync">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
         <span class="hide-sm sb-narrow" id="stSyncTxt">—</span>
@@ -954,6 +999,16 @@
              segmented control in the topbar -->
         <div class="sc-row">Toggle Preview / Raw — or click the mode in the statusbar<span class="k"><kbd>⌘E</kbd></span></div>
         <div class="sc-row">Toggle Raw word wrapping — or click Wrap in the statusbar<span class="k"><kbd>⌥Z</kbd></span></div>
+        <!-- ADR 0013. A COLLAPSED caret only: with a selection all three are
+             the browser's, untouched. ⌘V is listed with them because the line
+             it puts back lands ABOVE the caret's line, which is the half a
+             person would not predict. -->
+        <div class="sc-row">Cut / copy the whole line (Raw, nothing selected) — ⌘V puts it back above<span class="k"><kbd>⌘X</kbd><kbd>⌘C</kbd><kbd>⌘V</kbd></span></div>
+        <!-- ADR 0013 + 0014. One chord, two stacks, decided by where the caret
+             is: inside a text surface it is the textarea's own history, and
+             the app never touches it. Outside one it is the last FILE
+             operation, and that one asks before it acts. -->
+        <div class="sc-row">Undo / redo — the text in Raw, the last file delete or create elsewhere (asks first)<span class="k"><kbd>⌘Z</kbd><kbd>⇧⌘Z</kbd></span></div>
         <!-- one chord, one meaning: "save what is in front of me". On the
              settings page that is the settings draft, because there is no
              document there — the topbar's Save is hidden for the same reason. -->

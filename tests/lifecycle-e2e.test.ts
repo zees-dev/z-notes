@@ -286,7 +286,7 @@ describe("visibilitychange flushes the buffer (SPEC §4)", () => {
     try {
       /* an explicit save, so the failure is deterministic rather than waiting
          on a debounce that is turned off anyway */
-      await page.click("[data-act='save']:not([hidden])");
+      await page.click(".statusbar #saveInd");
       await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Unsaved changes", {
         timeout: 8000,
       });
@@ -350,7 +350,7 @@ describe("a deletion elsewhere never takes an unsaved buffer with it (SPEC §5)"
     );
 
     /* THE THIRD, and the one that used to be a silent no-op: ⌘S. */
-    await page.click("[data-act='save']:not([hidden])");
+    await page.click(".statusbar #saveInd");
     await page.waitForFunction(() => document.getElementById("cxVeil")!.classList.contains("show"), { timeout: 10000 });
     await new Promise((r) => setTimeout(r, 200)); // the focus move is a 30ms timeout after the veil shows
     const veil = await page.evaluate(() => ({
@@ -404,7 +404,7 @@ describe("a deletion elsewhere never takes an unsaved buffer with it (SPEC §5)"
     expect(`deleted elsewhere: ${del.status}`).toBe("deleted elsewhere: 204");
     await page.waitForFunction(() => document.getElementById("toast")!.classList.contains("sticky"), { timeout: 10000 });
 
-    await page.click("[data-act='save']:not([hidden])");
+    await page.click(".statusbar #saveInd");
     await page.waitForFunction(() => document.getElementById("cxVeil")!.classList.contains("show"), { timeout: 10000 });
     await page.click("[data-act='cx-discard']");
     await page.waitForFunction(() => !document.getElementById("cxVeil")!.classList.contains("show"), { timeout: 8000 });

@@ -811,20 +811,53 @@ kbd {
 .btn[disabled], .btn[aria-disabled="true"] { opacity: .42; cursor: not-allowed; box-shadow: none; }
 .btn[disabled]:hover { background: var(--btn-bg); color: var(--btn-fg); }
 
-/* save indicator */
-.saved {
-  display: inline-flex; align-items: center; gap: 7px; height: var(--d-ctl-h);
-  padding: 0 10px; border-radius: var(--r-pill); font-size: 12.5px; font-weight: var(--w-med); color: var(--muted);
-  background: var(--panel-2); border: var(--bd-w) var(--bd-style) transparent;
-  transition: color var(--dur-2), background var(--dur-2), border-color var(--dur-2);
-  white-space: nowrap;
+/* THE UNSAVED MARK — the topbar's whole remaining say about saving.
+
+   The pill that stood here is gone (ADR 0012). What replaced it is a mark that
+   exists only while it has news: 7px amber beside the document's name when the
+   buffer diverges from the file, a green tick when the write lands, then
+   nothing. The statusbar pip is the persistent state; this is the notice.
+
+   Both glyphs are stacked in ONE fixed 13px box (`grid`, one cell, both
+   children in it) rather than swapped in the flow: the tick must appear
+   exactly where the dot was, and a box that keeps its size cannot move the
+   icon beside it as the state changes. The box is always in the layout —
+   `opacity`/`transform` do the appearing — so a document going dirty never
+   reflows the topbar. It leads the right-hand cluster, immediately left of
+   `#encBtn`, and takes its spacing from the topbar's own `gap`. */
+.tb-save {
+  flex: 0 0 auto; display: grid; place-items: center; width: 13px; height: 13px;
+  opacity: 0; transform: scale(.6);
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease);
 }
-.saved .pip { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-2); transition: background var(--dur-2), box-shadow var(--dur-2); }
-.saved.dirty { color: var(--warn); background: var(--warn-soft); }
-.saved.dirty .pip { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
-.saved.flash { color: var(--ok); background: var(--ok-soft); border-color: var(--ok-bd); animation: savepop .5s var(--ease); }
-.saved.flash .pip { background: var(--ok); box-shadow: 0 0 0 4px rgba(18, 161, 80, .16); }
+.tb-save > * { grid-area: 1 / 1; transition: opacity var(--dur-1, .14s) var(--ease); }
+.tb-save .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+/* THE BREATH — the one thing on this bar that moves while nothing is
+   happening, so it is deliberately slow and shallow: a 1.9s cycle that never
+   goes below .45 opacity and never shrinks past 86%. Fast enough to read as
+   alive on a glance, slow enough that peripheral vision stops reporting it —
+   the dot is saying "there is work here", not asking to be dealt with now.
+   On the PIP only: the container's opacity is the mark's appearing and
+   disappearing, and animating both would fight over the same property. */
+@keyframes save-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(.86); }
+}
+.tb-save.dirty .pip { animation: save-breathe 1.9s var(--ease) infinite; }
+.tb-save .tick { color: var(--ok); opacity: 0; }
+/* dirty: the dot is up. saved: the tick takes the cell and pops once, and the
+   box fades out from under it — `.saved` is removed a beat later, so the fade
+   is the last thing that happens rather than a cut. */
+.tb-save.dirty { opacity: 1; transform: none; }
+.tb-save.saved { opacity: 1; transform: none; animation: savepop .5s var(--ease); }
+.tb-save.saved .pip { opacity: 0; }
+.tb-save.saved .tick { opacity: 1; }
+.tb-save.leaving { opacity: 0; transform: scale(.82); }
 @keyframes savepop { 0% { transform: scale(.94); } 45% { transform: scale(1.045); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .tb-save, .tb-save > * { transition: none; }
+  .tb-save.saved, .tb-save.dirty .pip { animation: none; }
+}
 
 /* ============================================================
    7 · EDITOR — one container, two modes (amendment 11)
@@ -1181,6 +1214,45 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
 #stMode:focus-visible, #stWrap:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 #stWrap { margin-left: 6px; }
 #stWrap[data-wrap="off"] { color: var(--warn); }
+/* DISK STATE — the ex-topbar Save button and its saved/unsaved pill, reduced
+   to one 6px pip in the bar that already says everything else about this
+   document. Same button treatment as the mode chip (inset padding so the
+   hover well clears its neighbours, clickability earned on hover), because it
+   is the same kind of thing: a fact you glance at that happens to be
+   actionable. Colour carries the whole message — muted = on disk, amber =
+   unwritten keystrokes, a green blink = a write just landed — so it costs the
+   narrowest statusbar 12px and reads without being read. */
+/* A 6px dot is a fact to look at; it is not a thing to hit with a mouse. The
+   target is the BAR'S OWN HEIGHT, taken by stretching the button rather than
+   by the inset-negative ::after §13 uses: this bar is `overflow: hidden` and
+   19–25px tall depending on theme and density, so a fixed-inset pseudo-element
+   is a size that has to be re-derived for every one of those and clipped the
+   bar at the tightest (measured: 24px of hit area in a 20px Modern/compact
+   bar, which `theming-e2e` reads as a vertical clip). `stretch` is the same
+   target expressed as a relationship — it cannot out-grow the box it is in. */
+#saveInd {
+  border: 0; background: none; padding: 0 5px; margin: 0 -5px; font: inherit; color: inherit;
+  align-self: stretch; position: relative;
+  cursor: pointer; border-radius: var(--r-sm); flex: 0 0 auto;
+  transition: background var(--dur-1, .12s) var(--ease);
+}
+#saveInd:hover { background: var(--panel-3); }
+#saveInd:focus-visible { outline: none; box-shadow: var(--sh-focus); }
+#saveInd .pip {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--muted-2);
+  transition: background var(--dur-2), box-shadow var(--dur-2);
+}
+#saveInd.dirty .pip { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+#saveInd.flash .pip { background: var(--ok); box-shadow: 0 0 0 4px rgba(18, 161, 80, .16); animation: savepop .5s var(--ease); }
+/* Announced, never drawn: the state's WORD, kept in the layout at a pixel so
+   assistive tech has a node to read and the pip stays the only visible mark. */
+/* No negative margin in the usual sr-only recipe: this bar is `overflow:
+   hidden` and measured for vertical clipping, and a pixel outside the box is
+   still a pixel of overflow. */
+.sb-vh {
+  position: absolute; width: 1px; height: 1px; margin: 0; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 /* Both words are typeset identically on purpose: the chip must not resize as it
    toggles, or the whole left cluster of the bar twitches on every ⌘E. */
 /* The bar sheds its least important items before it squeezes the doc path.
@@ -1468,13 +1540,14 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    controls out of the tab order for free, the thing `.veil` needed `visibility`
    to fake) and this takes its place in the same flex column.
 
-   The topbar's doc controls go with it. Save and the save indicator are about
-   a document; on a page with no document they would be live buttons that
-   either do nothing or act on a doc you cannot see. The Raw/Preview control
-   used to be listed here too — it now lives in the STATUSBAR, and the rule
-   followed it down (`#stMode` below) for exactly the same reason. The statusbar
-   items that stay are facts about the doc you were reading (path, counts, sync,
-   connection), not controls acting on it.
+   The topbar's doc controls go with it. Save is about a document; on a page
+   with no document it would be a live button that either does nothing or acts
+   on a doc you cannot see. The Raw/Preview control used to be listed here too
+   — it now lives in the STATUSBAR, and the rule followed it down (`#stMode`
+   below) for exactly the same reason; the save pip (`#saveInd`) is a control
+   as much as a state and follows both. The statusbar items that stay are facts
+   about the doc you were reading (path, counts, sync, connection), not
+   controls acting on it.
    ------------------------------------------------------------ */
 .settings-view { display: none; min-height: 0; }
 .app.route-settings #scroll { display: none; }
@@ -1487,7 +1560,8 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .app.route-settings .statusbar #stMode,
 .app.route-settings .statusbar #stWrap,
 .app.route-settings .statusbar .sb-mode-div,
-.app.route-settings .topbar .saved,
+.app.route-settings .statusbar #saveInd,
+.app.route-settings .topbar .tb-save,
 .app.route-settings .topbar #encBtn,
 .app.route-settings .topbar [data-act="save"] { display: none !important; }
 
@@ -1628,9 +1702,24 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .pal-foot { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-top: var(--bd-2); background: var(--panel-2); font-size: 11px; color: var(--muted-2); }
 .pal-foot span { display: inline-flex; align-items: center; gap: 4px; }
 
+/* THE TOAST CLEARS THE STATUSBAR, IT DOES NOT FLOAT OVER IT.
+
+   `bottom: 22px` measured from the VIEWPORT, and the bar is 19–25px tall
+   depending on theme and density, so the resting toast cleared it by 1px in
+   Minimal and sat INSIDE it in the tallest combinations — and its 16px
+   entrance travel put it over the bar for the first ~0.28s every single time.
+   That was invisible until the save control moved down there (ADR 0012):
+   `.sticky` takes pointer events (it has to, it is dismissed by clicking), so
+   the notice that says "your unsaved text is still here" was landing on top of
+   the button that would have written it, and swallowing the click. Measured at
+   1440px: the toast spanned x 449–991 over a pip at x 973.
+
+   So the offset is measured from the BAR, and the entrance travel (10px) stays
+   inside the gap (14px) — the toast never enters the statusbar's box at any
+   point in its animation, at any theme, density or inset. */
 .toast {
-  position: fixed; bottom: 22px; left: 50%; z-index: 300;
-  transform: translate(-50%, 16px); opacity: 0; pointer-events: none;
+  position: fixed; bottom: calc(var(--d-status) + env(safe-area-inset-bottom, 0px) + 14px); left: 50%; z-index: 300;
+  transform: translate(-50%, 10px); opacity: 0; pointer-events: none;
   display: flex; align-items: center; gap: 8px;
   background: var(--toast-bg); color: var(--toast-fg); font-size: 12.8px; font-weight: var(--w-med);
   padding: 9px 14px; border-radius: var(--r-pill); box-shadow: var(--sh-4);
@@ -1842,8 +1931,6 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   .crumbs .cr-dir { display: none; }
   .crumbs b { font-size: 12.5px; min-width: 4.5em; }
   .topbar { gap: 6px; padding: 0 8px 0 10px; }
-  .saved { padding: 0 8px; }
-  .saved .save-txt { display: none; }
   /* the mode chip survives the phone intact — it is the only way to reach Raw
      without a keyboard — but it drops its divider with the rest of them */
   .statusbar .sb-mode-div { display: none; }
@@ -2210,4 +2297,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   /* §13's phone floor for this bar, plus the inset — restated rather than
      inherited because §13 sets the height as a bare 36px */
   .statusbar { height: calc(36px + env(safe-area-inset-bottom, 0px)); }
+  /* and the toast sits above THAT bar, for the same reason it sits above the
+     desktop one: the 36px is the only term that changed. */
+  .toast { bottom: calc(36px + env(safe-area-inset-bottom, 0px) + 14px); }
 }

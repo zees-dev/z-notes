@@ -9,7 +9,7 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, I, activeDoc, apiFail, countWords, el, esc, toast } from "./ui.js";
+import { $, $$, I, activeDoc, apiFail, copyText, countWords, el, esc, toast } from "./ui.js";
 import { renderPreview } from "./markdown.js";
 import { commitRename, focusQuiet } from "./tree.js";
 import { changedLineDiff, conflictDialog, orphanDialog, renderDiff } from "./dialogs.js";
@@ -17,6 +17,7 @@ import { flushSecretEdits, vault } from "./secrets.js";
 import { refreshSessionStats } from "./chat.js";
 import { exitSettings, guardSettingsExit, settingAt } from "./settings.js";
 import { closeNav, isDrawer, isSheet, markerForLayer, overlayOpen, retireLayerMarker, revealInTree, routeDoc } from "./shell.js";
+import { recordHistory } from "./history.js";
 
 /* ============================================================
    EXIT GUARD (SPEC §4) — leaving Raw with text that is not on disk
@@ -88,14 +89,17 @@ export function rawExitDiff() {
  * force/replace flag set, so the answer travels back out through the same code
  * path it came in on rather than through a re-implementation of it.
  */
-export function guardRawExit(proceed) {
+export function guardRawExit(proceed, onCancel) {
   const rows = rawExitDiff();
   if (!rows) return true;
   /* already asking — a second trigger (Esc under the open dialog, a stray
      click) must not stack a second copy or replace the pending destination */
-  if (state.exitGuard) return false;
+  if (state.exitGuard) {
+    if (onCancel) onCancel();
+    return false;
+  }
   const doc = activeDoc();
-  state.exitGuard = { path: doc.path, proceed: proceed };
+  state.exitGuard = { path: doc.path, proceed: proceed, onCancel: onCancel || null };
   $("#xgPath").textContent = doc.path;
   $("#xgBody").textContent =
     "This is what is in the editor but not in the file. Leaving now without saving throws it away.";
@@ -124,6 +128,13 @@ export function closeExitGuard() {
      The dialog cost a focus and nothing else. */
   const ta = $("#rawArea");
   if (ta && state.mode === "raw") focusQuiet(ta);
+  /* KEEP EDITING IS A CANCELLATION for whoever was trying to leave. Almost
+     every caller passes no hook — its action simply does not happen, which is
+     the whole point of the guard. The one that has to hear about it is the
+     undo timeline (ADR 0014): `applyFileHistory` is awaiting a promise, and
+     without this it never settles, so the entry it is holding never goes back
+     on offer. */
+  if (g.onCancel) g.onCancel();
 }
 
 /** Hand the pending destination back its go-ahead, once. */
@@ -141,6 +152,9 @@ function exitGuardProceed(g) {
  */
 export function exitGuardDiscard() {
   const g = state.exitGuard;
+  /* This route LEAVES, so it is not the cancellation `closeExitGuard` reports
+     — hand the hook off before closing so it cannot fire on the way through. */
+  if (g) g.onCancel = null;
   closeExitGuard();
   if (!g) return;
   const doc = state.docs.get(g.path);
@@ -176,10 +190,18 @@ export function exitGuardDiscard() {
  */
 export async function exitGuardSave() {
   const g = state.exitGuard;
+  /* Same hand-off as Discard — but held onto, because a save that FAILS
+     strands the destination just as surely as Keep editing does, and that is a
+     cancellation as far as whoever was leaving is concerned. */
+  const cancel = g && g.onCancel;
+  if (g) g.onCancel = null;
   closeExitGuard();
   if (!g) return;
   const ok = await saveDoc(g.path);
-  if (!ok) return toast("Could not save " + g.path + " — your changes are still in this tab");
+  if (!ok) {
+    if (cancel) cancel();
+    return toast("Could not save " + g.path + " — your changes are still in this tab");
+  }
   exitGuardProceed(g);
 }
 
@@ -277,6 +299,41 @@ function emitRawInput(ta, inputType, data) {
   ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType, data: data == null ? null : data }));
 }
 
+/* EVERY STRUCTURAL EDIT THIS FILE MAKES GOES THROUGH THE BROWSER'S OWN EDITING
+   COMMAND, because that is the only way onto the textarea's UNDO STACK.
+
+   `setRangeText` was the obvious tool and it is the wrong one: measured in this
+   repo's Chromium, a `setRangeText` edit is invisible to ⌘Z — worse than
+   ignored, it left the stack pointing at the entry BEFORE it, so the first ⌘Z
+   after a whole-line cut silently did nothing and the line was gone for good.
+   `execCommand` is deprecated and universally implemented, and it is what
+   editors on top of a textarea use for exactly this reason. Measured, same
+   browser, same edit: ⌘Z restores it and ⌘⇧Z redoes it.
+
+   It also fires the native `input` event, so the listener in `renderRaw` runs
+   (dirty, autoGrow, meta) without anyone dispatching one by hand — and an UNDO
+   fires it too, as `historyUndo`, which is what keeps `doc.markdown` in step
+   with a buffer the browser rewound behind the app's back.
+
+   `insertText` covers replacement and insertion; `delete` covers removal and
+   is only ever reached with a non-empty range (with a collapsed one it would
+   eat the character behind the caret). The `setRangeText` fallback is for a
+   browser that refuses the command — the edit still lands, only its undo does
+   not. */
+function applyRawEdit(ta, start, end, text) {
+  if (start === end && !text) return;
+  ta.setSelectionRange(start, end);
+  let ok = false;
+  try {
+    ok = text ? document.execCommand("insertText", false, text) : document.execCommand("delete");
+  } catch (_) {
+    ok = false;
+  }
+  if (ok) return;
+  ta.setRangeText(text, start, end, "end");
+  emitRawInput(ta, text ? "insertText" : "deleteContentBackward", text || null);
+}
+
 function applyWordWrap(ta) {
   if (!ta) return;
   ta.wrap = state.wordWrap ? "soft" : "off";
@@ -353,11 +410,10 @@ function continueMarkdownLine(e, ta) {
   if (next.emptyItem && a === b && (lineEnd < 0 || a === lineEnd)) {
     /* An empty list item already IS the next line. Enter exits the list by
        removing its prefix instead of producing an endless run of markers. */
-    ta.setRangeText("", next.lineStart, a, "end");
+    applyRawEdit(ta, next.lineStart, a, "");
   } else {
-    ta.setRangeText("\n" + next.prefix, a, b, "end");
+    applyRawEdit(ta, a, b, "\n" + next.prefix);
   }
-  emitRawInput(ta, "insertLineBreak", null);
 }
 
 const RAW_LIST = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/;
@@ -391,8 +447,7 @@ function editRawTab(e, ta) {
   const currentLine = block.slice(0, block.indexOf("\n") < 0 ? block.length : block.indexOf("\n"));
 
   if (!e.shiftKey && !multi && !RAW_LIST.test(currentLine) && a === b) {
-    ta.setRangeText(spaces, a, b, "end");
-    emitRawInput(ta, "insertText", spaces);
+    applyRawEdit(ta, a, b, spaces);
     return true;
   }
 
@@ -402,14 +457,13 @@ function editRawTab(e, ta) {
   if (replacement === block) return true;
   const firstDelta = changed[0].length - lines[0].length;
   const totalDelta = replacement.length - block.length;
-  ta.setRangeText(replacement, lineStart, lineEnd, "end");
+  applyRawEdit(ta, lineStart, lineEnd, replacement);
   if (a === b) {
     const caret = Math.max(lineStart, a + firstDelta);
     ta.setSelectionRange(caret, caret);
   } else {
     ta.setSelectionRange(Math.max(lineStart, a + firstDelta), Math.max(lineStart, b + totalDelta));
   }
-  emitRawInput(ta, e.shiftKey ? "deleteContentBackward" : "insertText", e.shiftKey ? null : spaces);
   return true;
 }
 
@@ -425,7 +479,99 @@ function moveListGutterCaret(ta) {
   ta.setSelectionRange(end, end);
 }
 
+/* ============================================================
+   WHOLE-LINE CUT / COPY / PASTE
+
+   With nothing selected, ⌘X takes the LINE — the convention every code editor
+   has kept since it was a Vim `dd`, and the one thing a markdown source pane
+   is asked for most: move this bullet, drop that heading.
+
+   Why keydown and not the `cut` / `copy` clipboard events, which would have
+   given us the native clipboard for free: those events do not fire at all when
+   the selection is COLLAPSED, which is the entire case this exists for. (A
+   browser with nothing selected has nothing to cut.) So the gesture is
+   recognised as a chord, the document edit goes through `applyRawEdit` — the
+   browser's own editing command, so ⌘Z still gets the line back — and the
+   clipboard write goes through `copyText`, the app's one clipboard writer,
+   already best-effort on a browser that refuses.
+
+   A SELECTION is never touched: with one, ⌘X/⌘C are the browser's, unchanged.
+   ============================================================ */
+
+/** The text this pane last put on the clipboard AS A LINE. `pasteRawLine`
+    consults it to decide whether ⌘V should land a whole line above the caret
+    rather than inside it — the same "did this come from a line copy?" test the
+    convention rests on, and the same false positive it has always had (text
+    copied elsewhere that is byte-identical pastes as a line). */
+let lineClip = null;
+
+/** The line containing `pos`, as a [start, end) slice of `value`. `end`
+    INCLUDES the newline when there is one — a line is its terminator too, or
+    cutting one would leave the blank it used to end. */
+function lineRange(value, pos) {
+  const start = value.lastIndexOf("\n", Math.max(0, pos - 1)) + 1;
+  const nl = value.indexOf("\n", pos);
+  return { start, end: nl < 0 ? value.length : nl + 1, terminated: nl >= 0 };
+}
+
+function editRawLineClipboard(e, ta) {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing) return false;
+  const k = e.key.toLowerCase();
+  if (k !== "x" && k !== "c") return false;
+  /* Something is selected: this is the browser's gesture, not ours. So is
+     anything pressed under a modal — the guard can open while this textarea
+     still holds focus, and swallowing a copy there would take a chord away
+     from the browser to do nothing with it. Both checks come BEFORE the
+     preventDefault for that reason. */
+  if (ta.selectionStart !== ta.selectionEnd || overlayOpen()) return false;
+  e.preventDefault();
+
+  const value = ta.value;
+  const pos = ta.selectionStart;
+  const { start, end, terminated } = lineRange(value, pos);
+  /* The clipboard always gets a TERMINATED line, including from the last line
+     of a file that has no trailing newline. That is what makes the round trip
+     work: the paste below inserts the clipboard text verbatim at a line start,
+     so a line without its "\n" would fuse with whatever it landed on. */
+  lineClip = terminated ? value.slice(start, end) : value.slice(start, end) + "\n";
+  copyText(lineClip, { quiet: true });
+  if (k === "c") return true;
+
+  /* The last line of the file has no newline of its own, so it takes the one
+     BEFORE it — otherwise cutting it leaves the empty line it used to follow. */
+  const from = terminated ? start : Math.max(0, start - 1);
+  applyRawEdit(ta, from, end, "");
+  /* THE CARET LANDS AT THE START OF THE LINE that moved up into this row.
+
+     Not the column it held — which is what a code editor does, and what this
+     did first. In a markdown outline it is the wrong answer nearly every time:
+     the lines being cut are list items, the caret is usually somewhere inside
+     the text (or at the end of it, since clicking a list gutter parks it
+     there), and keeping the column drops you into the MIDDLE of the next item
+     — `- [ ] brav|o`. Column 0 is where the next thing you do to a line
+     starts, and it is the same answer for every line whatever you cut. */
+  const landing = lineRange(ta.value, Math.min(from, ta.value.length));
+  ta.setSelectionRange(landing.start, landing.start);
+  return true;
+}
+
+/** ⌘V of something that was cut or copied AS A LINE puts it back as a line —
+    above the caret's line, caret riding down with its own text. Anything else
+    (a different clipboard, a selection to replace) is the browser's paste. */
+function pasteRawLine(e, ta) {
+  if (lineClip == null || ta.selectionStart !== ta.selectionEnd) return;
+  const text = e.clipboardData && e.clipboardData.getData("text/plain");
+  if (text !== lineClip) return;
+  e.preventDefault();
+  const pos = ta.selectionStart;
+  const { start } = lineRange(ta.value, pos);
+  applyRawEdit(ta, start, start, text);
+  const caret = pos + text.length;
+  ta.setSelectionRange(caret, caret);
+}
+
 function rawKeydown(e, ta) {
+  if (editRawLineClipboard(e, ta)) return;
   if (editRawTab(e, ta)) return;
   continueMarkdownLine(e, ta);
 }
@@ -450,6 +596,9 @@ function renderRaw(doc, host) {
   ta.placeholder = "# " + doc.title;
   ta.style.tabSize = String(settingAt("editor.tabSize"));
   ta.addEventListener("input", () => {
+    /* BEFORE the model moves: the run's `before` is whatever the last closed
+       run left, and opening the run has to happen while that is still true. */
+    noteTextEdit(doc.path);
     doc.markdown = ta.value;
     autoGrow(ta);
     markDirty();
@@ -457,6 +606,12 @@ function renderRaw(doc, host) {
     keepRawCaretVisible();
   });
   ta.addEventListener("keydown", (e) => rawKeydown(e, ta));
+  ta.addEventListener("paste", (e) => pasteRawLine(e, ta));
+  /* A copy or cut that reaches the browser had a SELECTION (the collapsed case
+     never gets here — `editRawLineClipboard` swallows it), so the clipboard now
+     holds something that is not a line, and the next ⌘V is an ordinary paste. */
+  ta.addEventListener("copy", () => (lineClip = null));
+  ta.addEventListener("cut", () => (lineClip = null));
   ta.addEventListener("focus", keepRawCaretVisible);
   ta.addEventListener("select", keepRawCaretVisible);
   ta.addEventListener("click", () => {
@@ -473,6 +628,11 @@ export function syncRaw() {
   const ta = $("#rawArea");
   const doc = activeDoc();
   if (ta && doc) doc.markdown = ta.value;
+  /* THE RUN BOUNDARY. Every caller of this is a moment the user left the text
+     alone — a mode switch, a doc switch, a save — which is exactly where "what
+     I just typed" ends. One flush here covers all three rather than three
+     flushes that could drift apart. */
+  flushTextRun();
 }
 
 /**
@@ -498,6 +658,10 @@ export function syncRawFromModel(doc) {
     ta.setSelectionRange(Math.min(a, n), Math.min(b, n));
   } catch (_) {}
   autoGrow(ta);
+  /* The model moved for a reason that was not typing (a re-encrypt, an
+     accepted proposal), so this is where the next run starts from — recording
+     it as an edit would put a ciphertext swap on the user's undo timeline. */
+  markTextBaseline(doc.path, doc.markdown);
 }
 
 /* ============================================================
@@ -646,7 +810,13 @@ function relTime(mtime) {
  * server might one day also send would be silently clobbered by one of them.
  */
 export function setBaseline(doc, text) {
-  if (doc) doc.diskText = String(text == null ? doc.markdown || "" : text);
+  if (doc) {
+    doc.diskText = String(text == null ? doc.markdown || "" : text);
+    /* Every route through here is the document arriving from the SERVER —
+       fetched, saved, reloaded after an external write. None is an edit, so
+       none may become an undo entry, and each is where the next run starts. */
+    markTextBaseline(doc.path, doc.markdown);
+  }
   return doc;
 }
 
@@ -942,15 +1112,183 @@ function revealLine(lineNo) {
 }
 
 /* ============================================================
+   TEXT HISTORY — the timeline's editing half (ADR 0014)
+
+   Typing is not one entry per keystroke and not one entry per session: it is
+   one entry per RUN. A run opens on the first edit to a doc, extends while the
+   edits keep coming, and closes on the first of — a pause, a save, a mode
+   switch, a doc switch, a file operation, or an undo. That is the granularity
+   a person means by "what I just typed", and it is the granularity every
+   editor's undo has.
+
+   `textMark` is the text as of the last closed run, per doc: the `before` of
+   whatever run opens next. It is re-seeded whenever the document arrives from
+   somewhere that is not the keyboard (opened, saved, reloaded over SSE, or
+   rewritten by an accepted proposal), because none of those is an edit to
+   take back — and recording one as if it were would make ⌘Z fight the server.
+   ============================================================ */
+const TEXT_RUN_MS = 700;
+const textMark = new Map();
+let runPath = null;
+let runBefore = null;
+let runTimer = null;
+
+/** Re-seed a doc's baseline: this text is where the next run starts from, and
+    getting here was not an edit. */
+export function markTextBaseline(path, text) {
+  if (!path) return;
+  /* CLOSE an open run rather than dropping it. A save that lands inside the
+     idle window (type, then ⌘S half a second later) arrives here with the run
+     still open, and discarding it would lose exactly the edit the user just
+     took the trouble to save from their own undo history. */
+  if (runPath === path) flushTextRun();
+  textMark.set(path, String(text == null ? "" : text));
+}
+
+/** Close the open run, if any, and record it. Idempotent — every flush point
+    calls it without knowing whether a run is open. */
+export function flushTextRun() {
+  clearTimeout(runTimer);
+  const path = runPath;
+  const before = runBefore;
+  runPath = null;
+  runBefore = null;
+  if (path == null) return;
+  const doc = state.docs.get(path);
+  const after = doc && typeof doc.markdown === "string" ? doc.markdown : null;
+  if (after == null || after === before) return;
+  textMark.set(path, after);
+  recordHistory({ kind: "text", path, before, after });
+}
+
+/** Called from the Raw textarea's input listener, and from anywhere else that
+    moves a doc's text on the user's behalf. */
+export function noteTextEdit(path) {
+  if (!path) return;
+  if (runPath && runPath !== path) flushTextRun();
+  if (runPath == null) {
+    runPath = path;
+    const doc = state.docs.get(path);
+    runBefore = textMark.has(path) ? textMark.get(path) : (doc && doc.diskText) || "";
+  }
+  clearTimeout(runTimer);
+  runTimer = setTimeout(flushTextRun, TEXT_RUN_MS);
+}
+
+/** Where the caret belongs after a text step: the first character that
+    differs. Not recorded with the entry — derived, so it is right even for an
+    entry that was produced by a paste, a cut or the assistant. */
+function firstDifference(a, b) {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  return i;
+}
+
+/**
+ * Put a document back to one side of a text entry, GOING THERE FIRST if it is
+ * not the doc on screen. The navigation is the point: an undo that silently
+ * rewrote a file you were not looking at would be indistinguishable from
+ * nothing happening.
+ */
+export async function applyTextHistory(entry, undoing) {
+  flushTextRun();
+  if (!state.docPaths.has(entry.path)) {
+    toast(entry.path + " is not in the vault — undo its deletion first");
+    return false;
+  }
+  /* Unsaved work in the doc being left behind is written, not thrown away and
+     not turned into a modal: this chord is supposed to be seamless, and the
+     buffer it is leaving is the user's. */
+  if (state.active && state.active !== entry.path && state.dirty) await saveDoc(state.active, { silent: true });
+  if (state.active !== entry.path) await openDoc(entry.path, { force: true });
+  const doc = state.docs.get(entry.path);
+  if (!doc) return false;
+  const target = undoing ? entry.before : entry.after;
+  const caret = firstDifference(String(doc.markdown || ""), target);
+  doc.markdown = target;
+  textMark.set(entry.path, target);
+  if (state.mode === "raw") {
+    const ta = $("#rawArea");
+    if (ta) {
+      ta.value = target;
+      autoGrow(ta);
+      try {
+        ta.focus();
+        ta.setSelectionRange(caret, caret);
+      } catch (_) {}
+      keepRawCaretVisible();
+    }
+  } else {
+    renderDoc();
+  }
+  updateMeta();
+  /* An undo is an edit like any other: the buffer now differs from the file,
+     so it is dirty and the ordinary save path takes it from here. */
+  markDirty();
+  return true;
+}
+
+/* ============================================================
    SAVE
    ============================================================ */
-let dirtyT, flashT;
+let dirtyT, flashT, markT;
+
+/** How long "it just saved" stays on screen. ONE constant for both marks: the
+    statusbar pip's green blink and the topbar tick are the same beat seen in
+    two places, and two timings would show as one outlasting the other. */
+const SAVE_FLASH_MS = 1700;
+
+/* THE TOPBAR MARK — up only while it has news.
+
+   `dirty` (amber dot) while the buffer diverges from the file; `saved` (green
+   tick, one pop) when a write lands, held for the same beat as the pip's blink
+   and then faded out; nothing at all otherwise. `leaving` runs the fade before
+   the classes come off, so the mark exits rather than being cut.
+
+   Its own timer, not `flashT`: the pip's flash and this one end at the same
+   moment but do different things, and sharing a handle made whichever ran
+   second cancel the first's cleanup. */
+function topMark(kind) {
+  const m = $("#tbSave");
+  if (!m) return;
+  clearTimeout(markT);
+  m.classList.remove("dirty", "saved", "leaving");
+  if (kind === "dirty") return void m.classList.add("dirty");
+  if (kind !== "saved") return;
+  m.classList.add("saved");
+  markT = setTimeout(() => {
+    m.classList.add("leaving");
+    markT = setTimeout(() => m.classList.remove("saved", "leaving"), 340);
+  }, SAVE_FLASH_MS);
+}
+
+/* The indicator is a statusbar PIP now — one 6px dot, no words on screen — so
+   the state has to reach the pointer and the screen reader by other routes:
+   `#saveTxt` still carries it as (clipped) text for assistive tech and for the
+   tests, and the title carries it for a hover. Everything else about this
+   function is unchanged: `dirty`/`flash` are still the two classes, and
+   `#saveTxt`'s textContent is still the contract. */
+function saveState(txt) {
+  const t = $("#saveTxt");
+  /* Write only on a real transition. `markDirty` runs on EVERY keystroke, and
+     an aria-live region re-announces text that is merely re-assigned — the
+     unguarded version read "Unsaved changes" aloud once per character. */
+  if (t.textContent === txt) return;
+  t.textContent = txt;
+  $("#saveInd").title = txt + " — click (or ⌘S) to save now";
+}
 
 export function setSaveIndicator(txt, cls) {
   const ind = $("#saveInd");
   ind.classList.remove("dirty", "flash");
   if (cls) ind.classList.add(cls);
-  $("#saveTxt").textContent = txt;
+  saveState(txt);
+  /* Every route into this function that is NOT "the buffer went dirty" is a
+     document arriving clean — opened, discarded back to its baseline, or
+     written by a silent save. None of them is news, so the topbar says
+     nothing. */
+  topMark(cls === "dirty" ? "dirty" : "none");
 }
 
 export function markDirty() {
@@ -964,14 +1302,15 @@ export function markDirty() {
 function flashSave(txt) {
   const ind = $("#saveInd");
   ind.classList.remove("dirty", "flash");
-  $("#saveTxt").textContent = txt;
+  saveState(txt);
   void ind.offsetWidth;
   ind.classList.add("flash");
+  topMark("saved");
   clearTimeout(flashT);
   flashT = setTimeout(() => {
     ind.classList.remove("flash");
-    if (!state.dirty) $("#saveTxt").textContent = "Saved";
-  }, 1700);
+    if (!state.dirty) saveState("Saved");
+  }, SAVE_FLASH_MS);
 }
 
 /* One save at a time per path.

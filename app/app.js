@@ -17,14 +17,15 @@ import * as api from "./api.js";
 import { generatePassphrase } from "./entropy.js";
 import { state } from "./state.js";
 import { $, $$, clearStickyToast, lookupLink, toast } from "./ui.js";
-import { LONGPRESS_MS, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
+import { pendingHistory, stepHistory, wireHistory } from "./history.js";
+import { LONGPRESS_MS, applyFileHistory, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
 import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, wireDialogs } from "./dialogs.js";
 import { refreshTrash, toggleTrash } from "./trash.js";
-import { autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, initWordWrap, keepRawCaretVisible, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, startHeaderRename, syncModeUI, toggleWordWrap, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
+import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, flushTextRun, initWordWrap, keepRawCaretVisible, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, startHeaderRename, syncModeUI, toggleWordWrap, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
 import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
-import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
+import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
 
 /* ============================================================
@@ -636,8 +637,9 @@ function wire() {
     if (mod && (e.key === "s" || e.key === "S")) {
       e.preventDefault();
       /* ⌘S means "save what is in front of me". On the settings page that is
-         the settings draft — there is no document there to save, and the
-         topbar's Save button is hidden for exactly the same reason. */
+         the settings draft — there is no document there to save, which is also
+         why the statusbar's save pip and the topbar's unsaved mark are both
+         hidden there (ADR 0012). */
       if (state.view === "settings") saveSettings();
       else saveDoc(state.active);
       return;
@@ -685,6 +687,45 @@ function wire() {
       if (typing() || hasSelection()) return;
       e.preventDefault();
       toggleChat();
+      return;
+    }
+    /* ⌘Z / ⌘⇧Z ARE UNDO. This app only gets them where the browser has no
+       text to undo — which is everywhere outside a text surface, and is
+       exactly where the last thing that happened was a FILE operation (a
+       delete from the tree, a create from ⌥N or a broken link). Inside the raw
+       editor, a field or the composer, `typing()` hands them straight back:
+       those edits are on the textarea's own undo stack (ADR 0013) and this
+       must never shadow them.
+
+       Not swallowed when there is nothing to undo, either — with an empty
+       timeline the chord goes to the browser untouched, rather than being
+       taken away to do nothing with. The FILE half asks before it acts; see
+       `applyFileHistory` in tree.js. */
+    if (mod && !e.altKey && (e.key === "z" || e.key === "Z")) {
+      /* THE APP OWNS ⌘Z IN THE DOCUMENT, and nowhere else.
+
+         Inside the Raw textarea it is the app's timeline rather than the
+         browser's, because the browser's is per-TEXTAREA: `renderDoc` builds a
+         new one for every doc, so the native history dies at each doc switch
+         and can never reach an edit in another file (ADR 0014). Every OTHER
+         text surface — the settings fields, the composer, the terminal line,
+         an inline rename — keeps its own native undo, which is the right one
+         for a field.
+
+         Outside a text surface the timeline is still the answer; the entry it
+         lands on is simply more likely to be a file operation. */
+      if (typing() && document.activeElement && document.activeElement.id !== "rawArea") return;
+      /* A dialog is already asking a question — including, often, the one THIS
+         chord raised. Stepping the timeline underneath it would swap the
+         question out from under a pointer already on its way to Confirm. */
+      if (overlayOpen()) return;
+      /* Pressing ⌘Z ENDS the run you were typing, so the step that follows
+         takes back what you just typed rather than whatever came before it. */
+      flushTextRun();
+      const redo = e.shiftKey;
+      if (!pendingHistory(redo)) return;
+      e.preventDefault();
+      stepHistory(redo);
       return;
     }
     if (mod && (e.key === "j" || e.key === "J")) {
@@ -819,6 +860,12 @@ function wire() {
    ============================================================ */
 export async function start() {
   wireDialogs({ refreshTree: loadTree, renderDoc, saveDoc, setBaseline, setSaveIndicator, app, openFirstDoc });
+  /* ONE TIMELINE, TWO HALVES. history.js is a leaf and holds only the stacks;
+     which module knows how to put a document back and which knows how to put a
+     FILE back is decided here, the same way the dialogs get their callbacks.
+     That is what lets a leaf drive editor.js and tree.js without importing
+     either of them. */
+  wireHistory((entry, undoing) => (entry.kind === "text" ? applyTextHistory(entry, undoing) : applyFileHistory(entry, undoing)));
   /* settings first: they decide the theme, and a wrong theme flashing is worse
      than 40ms of a blank shell */
   const s = await api.getSettings();

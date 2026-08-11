@@ -907,7 +907,7 @@ describe("e2e — a dirty buffer is never overwritten by a 409 (SPEC §5)", () =
     );
 
     /* now save: the rev the buffer carries is stale, so this is the 409 */
-    await page.click("[data-act='save']:not([hidden])");
+    await page.click(".statusbar #saveInd");
 
     await page.waitForFunction(() => document.getElementById("cxVeil")!.classList.contains("show"), { timeout: 10000 });
 

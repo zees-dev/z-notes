@@ -4,6 +4,12 @@
 *.db-shm
 .znotes/index.db*
 
+# the trash is RUNTIME STATE holding the payload of deleted notes, per
+# deployment — committing it would put deleted documents (including whatever
+# they contained) into this repo's history, which is the one place a delete
+# cannot reach
+.znotes/trash/
+
 node_modules/
 dist/
 .DS_Store

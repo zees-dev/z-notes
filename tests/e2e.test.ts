@@ -601,6 +601,25 @@ describe("e2e — editing", () => {
     await ensureMode("raw");
     await page.waitForSelector("#rawArea", { timeout: 5000 });
 
+    /* THE TOPBAR MARK (ADR 0012) is up only while it has news, so its whole
+       contract is readable at the three moments this test already passes
+       through: a clean doc, a dirty buffer, and a write that landed. Measured
+       as PAINT — the class plus the computed opacity — because "the element is
+       in the DOM" says nothing here: it is always in the DOM, holding its 13px
+       so the crumb beside it cannot be moved by a keystroke. */
+    const tbMark = () =>
+      page.evaluate(() => {
+        const m = document.getElementById("tbSave")!;
+        return {
+          cls: m.className.replace("tb-save", "").trim(),
+          opacity: Math.round(parseFloat(getComputedStyle(m).opacity) * 100) / 100,
+          tick: Math.round(parseFloat(getComputedStyle(m.querySelector(".tick")!).opacity) * 100) / 100,
+        };
+      });
+    expect(`a clean doc wears no mark: ${JSON.stringify(await tbMark())}`).toBe(
+      'a clean doc wears no mark: {"cls":"","opacity":0,"tick":0}'
+    );
+
     const marker = "TYPED-BY-E2E-" + Date.now();
     await page.evaluate(() => {
       const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
@@ -612,8 +631,21 @@ describe("e2e — editing", () => {
     await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Unsaved changes", {
       timeout: 5000,
     });
+    await sleep(300); // the mark fades IN; read it settled, not mid-transition
+    expect(`an unsaved buffer does: ${JSON.stringify(await tbMark())}`).toBe(
+      'an unsaved buffer does: {"cls":"dirty","opacity":1,"tick":0}'
+    );
 
     await chord("KeyS");
+
+    /* the write lands → the dot becomes a tick, holds one beat, and leaves of
+       its own accord. Waited on rather than slept through, so neither half can
+       pass by racing the other. */
+    await page.waitForFunction(() => document.getElementById("tbSave")!.classList.contains("saved"), { timeout: 8000 });
+    await sleep(300); // past the cross-fade, still inside the beat
+    expect(`the write turns it into a tick: ${JSON.stringify(await tbMark())}`).toBe(
+      'the write turns it into a tick: {"cls":"saved","opacity":1,"tick":1}'
+    );
 
     const onDisk = await waitUntil(
       () => {
@@ -630,7 +662,14 @@ describe("e2e — editing", () => {
     /* the server agrees with disk */
     const api = await srv.doc(NAV_DOC);
     expect(api.body.markdown).toBe(onDisk);
-  }, 30000);
+
+    /* …and then the topbar is quiet again, without anyone dismissing it */
+    await page.waitForFunction(() => document.getElementById("tbSave")!.className === "tb-save", { timeout: 6000 });
+    await sleep(250); // the tick cross-fades back out under an already-invisible box
+    expect(`and then it leaves on its own: ${JSON.stringify(await tbMark())}`).toBe(
+      'and then it leaves on its own: {"cls":"","opacity":0,"tick":0}'
+    );
+  }, 40000);
 
   test("an external file edit reaches the UI over SSE while the buffer is clean", async () => {
     await ensureMode("preview");
