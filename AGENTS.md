@@ -62,7 +62,10 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   save; 0013 gives a collapsed caret in Raw the whole-line ⌘X/⌘C/⌘V; 0014
   makes ⌘Z/⌘⇧Z ONE app-owned timeline across documents — text edits and file
   operations in the order they happened, navigating to the doc each step is
-  about, with the file ones behind a prompt (`app/history.js`).
+  about, with the file ones behind a prompt (`app/history.js`). 0015 gives
+  Preview the source's line structure: one newline is one line break, one blank
+  line is one blank line (it amends 0001's soft-break and blank-multiplicity
+  rules), and every rendered line carries its own `[data-line]`.
 
 ## Workflow
 

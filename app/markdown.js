@@ -120,6 +120,27 @@ function toggleTask(doc, lineNo, li) {
   saveDoc(doc.path); /* a tick is a decision, not typing — write it now */
 }
 
+/* A newline in the source is a newline in Preview (ADR 0015). The lines of a
+   paragraph (and of a quote) are joined with <br>, not with a space, so the
+   author's own line breaks survive into the rendered view.
+
+   Each line is its own [data-line] span rather than a bare run of text, because
+   click-to-edit reads the nearest one and under this rule a block is routinely
+   many lines: without the spans, clicking the fifth line of a paragraph would
+   drop the caret on its first. `.pline` is unstyled — it exists to carry the
+   number.
+
+   `inline` runs per line, which makes every inline construct line-local: a
+   `**bold**` opened on one line no longer closes on the next. That is the
+   honest reading now that the break is a real one, and it keeps a newline out
+   of `inline`, where it would otherwise have to survive escaping and the
+   attribute of a `[[link]]` pill. */
+function lineSpans(lines, start) {
+  return lines
+    .map((l, k) => '<span class="pline" data-line="' + (start + k) + '">' + inline(l) + "</span>")
+    .join("<br>");
+}
+
 export function renderPreview(doc, host) {
   const md = el("div", "md editable");
   const lines = doc.markdown.split("\n");
@@ -132,14 +153,17 @@ export function renderPreview(doc, host) {
 
   /* every top-level block remembers the source line it came from — that
      mapping is what click-to-edit rides on. `blanks` is how many blank source
-     lines were skipped just above; the first is the ordinary block separator
-     and is already paid for by the CSS block gap, each further one buys a body
-     line-box, emitted as a .bgap element so the source's rhythm survives. */
+     lines were skipped just above, and EVERY one of them buys a body line-box,
+     emitted as a .bgap element (ADR 0015) — a blank line in the source is a
+     blank line on screen, the same way a newline is now a line break. Leading
+     blanks are the one exception: nothing has been emitted for them to
+     separate, so a stray newline at the top of a file does not push the
+     document down. */
   const put = (node, line) => {
-    if (md.firstChild && blanks > 1) {
+    if (md.firstChild && blanks > 0) {
       const sp = el("div", "bgap");
       sp.setAttribute("aria-hidden", "true");
-      sp.style.height = "calc(" + (blanks - 1) + " * var(--d-font) * var(--d-lh))";
+      sp.style.height = "calc(" + blanks + " * var(--d-font) * var(--d-lh))";
       md.appendChild(sp);
     }
     blanks = 0;
@@ -205,7 +229,7 @@ export function renderPreview(doc, host) {
         i++;
       }
       const q = el("blockquote");
-      q.innerHTML = inline(buf.join(" "));
+      q.innerHTML = lineSpans(buf, start);
       put(q, start);
       continue;
     }
@@ -254,7 +278,7 @@ export function renderPreview(doc, host) {
       i++;
     }
     const p = el("p");
-    p.innerHTML = inline(buf.join(" "));
+    p.innerHTML = lineSpans(buf, start);
     put(p, start);
   }
 
