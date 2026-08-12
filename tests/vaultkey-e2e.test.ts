@@ -33,7 +33,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, type Page } from "puppeteer-core";
 import * as age from "age-encryption";
-import { dropVault, makeVault, startServer, type TestServer } from "./helpers";
+import { dropVault, makeVault, sleep, startServer, type TestServer } from "./helpers";
 import { launchTestBrowser, newAppPage, waitForApp } from "./browser";
 
 const OLD_PASS = "correct horse battery staple cardinal tundra";
@@ -616,7 +616,18 @@ describe("vault key — the change itself, proved out of band", () => {
     });
     await waitForApp(page, 25000);
     await page.waitForSelector("#doc .secret", { timeout: 15000 });
-    await page.click("#doc .secret .secret-bar button.primary");
+    /* the doc re-renders as SSE catches up with the reload, which detaches the
+       node between the selector resolving and the click landing — re-query
+       instead of racing the renderer */
+    for (let tries = 0; ; tries++) {
+      try {
+        await page.click("#doc .secret .secret-bar button.primary");
+        break;
+      } catch (e) {
+        if (tries >= 4) throw e;
+        await sleep(250);
+      }
+    }
     await page.waitForFunction(() => document.getElementById("ppVeil")!.classList.contains("show"), { timeout: 8000 });
 
     await page.type("#ppInput", OLD_PASS);
