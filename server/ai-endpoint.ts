@@ -212,8 +212,8 @@ export class AiEndpoint {
 
     /* `effort` is REPEATABLE. Research §7.4 spells the descent out as
        max → xhigh → high → drop `reasoning`, but a single-shot rung meant a
-       gateway that supports only none|low|medium|high (the AI gateway — the
-       shipped default base URL) went max → xhigh → reasoning-off, never trying
+       gateway that supports only none|low|medium|high (a common gateway
+       surface) went max → xhigh → reasoning-off, never trying
        `high`, the one value it accepts. Walk the scale one level per 400 and
        only record the rung — i.e. hand the ladder on to `reasoning` — once the
        scale has bottomed out. */
@@ -436,7 +436,7 @@ export class AiEndpoint {
   /**
    * Probe at boot (server/index.ts), NOT awaited.
    *
-   * Without this the shipped default endpoint was never verified at all: the
+   * Without this a boot-time-configured endpoint was never verified at all: the
    * probe only ran from PUT /api/settings, and only when `ai.baseUrl`/`ai.model`
    * /`ai.apiKey` actually CHANGED. The intended initial-setup path — a
    * hand-written `settings.toml` whose credential `load()` absorbs at boot —

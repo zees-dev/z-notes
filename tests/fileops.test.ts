@@ -1030,6 +1030,37 @@ describe("PATCH /api/docs — a name that cannot survive a [[link]] is refused (
       await s.stop();
     }
   }, 60000);
+
+  test("a folder is refused that name whether or not it holds docs — empty is not a loophole", async () => {
+    const V = makeVault({
+      "full/inside.md": "# Inside\n\nthe doc\n",
+      "shed/photo.png": "PNG-PLACEHOLDER-BYTES\n",
+    });
+    orphanVaults.push(V);
+    const s = await startServer({ vault: V });
+    try {
+      const made = await s.api("POST", "/api/docs", { path: "hollow", type: "folder" });
+      expect(`POST an empty folder → ${made.status}`).toBe("POST an empty folder → 201");
+      /* the name POST refuses to mint — a rename must not be the way in */
+      const post = await s.api("POST", "/api/docs", { path: "x]]y", type: "folder" });
+      expect(`POST x]]y → ${post.status} ${post.body?.error}`).toBe("POST x]]y → 400 bad-path");
+
+      /* `hollow` has no docs at all and `shed` only a `.png`, so neither has a
+         mapping to check: the guard used to pass them and mint a dead zone
+         nothing could ever be created in or moved into. */
+      const refusals: string[] = [];
+      for (const from of ["full", "shed", "hollow"]) {
+        const r = await patchDoc(s, from, { to: "x]]y" });
+        expect(`${from} → x]]y: ${r.status} ${r.body?.error}`).toBe(`${from} → x]]y: 400 bad-path`);
+        expect(`${from} is still there: ${vaultHas(V, from)}`).toBe(`${from} is still there: true`);
+        refusals.push(r.text);
+      }
+      expect(`x]]y was never created: ${!vaultHas(V, "x]]y")}`).toBe("x]]y was never created: true");
+      expect(`distinct refusal bodies: ${new Set(refusals).size}`).toBe("distinct refusal bodies: 1");
+    } finally {
+      await s.stop();
+    }
+  }, 60000);
 });
 
 describe("PATCH /api/docs — a case-only rename really reaches git", () => {

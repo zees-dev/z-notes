@@ -375,8 +375,15 @@ export function buildDiff(files: FileImage[]): { diff: Array<{ marker: string; t
   const diff: Array<{ marker: string; text: string }> = [];
   let added = 0;
   let removed = 0;
+  /* EVERY row goes through here: per-file headers and the un-renderable-diff
+     note are rows too, so an ungated one grows a truncated multi-file diff by
+     one row per remaining file. `added`/`removed` stay whole-proposal totals
+     and are counted outside the cap. */
+  const push = (marker: string, text: string) => {
+    if (diff.length < MAX_DIFF_LINES) diff.push({ marker, text });
+  };
   for (const f of files) {
-    if (files.length > 1) diff.push({ marker: " ", text: `— ${f.path} —` });
+    if (files.length > 1) push(" ", `— ${f.path} —`);
     /* THE TIMEOUT IS LOAD-BEARING, not tidiness. Myers is O(N·D), and `f.post`
        is a post-image the MODEL wrote — a `rewrite` of a long note is a
        perfectly ordinary request whose two sides share almost no lines, which
@@ -394,7 +401,7 @@ export function buildDiff(files: FileImage[]): { diff: Array<{ marker: string; t
          edits are already applied to `f.post` and are what Accept writes. So a
          diff that cannot be computed in time costs the preview, not the edit,
          and saying so beats a silent empty hunk list. */
-      diff.push({ marker: " ", text: `— ${f.path}: diff too large to render; the edit itself is unaffected —` });
+      push(" ", `— ${f.path}: diff too large to render; the edit itself is unaffected —`);
       continue;
     }
     for (const h of patch.hunks) {
@@ -405,10 +412,12 @@ export function buildDiff(files: FileImage[]): { diff: Array<{ marker: string; t
         if (marker === "-") removed++;
         // a CRLF doc yields rows ending in a literal CR, which the diff card
         // renders raw — the row is display text, not bytes
-        if (diff.length < MAX_DIFF_LINES) diff.push({ marker, text: line.slice(1).replace(/\r$/, "") });
+        push(marker, line.slice(1).replace(/\r$/, ""));
       }
     }
   }
+  // the one row allowed past the cap: it fires at most once, and only to say
+  // the cap was hit
   if (diff.length >= MAX_DIFF_LINES) diff.push({ marker: " ", text: "… diff truncated" });
   return { diff, added, removed };
 }

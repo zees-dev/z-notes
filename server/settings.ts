@@ -112,12 +112,13 @@ export const DEFAULTS = {
      never enforces it — it only publishes it, and the worker applies it. */
   secrets: { idleLockMinutes: 15, hiddenLockMinutes: 5, sessionHours: 8, clipboardClearSeconds: 30 },
   ai: {
-    /* A neutral, public default: any OpenAI-compatible endpoint works (the
-       relay speaks POST {baseUrl}/responses), and a self-hosted gateway is
-       configured in settings.toml — see deploy/k3s/20-deployment.yaml for the
-       in-cluster shape. HTTPS because the relay sends the API key on every
-       call. Nothing is probed or sent until a key is configured. */
-    baseUrl: "https://api.openai.com/v1",
+    /* NO default endpoint, deliberately. The boot probe and the relay both gate
+       on (baseUrl && apiKey), so any non-empty default here would fire the
+       operator's key at a host they never chose the moment they set only
+       `ai.apiKey`. Empty means unconfigured: the probe skips and the relay
+       refuses with `ai-unconfigured`. Any OpenAI-compatible endpoint works —
+       the relay speaks POST {baseUrl}/responses. */
+    baseUrl: "",
     model: "gpt-5",
     effort: "high",
     maxOutputTokens: 32_000,
@@ -1241,7 +1242,8 @@ const KEY_DOC: Record<string, string> = {
   "secrets.hiddenLockMinutes": "Lock the vault after the tab has been hidden this long.",
   "secrets.sessionHours": "Hard ceiling on one unlocked session, activity or not.",
   "secrets.clipboardClearSeconds": "Clear a copied secret from the clipboard after this long.",
-  "ai.baseUrl": "OpenAI-compatible endpoint (POST {baseUrl}/responses); http:// or https:// only.",
+  "ai.baseUrl":
+    "OpenAI-compatible endpoint you supply (POST {baseUrl}/responses); http:// or https:// only. Empty means the AI relay is off.",
   "ai.model": "Model id, as the endpoint names it.",
   "ai.effort": "Reasoning effort. The UI offers low | medium | high; an endpoint may accept more.",
   "ai.maxOutputTokens": "Cap on one reply.",

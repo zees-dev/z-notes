@@ -2,7 +2,7 @@
 #
 # Three jobs, run in parallel:
 #   hygiene  — bun-only toolchain and no disabled tests (seconds, no install)
-#   gates    — the five SPEC §11 acceptance gates, one named step each
+#   gates    — the six acceptance gates (`bun run gates`), one named step each
 #   suite    — the whole `bun test` run, so nothing outside the gates rots
 #
 # Bun-only by construction: oven-sh/setup-bun + `bun install --frozen-lockfile`.
@@ -148,25 +148,31 @@ jobs:
           git config --global user.name "z-notes CI"
           git config --global init.defaultBranch main
 
-      - name: Gate 1/5 — round-trip (tests/roundtrip.test.ts)
+      - name: Gate 1/6 — round-trip (tests/roundtrip.test.ts)
         timeout-minutes: 3
         run: bun test tests/roundtrip.test.ts
 
-      - name: Gate 2/5 — reconcile (tests/reconcile.test.ts)
+      - name: Gate 2/6 — reconcile (tests/reconcile.test.ts)
         timeout-minutes: 3
         run: bun test tests/reconcile.test.ts
 
-      - name: Gate 3/5 — LIFO (tests/ai.test.ts)
+      - name: Gate 3/6 — LIFO (tests/ai.test.ts)
         timeout-minutes: 5
         run: bun test tests/ai.test.ts
 
-      - name: Gate 4/5 — leak canary (tests/leak.test.ts)
+      - name: Gate 4/6 — leak canary (tests/leak.test.ts)
         timeout-minutes: 3
         run: bun test tests/leak.test.ts
 
-      - name: Gate 5/5 — parity (tests/e2e.test.ts)
+      - name: Gate 5/6 — parity (tests/e2e.test.ts)
         timeout-minutes: 5
         run: bun test tests/e2e.test.ts
+
+      # a mermaid fence is untrusted input (ADR 0010) — its hardening is the one
+      # thing in this repo that must not regress quietly
+      - name: Gate 6/6 — mermaid fence (tests/mermaid-e2e.test.ts)
+        timeout-minutes: 5
+        run: bun test tests/mermaid-e2e.test.ts
 
   # ---------------------------------------------------------------------------
   suite:

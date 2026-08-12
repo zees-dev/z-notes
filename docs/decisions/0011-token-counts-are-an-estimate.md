@@ -33,7 +33,7 @@ is advisory:
 The real limits are enforced upstream by the endpoint, which answers an
 over-window request with an error `runTurn` already handles. And exactness was
 conditional anyway: `ai.model` is deliberately un-enumerated so the relay can
-point at Claude or Gemini through the AI gateway, for which `o200k_base` is itself
+point at Claude or Gemini through an OpenAI-compatible gateway, for which `o200k_base` is itself
 just a heuristic.
 
 The old implementation made the case itself — its own `catch` block already

@@ -49,7 +49,7 @@
    ============================================================ */
 
 import { dirname, resolve } from "node:path";
-import { mkdir, readdir, rename, rm } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { safePath, znotesDir, type Vault } from "./vault.ts";
 import { TRASH_RETENTION_DEFAULT_DAYS } from "./settings.ts";
 
@@ -441,9 +441,12 @@ export class Trash {
    * (API.md § Trash), and is what `POST /api/trash/purge` calls with no body.
    *
    * An entry whose `meta.json` is unreadable is swept on the SAME clock, using
-   * the directory's mtime — it can never be restored, so leaving it forever
-   * would make a crashed write permanent litter, but deleting it on sight would
-   * throw away an entry that is merely mid-checkout.
+   * the ENTRY DIRECTORY's mtime — it can never be restored, so leaving it
+   * forever would make a crashed write permanent litter, but deleting it on
+   * sight would throw away an entry that is merely mid-checkout (`git pull`
+   * lays down `files/` before `meta.json`, so a missing record is a NORMAL
+   * transient state). An entry we cannot date at all is left alone: unreadable
+   * must never mean infinitely old, or one racing stat purges live bytes.
    */
   async sweep(): Promise<{ purged: string[]; entryPaths: string[] }> {
     const cutoff = Date.now() - this.retentionDays() * DAY_MS;
@@ -453,10 +456,10 @@ export class Trash {
       if (meta) at = Date.parse(meta.deletedAt);
       else {
         const dir = trashEntryDir(this.vault.root, id)!;
-        at = await Bun.file(resolve(dir, "meta.json"))
-          .stat()
+        at = await stat(dir)
           .then((s) => s.mtimeMs)
-          .catch(() => 0);
+          .catch(() => NaN);
+        if (!Number.isFinite(at)) return false;
       }
       return at <= cutoff;
     });

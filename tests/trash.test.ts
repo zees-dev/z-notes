@@ -8,7 +8,7 @@
    ============================================================ */
 
 import { describe, test, expect, afterAll } from "bun:test";
-import { readFileSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { encPath, readVaultText, startServer, vaultHas, waitUntil, type TestServer } from "./helpers";
 
@@ -134,5 +134,29 @@ describe("real trash storage and routes", () => {
     const invalid = await s.api("PUT", "/api/settings", { trash: { retentionDays: 0 } });
     expect(invalid.status).toBe(400);
     expect(invalid.body.error).toBe("bad-retention-days");
+  }, 60000);
+
+  test("an entry without meta.json is dated by its directory, not purged on sight", async () => {
+    const s = await server({ "orphan.md": "# Orphan\n", "keep.md": "# Keep\n" });
+    expect((await del(s, "orphan.md")).status).toBe(204);
+    const entry = (await s.get("/api/trash")).body.entries[0];
+    const dir = join(s.vault, ".znotes", "trash", entry.id);
+
+    /* The mid-checkout shape: `git pull` has laid down files/ and not yet
+       meta.json. The bytes are the only live copy — the sweep must not take
+       them just because the record is momentarily missing. */
+    rmSync(join(dir, "meta.json"));
+    const kept = await s.api("POST", "/api/trash/purge", {});
+    expect(kept.status).toBe(200);
+    expect(kept.body.purged).toEqual([]);
+    expect(vaultHas(s.vault, `.znotes/trash/${entry.id}/files/orphan.md`)).toBe(true);
+
+    // same entry, now older than the window: unrestorable litter, and swept
+    const old = new Date(Date.now() - 10 * 86_400_000);
+    utimesSync(dir, old, old);
+    const swept = await s.api("POST", "/api/trash/purge", {});
+    expect(swept.status).toBe(200);
+    expect(swept.body.purged).toEqual([entry.id]);
+    expect(vaultHas(s.vault, `.znotes/trash/${entry.id}`)).toBe(false);
   }, 60000);
 });

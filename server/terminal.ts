@@ -56,7 +56,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { CommandRow, type TerminalIndex } from "./db.ts";
+import type { CommandRow, TerminalIndex } from "./db.ts";
 import type { Settings } from "./settings.ts";
 import { sseResponse } from "./sse.ts";
 import { ARMOR_BEGIN, ARMOR_CANARY, ARMOR_END, hasSecrets, type Vault } from "./vault.ts";

@@ -189,11 +189,11 @@ function parkCorruptIndex(file: string): string | null {
      terminal.*            terminal.ts
    getMeta/setMeta appear in a slice only when that module owns keys. */
 
-export type WatchIndex = Pick<Index, "allFileMeta" | "upsertFile" | "removeFile">;
+export type WatchIndex = Pick<Index, "allFileMeta" | "upsertFile" | "removeFile" | "touchFileStat">;
 export type AiIndex = Pick<
   Index,
   | "getMeta" | "setMeta" | "nextSeq"
-  | "file" | "allFiles" | "allFileMeta"
+  | "file" | "allFiles" | "allFileMeta" | "ftsSnippets"
   | "activeSession" | "createSession" | "setSessionContext" | "messages" | "addMessage"
   | "addProposal" | "proposal" | "proposals" | "stack" | "updateProposal"
 >;
@@ -393,6 +393,21 @@ export class Index {
     return out.slice(0, limit);
   }
 
+  /**
+   * FTS5 hits for an ALREADY-SANITIZED MATCH expression, one snippet per doc —
+   * ai.ts's context assembly (research §6.2). Raw user text is not a valid
+   * expression; building one is the caller's job, and so is deciding what an
+   * expression FTS5 refuses to parse costs, because this throws.
+   */
+  ftsSnippets(expr: string, limit: number): Array<{ path: string; snip: string }> {
+    return this.db
+      .query<{ path: string; snip: string }, { expr: string; limit: number }>(
+        `SELECT path, snippet(files_fts, 1, '', '', '…', 14) AS snip
+           FROM files_fts WHERE files_fts MATCH $expr ORDER BY rank LIMIT $limit`
+      )
+      .all({ expr, limit });
+  }
+
   allFileMeta(): FileRowMeta[] {
     return this.db.query<FileRowMeta, []>(`SELECT ${META_COLUMNS} FROM files ORDER BY path`).all();
   }
@@ -421,6 +436,14 @@ export class Index {
       for (const target of links) ins.run({ src: row.path, target });
     });
     tx();
+  }
+
+  /** Refresh only the (size, mtimeMs) gate watch.ts stats against — the bytes
+      are unchanged, so rev/hash/body/fts/backlinks must all stay as they are. */
+  touchFileStat(path: string, size: number, mtimeMs: number) {
+    this.db
+      .query("UPDATE files SET size = $size, mtimeMs = $mtimeMs WHERE path = $path")
+      .run({ path, size, mtimeMs });
   }
 
   removeFile(path: string) {
@@ -686,17 +709,22 @@ export class Index {
   /** The most recent `limit` records, oldest first — chat order.
       `sessionId` narrows to one session's commands (the AI context path:
       "new session" means the previous session's transcripts stay out of the
-      next session's prompt). */
+      next session's prompt).
+
+      Ties inside one millisecond break on `rowid`, not `id`: ids end in a
+      variable-length base36 sequence (seq 35 = "z", seq 36 = "10"), so they
+      do not sort lexicographically in creation order. rowid is assigned on
+      insert and this process is the only writer. */
   commands(limit: number, sessionId?: string): CommandRow[] {
     const n = Math.max(1, Math.min(200, Math.floor(limit) || 30));
     const rows = sessionId
       ? this.db
           .query<RawCommandRow, { n: number; sessionId: string }>(
-            "SELECT * FROM terminal_commands WHERE sessionId = $sessionId ORDER BY createdAt DESC, id DESC LIMIT $n"
+            "SELECT * FROM terminal_commands WHERE sessionId = $sessionId ORDER BY createdAt DESC, rowid DESC LIMIT $n"
           )
           .all({ n, sessionId })
       : this.db
-          .query<RawCommandRow, { n: number }>("SELECT * FROM terminal_commands ORDER BY createdAt DESC, id DESC LIMIT $n")
+          .query<RawCommandRow, { n: number }>("SELECT * FROM terminal_commands ORDER BY createdAt DESC, rowid DESC LIMIT $n")
           .all({ n });
     return rows.map(commandOut).reverse();
   }

@@ -123,7 +123,7 @@ export type Reply =
           before the function_call — what a real store:false run does, and what
           the stateless recipe (research §2.2) says must be replayed on retry */
       encryptedReasoning?: string;
-      /** MEASURED against the live the AI gateway gateway (gpt-5): a real
+      /** MEASURED against a live OpenAI-compatible gateway (gpt-5): a real
           reasoning turn also emits `response.reasoning_summary_part.added/.done`
           around the summary deltas, carries `content: []` on the reasoning item,
           and puts `obfuscation` on every `output_text.delta`. None of it is in
@@ -238,7 +238,7 @@ export interface MockUpstream {
   /**
    * 400 on any request whose `reasoning.effort` is one of these VALUES — a
    * gateway that supports the parameter but caps the scale (research §2.3:
-   * the AI gateway advertises only none|low|medium|high). Distinct from
+   * some gateways advertise only none|low|medium|high). Distinct from
    * rejectParam, which fires on the key's mere presence.
    */
   rejectEffort(values: string[]): void;
@@ -492,7 +492,7 @@ export async function startMockUpstream(): Promise<MockUpstream> {
     ev("response.created", { response: { id: respId, object: "response", status: "in_progress" } });
     ev("response.in_progress", { response: { id: respId, object: "response", status: "in_progress" } });
 
-    /* `cache_write_tokens` is MEASURED from the live the AI gateway gateway, which
+    /* `cache_write_tokens` is MEASURED from a live OpenAI-compatible gateway, which
        reports it alongside `cached_tokens`. The relay must keep reading only the
        two keys it knows and pass the rest by. */
     const usageOf = (u?: Usage) => ({

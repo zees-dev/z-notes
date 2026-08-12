@@ -15,7 +15,7 @@
    ============================================================ */
 
 import { watch, type FSWatcher } from "node:fs";
-import type { type WatchIndex, FileRow } from "./db.ts";
+import type { WatchIndex, FileRow } from "./db.ts";
 import { byteLength,
   extractLinks,
   hasSecrets,
@@ -180,7 +180,7 @@ export class Reconciler {
       const rev = revOf(doc.markdown);
       if (prev && prev.rev === rev) {
         // identical bytes: refresh the stat gate, emit nothing
-        this.touchStat(path, doc.size, doc.mtimeMs);
+        this.index.touchFileStat(path, doc.size, doc.mtimeMs);
         continue;
       }
 
@@ -234,11 +234,5 @@ export class Reconciler {
     const changes = [...departed, ...present];
     for (const c of changes) this.emit(c);
     return changes;
-  }
-
-  private touchStat(path: string, size: number, mtimeMs: number) {
-    this.index.db
-      .query("UPDATE files SET size = $size, mtimeMs = $mtimeMs WHERE path = $path")
-      .run({ path, size, mtimeMs });
   }
 }

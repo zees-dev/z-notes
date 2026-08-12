@@ -133,9 +133,12 @@ const onSettings = () =>
 /** type into a text control the way a user does: clear, type, blur */
 async function typeInto(sel: string, value: string) {
   await page.click(sel);
+  /* the clear must fire input like a user's select-all + delete does —
+     page.type() fires nothing when `value` is empty */
   await page.evaluate((s) => {
     const i = document.querySelector(s as string) as HTMLInputElement;
     i.value = "";
+    i.dispatchEvent(new Event("input", { bubbles: true }));
   }, sel);
   await page.type(sel, value);
 }

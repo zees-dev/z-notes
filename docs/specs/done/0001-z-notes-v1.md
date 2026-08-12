@@ -129,7 +129,7 @@ Single-user markdown note-tasking app. Files on disk are the source of truth; th
 
 ### 8. AI
 
-- Pluggable OpenAI-compatible endpoint; settings: base URL, key (sqlite), model (default `gpt-5`), effort (default `high`). Backend relays `POST {base}/v1/responses` with SSE; key never reaches the browser. Send `reasoning:{effort,summary:"auto"}`, `store:false`; capability probe at settings-save; documented fallback ladder to chat-completions.
+- Pluggable OpenAI-compatible endpoint; settings: base URL (unset by default — the operator supplies their own endpoint), key (sqlite), model (default `gpt-5`), effort (default `high`). Backend relays `POST {base}/v1/responses` with SSE; key never reaches the browser. Send `reasoning:{effort,summary:"auto"}`, `store:false`; capability probe at settings-save; documented fallback ladder to chat-completions.
 - One global assistant; context = current doc (server-assembled from on-disk bytes → secrets structurally excluded) + what the user attaches. Sessions resettable; message count + token estimate visible; history in sqlite.
 - Proposals: single strict `propose_edits` function tool, anchored search/replace spans; ops `replace | insert_after | create | rewrite` (no delete/rename). Server validates against on-disk bytes (unique anchor, path confinement, no intersection with age blocks) before the UI offers Accept; failures feed back for ≤2 in-turn retries. Plain replies carry `proposal: null`.
 - Accept → apply + sqlite pre-image + one git commit per proposal. Revert strictly LIFO, enforced server-side (409 `not-stack-top`).

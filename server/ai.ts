@@ -30,8 +30,9 @@
       under an applied proposal is never clobbered (research §5).
 
    Wire protocol: POST {settings.ai.baseUrl}/responses, streamed. Responses (not
-   chat/completions) because gpt-5-* hard-rejects function tools combined with
-   any reasoning effort but `none` there — and this app needs both (research §2).
+   chat/completions) because newer reasoning models on some OpenAI-compatible
+   gateways hard-reject function tools combined with any reasoning effort but
+   `none` on chat/completions — and this app needs both (research §2).
    ============================================================ */
 
 import { existsSync } from "node:fs";
@@ -45,7 +46,7 @@ import { OPS,
   type FileImage,
   type Rejection } from "./ai-edits.ts";
 import { AiEndpoint, LADDER, RUNG_LABEL, UNRECOGNIZED, type AiStatus } from "./ai-endpoint.ts";
-import type { type AiIndex, ProposalRow } from "./db.ts";
+import type { AiIndex, ProposalRow } from "./db.ts";
 import type { GitSync } from "./git.ts";
 import type { Settings } from "./settings.ts";
 import { parseSseFrame, sseBlocks, sseResponse } from "./sse.ts";
@@ -642,12 +643,7 @@ export class AI {
     const expr = terms.map((t) => `"${t.replace(/"/g, "")}"`).join(" OR ");
     let rows: Array<{ path: string; snip: string }> = [];
     try {
-      rows = this.deps.index.db
-        .query<{ path: string; snip: string }, { expr: string; limit: number }>(
-          `SELECT path, snippet(files_fts, 1, '', '', '…', 14) AS snip
-             FROM files_fts WHERE files_fts MATCH $expr ORDER BY rank LIMIT $limit`
-        )
-        .all({ expr, limit });
+      rows = this.deps.index.ftsSnippets(expr, limit);
     } catch {
       return ""; // a query FTS5 will not parse is not worth failing a turn over
     }
@@ -1543,28 +1539,37 @@ export class AI {
   }
 
   async revert(id: string): Promise<{ status: number; body: unknown }> {
-    const row = this.deps.index.proposal(id);
-    if (!row) return { status: 404, body: { error: "not-found", message: `No proposal ${id}` } };
-    if (row.state !== "applied" || row.stackIndex == null) {
-      return { status: 409, body: { error: "not-applied", message: "That proposal is not on the change stack." } };
-    }
-    const stack = this.deps.index.stack();
-    const top = stack[stack.length - 1];
-    if (!top || top.id !== id) {
-      // LIFO is the SERVER's rule, not the UI's (SPEC §11, API.md)
-      return {
-        status: 409,
-        body: {
-          error: "not-stack-top",
-          requires: top.id,
-          requiresIndex: top.stackIndex,
-          message: `revert #${top.stackIndex} first`,
-        },
-      };
+    if (!this.deps.index.proposal(id)) {
+      return { status: 404, body: { error: "not-found", message: `No proposal ${id}` } };
     }
 
-    const files: FileImage[] = JSON.parse(row.files);
     return this.deps.recon.lock(async () => {
+      /* The stack-top check and the write MUST be one critical section, for the
+         same reason accept() re-reads its row inside the lock: an accept that
+         landed between a read outside and the write in here pushed a NEW entry
+         onto the stack, so this revert would unwind the second-from-top —
+         exactly the non-LIFO restore the guard exists to refuse. */
+      const row = this.deps.index.proposal(id);
+      if (!row) return { status: 404, body: { error: "not-found", message: `No proposal ${id}` } };
+      if (row.state !== "applied" || row.stackIndex == null) {
+        return { status: 409, body: { error: "not-applied", message: "That proposal is not on the change stack." } };
+      }
+      const stack = this.deps.index.stack();
+      const top = stack[stack.length - 1];
+      if (!top || top.id !== id) {
+        // LIFO is the SERVER's rule, not the UI's (SPEC §11, API.md)
+        return {
+          status: 409,
+          body: {
+            error: "not-stack-top",
+            requires: top.id,
+            requiresIndex: top.stackIndex,
+            message: `revert #${top.stackIndex} first`,
+          },
+        };
+      }
+      const files: FileImage[] = JSON.parse(row.files);
+
       /* re-hash guard (research §5): the file must still be exactly what this
          proposal wrote. Anything else and restoring the pre-image would destroy
          work this app never made. */

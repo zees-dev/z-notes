@@ -361,11 +361,17 @@ export class DocStore {
        the prose of every referrer, the renderer paints a broken pill and dumps
        the tail as text, and `LINK_RE` can never see the mangled occurrence again
        — renaming back answers 200 with `backlinksUpdated:0` and repairs nothing.
-       Refuse the move instead; nothing has been written yet. */
-    for (const dest of mapping.values()) {
+       Refuse the move instead; nothing has been written yet.
+
+       A folder's own destination is checked alongside its subtree's: the
+       mapping holds only the `.md` docs under it, so an EMPTY folder (or one
+       carrying only non-`.md` files) had nothing to check and could take a name
+       `POST /api/docs` refuses to mint — a dead zone nothing can be created in
+       or moved into. Empty and non-empty folders are refused identically. */
+    for (const dest of kind === "dir" ? [to, ...mapping.values()] : mapping.values()) {
       if (!linkSafeTarget(dest.replace(/\.md$/i, "")) || !linkSafeTarget(slugOf(dest))) {
         return fail(400, "bad-path", {
-          message: `${dest} cannot be a doc name: "]" and line breaks break out of the [[link]] that would point at it.`,
+          message: `${dest} cannot be a name: "]" and line breaks break out of the [[link]] that would point at it.`,
         });
       }
     }

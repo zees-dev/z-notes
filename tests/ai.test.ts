@@ -1445,9 +1445,8 @@ describe("custody — an upstream that echoes the key back never re-publishes it
     const s = await newServer({ seed: { "inbox.md": "# Inbox\n\nhello\n" } });
     await configure(s, m);
 
-    /* the exact shape every OpenAI-compatible gateway uses — and the shipped
-       default baseUrl is a third-party local proxy whose error text z-notes
-       does not control */
+    /* the exact shape every OpenAI-compatible gateway uses — and the endpoint
+       is operator-supplied, so its error text is text z-notes does not control */
     m.reset();
     m.setDefault(
       reply.http(401, {
@@ -1700,7 +1699,7 @@ describe("protocol — the degradation ladder only descends on a parameter refus
     const m = await newMock();
     const s = await newServer({ seed: { "inbox.md": "# Inbox\n\nhello\n" } });
     /* a gateway that supports only none|low|medium|high — exactly what research
-       §2.3 documents for the AI gateway, the shipped default base URL */
+       §2.3 documents for an OpenAI-compatible gateway */
     await configure(s, m, { effort: "max" });
 
     m.reset();
@@ -2171,9 +2170,8 @@ describe("events — reverting an op:create attributes the removal to the propos
 /* ============================================================
    Endpoint status — the statusbar's only source of truth.
 
-   Everything here is a REGRESSION of behaviour measured against the live
-   the AI gateway gateway the app ships pointed at (http://127.0.0.1:8080/v1,
-   gpt-5). The two findings these pin:
+   Everything here is a REGRESSION of behaviour measured against a live
+   OpenAI-compatible gateway. The two findings these pin:
 
      1. the capability probe ran ONLY when PUT /api/settings changed the base
         URL, model or key — so a vault set up the intended way (a hand-written
@@ -2386,7 +2384,7 @@ describe("endpoint status — probed at boot, and truthful between probes", () =
 /* ============================================================
    Protocol — the shapes the LIVE gateway actually emits.
 
-   Measured against the AI gateway/gpt-5 and modelled by
+   Measured against a live OpenAI-compatible gateway and modelled by
    mock-upstream's `realGateway` option: reasoning items carrying
    `content: []` AND `encrypted_content`, `reasoning_summary_part.added/.done`
    bracketing the summary deltas, and the reasoning item re-listed on
