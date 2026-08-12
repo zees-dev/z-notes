@@ -112,15 +112,12 @@ export const DEFAULTS = {
      never enforces it — it only publishes it, and the worker applies it. */
   secrets: { idleLockMinutes: 15, hiddenLockMinutes: 5, sessionHours: 8, clipboardClearSeconds: 30 },
   ai: {
-    /* The the AI gateway instance now lives in the k3s cluster, exposed by Traefik
-       as `ai-proxy.internal` (namespace ai-proxy, service ai-proxy:8080). HTTPS
-       is the default rather than the LAN-cleartext http:// because the relay
-       sends the API key on every call, and the cert's issuer (K3s Local CA) is
-       already trusted on the machines that reach it. A pod running INSIDE the
-       cluster should instead be given the service DNS name — see
-       deploy/k3s/20-deployment.yaml — since `.lan` is resolved by the LAN's
-       DNS, not by CoreDNS. */
-    baseUrl: "https://ai-proxy.internal/v1",
+    /* A neutral, public default: any OpenAI-compatible endpoint works (the
+       relay speaks POST {baseUrl}/responses), and a self-hosted gateway is
+       configured in settings.toml — see deploy/k3s/20-deployment.yaml for the
+       in-cluster shape. HTTPS because the relay sends the API key on every
+       call. Nothing is probed or sent until a key is configured. */
+    baseUrl: "https://api.openai.com/v1",
     model: "gpt-5",
     effort: "high",
     maxOutputTokens: 32_000,

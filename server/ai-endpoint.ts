@@ -17,7 +17,7 @@
    ============================================================ */
 
 import type { AiIndex } from "./db.ts";
-import type { Settings } from "./settings.ts";
+import { DEFAULTS, type Settings } from "./settings.ts";
 
 const MAX_OUTPUT_TOKENS = 32_000;
 const DEFAULT_CONTEXT_BUDGET = 200_000;
@@ -173,7 +173,7 @@ export class AiEndpoint {
     return {
       baseUrl,
       apiKey: s.credential("ai.apiKey") || "",
-      model: String(s.value("ai.model", "gpt-5")),
+      model: String(s.value("ai.model", DEFAULTS.ai.model)),
       effort: String(s.value("ai.effort", "high")),
       maxOutputTokens: Number(s.value("ai.maxOutputTokens", MAX_OUTPUT_TOKENS)) || MAX_OUTPUT_TOKENS,
       budget: Number(s.value("ai.contextBudgetTokens", DEFAULT_CONTEXT_BUDGET)) || DEFAULT_CONTEXT_BUDGET,
