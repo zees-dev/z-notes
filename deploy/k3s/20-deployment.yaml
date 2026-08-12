@@ -138,18 +138,13 @@ spec:
             #
             # NOTE ON THE AI ENDPOINT: it is a SETTING, not an env var, so it
             # comes from `.znotes/settings.toml` in the mounted vault (the same
-            # value the Settings UI writes). The shipped default —
-            # `https://ai-proxy.internal/v1` — is the Traefik ingress, which is
-            # correct from a laptop on the LAN but WRONG from inside this
-            # cluster: `.lan` is resolved by the LAN's DNS, not CoreDNS, and
-            # routing pod → ingress → back into the cluster is a hairpin for no
-            # gain. A vault mounted here should set:
-            #
-            #   [ai]
-            #   baseUrl = "http://ai-proxy.ai-proxy.svc.cluster.local:8080/v1"
-            #
-            # (plain http is fine on that path: it never leaves the cluster
-            # network, and the ingress TLS exists for the LAN hop.)
+            # value the Settings UI writes). One gotcha if you point it at an
+            # AI proxy running in this same cluster: use the in-cluster Service
+            # URL (`http://<svc>.<ns>.svc.cluster.local:<port>/v1`), not the
+            # proxy's LAN ingress hostname — a LAN name is resolved by the
+            # LAN's DNS, not CoreDNS, and routing pod → ingress → back into
+            # the cluster is a TLS hairpin for no gain. Plain http is fine on
+            # that path: it never leaves the cluster network.
 
           volumeMounts:
             - name: vault

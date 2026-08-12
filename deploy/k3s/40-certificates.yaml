@@ -8,15 +8,15 @@
 # unlock UI is replaced by a badge explaining why. HTTPS is what turns the
 # secrets half of the product on.
 #
-# This cluster already runs a private CA for every app on it (ClusterIssuer
-# `selfsigned-ca-issuer` → ai-proxy-tls, homepage-tls, filebrowser-tls, …),
-# and every device on the LAN already trusts it. Minting a second, z-notes-only
-# CA (the earlier revision of this file) would have meant a second trust step
-# on every device for no gain — so this is ONE Certificate against the CA the
-# cluster already has, exactly like its neighbours.
+# If your cluster already runs a private CA that every device on the LAN
+# trusts (a ClusterIssuer shared by its other apps), issue against that instead
+# of minting a z-notes-only CA — a second CA means a second trust step on every
+# device for no gain. This file assumes such a ClusterIssuer named
+# `selfsigned-ca-issuer`; point `issuerRef` at whatever yours is called.
 #
-# The hostname is `znotes.home.arpa` because the LAN resolver already serves a
-# `*.home.arpa` wildcard pointing at the cluster — no /etc/hosts entry needed.
+# The hostname is `znotes.home.arpa` (RFC 8375's reserved name for home
+# networks — see deploy/README.md §4). If your LAN resolver serves a wildcard
+# for the cluster, use a name under that instead and skip the /etc/hosts entry.
 # =============================================================================
 ---
 apiVersion: cert-manager.io/v1

@@ -395,9 +395,9 @@ unchanged — the auto-sync pipeline's behavior is untouched.
   strength, and judging that is the owner's call. Human steps, deliberately
   not part of the implementation.
 - **Pre-open-source generalisation worth a follow-up spec**: `DEFAULTS.ai` in
-  `server/settings.ts` points at the author's cluster
-  (`https://ai-proxy.internal/v1`, model `gpt-5`) — harmless (it's just a
-  default) but worth neutralising before publication.
+  `server/settings.ts` points at the author's own AI-proxy endpoint — harmless
+  (it's just a default) but worth neutralising before publication. (Done: it
+  now defaults to `https://api.openai.com/v1`.)
 - **Why attach adopts the remote's default branch** rather than forcing
   `git.branch`: the pipeline refuses to push when the checked-out branch and
   `git.branch` disagree ("committed locally, not pushed"). Adopting at attach

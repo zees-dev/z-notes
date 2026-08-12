@@ -26,7 +26,7 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
   AI endpoint. `bun run gates` = the five acceptance suites, plus
   `mermaid-e2e` — a fence is untrusted input (ADR 0010) and its hardening is
   the one thing here that must not regress quietly.
-- `deploy/` — Dockerfile + k3s manifests. Live at https://znotes.home.arpa.
+- `deploy/` — Dockerfile + k3s manifests; `deploy/README.md` is the runbook.
 - `vault/` — NOT part of this repo. The vault is external and bring-your-own
   (ADR 0017): `ZNOTES_VAULT`, default `./vault`, gitignored local scratch.
 

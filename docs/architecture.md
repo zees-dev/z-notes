@@ -13,7 +13,7 @@ bundle of `age-encryption` at `/vendor/age.<hash>.js` (entry:
 markdown files (source of truth), `.znotes/settings.toml` (committed),
 `.znotes/index.db` (sqlite cache + credentials, never committed),
 `.znotes/identity.age` + `vault.pub` (committed keyring). Production is one k3s
-replica at https://znotes.home.arpa (`deploy/`); the replica count is a
+replica behind a private-CA TLS ingress (`deploy/`); the replica count is a
 correctness constraint, not a cost choice — see `deploy/k3s/20-deployment.yaml`.
 
 The vault is **not** part of this repo (ADR 0017) — four env vars place it and,

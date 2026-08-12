@@ -6,8 +6,8 @@ Accepted, 2026-08-08.
 
 ## Context
 
-The app is a single-user notes vault used mostly from a phone, over
-`https://znotes.home.arpa`. Added to a home screen it launched as a browser tab:
+The app is a single-user notes vault used mostly from a phone, over a
+private HTTPS hostname. Added to a home screen it launched as a browser tab:
 a URL bar over a 44px topbar, a white flash where a launch screen should be,
 and a tile made from a screenshot of whatever page Safari had last rendered.
 The responsive work (base.css §11–§13) had already made the layout right for a
