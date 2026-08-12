@@ -61,7 +61,10 @@ const linkSources = [agentsPath, ...(existsSync(join(ROOT, "docs")) ? mdFiles(jo
 const LINK = /\[[^\]]*\]\(([^)\s]+)\)/g;
 for (const src of linkSources) {
   if (!existsSync(src)) continue;
-  const text = readFileSync(src, "utf8");
+  /* code is literal here as everywhere in this repo (the rewrite planner and
+     the renderer both skip it): a `[text](url)` cited inside backticks or a
+     fence is a spelling under discussion, not a link to a file named "url" */
+  const text = readFileSync(src, "utf8").replace(/```[\s\S]*?```|`[^`\n]*`/g, "");
   for (const m of text.matchAll(LINK)) {
     const target = m[1];
     if (/^(https?:|mailto:|#)/.test(target)) continue;

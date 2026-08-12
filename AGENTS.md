@@ -65,7 +65,9 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   about, with the file ones behind a prompt (`app/history.js`). 0015 gives
   Preview the source's line structure: one newline is one line break, one blank
   line is one blank line (it amends 0001's soft-break and blank-multiplicity
-  rules), and every rendered line carries its own `[data-line]`.
+  rules), and every rendered line carries its own `[data-line]`. 0016 renders
+  external URLs (`[text](url)`, `<url>`, bare) as real new-tab anchors —
+  http(s)/mailto only; `javascript:` and everything else stays literal text.
 
 ## Workflow
 

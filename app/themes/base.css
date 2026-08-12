@@ -1006,6 +1006,19 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
 .wl.broken:hover { background: var(--warn); color: #fff; }
 .wl.broken svg { opacity: .85; }
 
+/* An EXTERNAL link — `[text](url)`, `<url>` or a bare URL (ADR 0016). It reads
+   like the web it points into: underlined, not a pill — the pill means "a doc
+   in this vault", and this is the one link that leaves it. `overflow-wrap`
+   because a bare URL is routinely wider than a phone column and the page must
+   not scroll sideways for it. */
+a.xl {
+  color: var(--wl-fg); text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  overflow-wrap: anywhere;
+  transition: color var(--dur-1), text-decoration-color var(--dur-1);
+}
+a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
+
 .cf-ico {
   width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
   background: var(--danger-soft); color: var(--danger); flex: 0 0 auto;
@@ -1427,6 +1440,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .msg.ai .bubble { background: var(--bubble-ai-bg); color: var(--bubble-ai-fg); border: var(--bubble-ai-bd); border-radius: var(--bubble-ai-radius); box-shadow: var(--sh-1); }
 .msg.ai .bubble b, .msg.ai .bubble strong { color: var(--text); font-weight: var(--w-semi); }
 .msg.user .bubble code.ic, .msg.user .bubble .wl { background: rgba(255, 255, 255, .16); color: inherit; border-color: transparent; box-shadow: none; }
+.msg.user .bubble a.xl { color: inherit; }
 .ctx-div { display: flex; align-items: center; gap: 9px; font-size: 10.5px; font-weight: 650; letter-spacing: .05em; text-transform: var(--label-transform); color: var(--muted-2); }
 .ctx-div::before, .ctx-div::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--line); }
 

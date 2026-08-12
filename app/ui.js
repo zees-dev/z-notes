@@ -210,7 +210,59 @@ export function inline(s) {
       "</a>"
     );
   });
+  /* ---------- external links (ADR 0016) ----------
+     Three spellings, three passes, one order: `[text](url)`, then `<url>`,
+     then the bare URL — each later pass must not re-link what an earlier one
+     already emitted, so all three carry the code spans AND the anchors already
+     in `h` (wikilink pills included) in their alternation. `h` is escaped, so
+     quotes cannot break out of href; the one attack that survives escaping is
+     the scheme itself, which is why only http(s) and mailto ever become an
+     anchor — a `javascript:` link stays the literal text the author typed. */
+  const EMITTED = '(<code class="ic">[\\s\\S]*?<\\/code>|<a [^>]*>[\\s\\S]*?<\\/a>)';
+  h = h.replace(
+    new RegExp(EMITTED + "|(!?)\\[([^\\]\\n]+)\\]\\(((?:\\([^()\\s]*\\)|[^()\\s])+)\\)", "g"),
+    /* `!` is image syntax this renderer does not speak — the whole spelling
+       stays literal rather than half-rendering as "!" + a link */
+    (m, done, bang, text, url) =>
+      done ? done : !bang && /^(https?:\/\/|mailto:)/i.test(url) ? extLink(url, text) : m
+  );
+  h = h.replace(new RegExp(EMITTED + "|&lt;(https?:\\/\\/[^\\s]+?)&gt;", "g"), (m, done, url) =>
+    done ? done : extLink(url, url)
+  );
+  h = h.replace(new RegExp(EMITTED + "|(https?:\\/\\/[^\\s<]+)", "g"), (m, done, url) => {
+    if (done) return done;
+    const cut = trimUrlTail(url);
+    return extLink(cut, cut) + url.slice(cut.length);
+  });
   return h;
+}
+
+const extLink = (href, label) =>
+  '<a class="xl" href="' + href + '" target="_blank" rel="noopener noreferrer">' + label + "</a>";
+
+/* A bare URL in prose drags its sentence along: "see https://x.dev/a)." has
+   matched up to the dot. Trailing punctuation is peeled off — entities first,
+   since the text is escaped and a quote arrives five characters wide — and a
+   `)` only when the URL does not own it (a Wikipedia "…_(disambiguation)" keeps
+   its close-paren because the URL also carries the open). */
+function trimUrlTail(u) {
+  for (;;) {
+    const ent = /&(amp|lt|gt|quot|#39);$/.exec(u);
+    if (ent) {
+      u = u.slice(0, -ent[0].length);
+      continue;
+    }
+    const c = u[u.length - 1];
+    if (".,;:!?".indexOf(c) >= 0 || c === "]") {
+      u = u.slice(0, -1);
+      continue;
+    }
+    if (c === ")" && u.split("(").length < u.split(")").length) {
+      u = u.slice(0, -1);
+      continue;
+    }
+    return u;
+  }
 }
 
 /* toy js/ts highlighter for fenced js|ts blocks — pattern-based only, so it
