@@ -178,7 +178,7 @@ jobs:
   suite:
     name: full suite (bun test)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -217,6 +217,8 @@ jobs:
           git config --global user.name "z-notes CI"
           git config --global init.defaultBranch main
 
+      # ~12-13 min on a laptop, similar on a 4-core runner — 10 was a squeeze
+      # that recent additions to the suite finally outgrew.
       - name: bun test
-        timeout-minutes: 10
+        timeout-minutes: 25
         run: bun test
