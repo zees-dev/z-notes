@@ -1,7 +1,7 @@
 /* ============================================================
    theming-e2e.test.ts — the two axes of the look, measured in a real browser.
 
-   SPEC §9: `data-theme` picks the stylesheet, `data-scheme` picks the palette.
+   `data-theme` picks the stylesheet, `data-scheme` picks the palette.
    Three themes × {dark, light} is six looks, and the failure mode that matters
    is not "it threw" but "it silently did nothing" — a theme whose dark block is
    missing still renders, in the light palette, and looks fine in a screenshot
@@ -22,13 +22,15 @@
 
    Density lives here too, because it is the third knob on the same surface and
    it shares the harness: the new Compact must be MEASURABLY tighter than the
-   new Comfy on real rects, and the SPEC §11 Preview/Raw container parity must
-   still hold in both.
+   new Comfy on real rects, and the Preview/Raw container parity must still
+   hold in both.
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { type Browser, type Page, type CDPSession } from "puppeteer-core";
-import { startServer, sleep, SEED_VAULT, type TestServer } from "./helpers";
+import { startServer, sleep, makeVault, SEED_VAULT, type TestServer } from "./helpers";
+import { cpSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import {
   ensureMode as setMode,
   gotoSettings,
@@ -52,7 +54,19 @@ let page: Page;
 let cdp: CDPSession;
 
 beforeAll(async () => {
-  srv = await startServer({ seed: SEED_VAULT });
+  /* the truncation test's premise is a vault path WIDER than the sidebar.
+     A laptop's mkdtemp is deep enough by accident; CI's /tmp is not — so pin
+     the premise instead of inheriting it from the runner's tmpdir shape. */
+  const deep = join(
+    makeVault({}),
+    "a-vault-path-long-enough",
+    "that-the-sidebar-sub-line",
+    "must-truncate-it-everywhere",
+    "vault"
+  );
+  mkdirSync(deep, { recursive: true });
+  cpSync(makeVault(SEED_VAULT), deep, { recursive: true });
+  srv = await startServer({ vault: deep });
   browser = await launchTestBrowser();
   page = await newAppPage(browser);
   cdp = await page.createCDPSession();
@@ -426,11 +440,19 @@ describe("theming — the scheme is resolved before the first paint", () => {
              then the root": switching targets mid-recording invents a
              transition that never happened on screen. Its computed style stays
              resolvable after it is hidden, so one series covers the whole load. */
-          const boot = document.getElementById("boot");
-          const bg = getComputedStyle(boot ?? root).backgroundColor;
-          if (bg && w.__lastBg !== bg) {
-            w.__lastBg = bg;
-            w.__bootBg.push(`${bg} @frame ${w.__frames}`);
+          /* only frames the user could have SEEN: the head stylesheets are
+             render-blocking, so until the theme <link> has a parsed sheet the
+             document has not painted — a computed value read in that window is
+             a frame that never reached the screen, and counting it invents a
+             flash slow machines never showed. */
+          const themeLink = document.getElementById("theme-css") as HTMLLinkElement | null;
+          if (themeLink?.sheet) {
+            const boot = document.getElementById("boot");
+            const bg = getComputedStyle(boot ?? root).backgroundColor;
+            if (bg && w.__lastBg !== bg) {
+              w.__lastBg = bg;
+              w.__bootBg.push(`${bg} @frame ${w.__frames}`);
+            }
           }
         }
         if (w.__frames < 90) requestAnimationFrame(tick);
@@ -562,12 +584,18 @@ describe("theming — the scheme is resolved before the first paint", () => {
        which the settings suite pins to DEFAULTS.theme. Restated here because
        this file's whole premise is "the first paint is already correct".
 
-       WAITED FOR, not sampled: the test above restores the defaults with a
-       `PUT` and this page learns about it over `settings-changed`, so reading
-       the attribute on the next line raced an SSE round trip that had not
-       landed yet (seen failing under a loaded machine with "compact", the value
-       the previous test wrote). The timeout still fails on a value that never
-       arrives, so the assertion is unchanged in what it can catch. */
+       WAITED FOR, not sampled: the defaults are restored with a `PUT` and this
+       page learns about it over `settings-changed`, so reading the attribute
+       on the next line raced an SSE round trip that had not landed yet (seen
+       failing under a loaded machine with "compact"). The PUT is issued HERE,
+       not inherited from the previous test — a failure there must not cascade
+       into this one. The timeout still fails on a value that never arrives, so
+       the assertion is unchanged in what it can catch. */
+    await srv.api("PUT", "/api/settings", {
+      theme: DEFAULTS.theme,
+      density: DEFAULTS.density,
+      colorScheme: DEFAULTS.colorScheme,
+    });
     await page.waitForFunction(
       (want) => document.documentElement.getAttribute("data-density") === want,
       { timeout: 8000 },
@@ -785,10 +813,10 @@ describe("density — the rescale is measurable, in every theme", () => {
   }, 180000);
 
   test("Preview/Raw parity survives the rescale, in every theme × density × breakpoint", async () => {
-    /* SPEC §11's gate runs on the default theme. The rescale touched all three
-       stylesheets, and a theme that re-states a density token in only one of
-       the two modes breaks parity in that theme alone — invisible to a gate
-       that never switches themes.
+    /* the parity gate in e2e.test.ts runs on the default theme only. The
+       rescale touched all three stylesheets, and a theme that re-states a
+       density token in only one of the two modes breaks parity in that theme
+       alone — invisible to a gate that never switches themes.
 
        The narrow breakpoint is here because the meta line above the document is
        where the two modes differ in CONTENT (the mode note is longer in Raw):

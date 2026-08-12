@@ -1,5 +1,5 @@
 /* ============================================================
-   ai.test.ts — PHASE 4 acceptance gate (SPEC §8, §3 delta 4, §11).
+   ai.test.ts — PHASE 4 acceptance gate: the AI relay.
 
    Same rule as every other phase file: nothing here reaches into the backend's
    internals. It knows only the fixed contract —
@@ -8,11 +8,11 @@
        from research §7, Authorization from sqlite, key never client-side;
      - POST /api/ai/messages is an event stream of NORMALIZED app events
        (research §3.2) whose `done` payload is exactly the old non-streaming
-       JSON from API.md, so the UI's final state is unchanged;
+       JSON from the contract, so the UI's final state is unchanged;
      - `propose_edits` is validated server-side against ON-DISK BYTES before a
        proposal exists at all (research §4.4), with ≤2 in-turn retries;
-     - accept/revert/reject behave exactly as API.md says, with LIFO enforced
-       server-side and pre-images restored byte-for-byte (SPEC §11);
+     - accept/revert/reject behave exactly as the contract says, with LIFO enforced
+       server-side and pre-images restored byte-for-byte;
      - one git commit per accepted proposal, trailers and all;
      - the API key reaches the upstream and nothing else.
 
@@ -312,7 +312,7 @@ describe("ai relay — the request that goes upstream", () => {
     expect(typeof req.body.instructions === "string" && req.body.instructions.length > 40).toBe(true);
   }, 30000);
 
-  test("the single tool is a strict, flat propose_edits — ops per SPEC §8, no delete_doc", async () => {
+  test("the single tool is a strict, flat propose_edits — four non-destructive ops, no delete_doc", async () => {
     mock.script(reply.text("ok"));
     await turn(srv, { content: "hello again", docPath: "notes/main.md" });
 
@@ -399,13 +399,13 @@ describe("ai relay — the request that goes upstream", () => {
 });
 
 /* ============================================================
-   2 — the streaming contract (SPEC §3 delta 4, research §3.2)
+   2 — the streaming contract (research §3.2)
    ============================================================ */
 
 describe("POST /api/ai/messages — the normalized event stream", () => {
   beforeEach(() => mock.reset());
 
-  test("text deltas arrive as `text` events and `done` carries API.md's non-streaming shape", async () => {
+  test("text deltas arrive as `text` events and `done` carries the contract's non-streaming shape", async () => {
     const ANSWER = "You have two open tasks in this note, and neither is blocked.";
     mock.script(reply.text(ANSWER, { chunkSize: 12 }));
 
@@ -715,7 +715,7 @@ describe("propose_edits — server-side validation against on-disk bytes", () =>
     expect(`proposal carrying armor: ${done?.proposal ?? null}`).toBe("proposal carrying armor: null");
     expect(readVaultText(srv.vault, P)).toBe(md);
     /* the belt-and-braces canary: the relay never SENDS armor, whatever the
-       reason it would have had to (SPEC §6/§8) */
+       reason it would have had to */
     expect(`armor in an upstream body: ${mock.sawText(ARMOR_HEAD)}`).toBe("armor in an upstream body: false");
     expect(s.closed).toBe(true);
   }, 40000);
@@ -820,10 +820,10 @@ describe("propose_edits — server-side validation against on-disk bytes", () =>
 });
 
 /* ============================================================
-   4 — THE §11 LIFO GATE, API-level and byte-exact
+   4 — THE LIFO GATE, API-level and byte-exact
    ============================================================ */
 
-describe("SPEC §11 — accept / revert / reject with server-enforced LIFO", () => {
+describe("accept / revert / reject with server-enforced LIFO", () => {
   /* its own server: the gate is about stack POSITIONS (#1, #2, "revert #2
      first"), so it cannot share a vault with tests that leave things applied */
   const P = "notes/stack.md";
@@ -956,7 +956,7 @@ describe("SPEC §11 — accept / revert / reject with server-enforced LIFO", () 
 });
 
 /* ============================================================
-   5 — drift: the doc moved under the proposal (API.md, research §5)
+   5 — drift: the doc moved under the proposal (research §5)
    ============================================================ */
 
 describe("drift — a proposal is re-validated against CURRENT bytes", () => {
@@ -1031,14 +1031,14 @@ describe("drift — a proposal is re-validated against CURRENT bytes", () => {
 });
 
 /* ============================================================
-   6 — git: one commit per accepted proposal (SPEC §8, research §5)
+   6 — git: one commit per accepted proposal (research §5)
    ============================================================ */
 
 
 
 const commitCount = async (repo: string) => Number((await gitOk(repo, "rev-list", "--count", "HEAD")).trim()) || 0;
 
-describe("git — one commit per accepted proposal (SPEC §8, research §5)", () => {
+describe("git — one commit per accepted proposal (research §5)", () => {
   const P = "notes/committed.md";
   const ORIGINAL = "# Committed\n\nbefore the ai touched it\n";
   let gsrv: TestServer;
@@ -1821,7 +1821,7 @@ describe("custody — accept is one critical section, and its write phase is all
     );
 
     /* the pre-image still describes the TRUE pre-state, so the LIFO unwind is
-       byte-exact — the whole point of the stack (SPEC §11) */
+       byte-exact — the whole point of the stack */
     const rev = await revert(srv, p.id);
     expect(`revert → ${rev.status}`).toBe("revert → 200");
     expectBytes(readVaultBytes(srv.vault, P), toBytes(ORIGINAL), "byte-exact unwind after a double accept");
@@ -1893,7 +1893,7 @@ describe("custody — accept is one critical section, and its write phase is all
     mock.script(proposeEdits("nest under a file", { op: "create", path: BLOCKER + "/child.md", content: "# child\n" }));
 
     const st = await turn(srv, { content: "put this under my blocker notes", docPath: BLOCKER });
-    /* API.md: "the UI is never offered an Accept button for an edit that cannot
+    /* the contract: "the UI is never offered an Accept button for an edit that cannot
        apply" — so there must be no proposal at all */
     expect(`a proposal was offered: ${!!st.done().proposal}`).toBe("a proposal was offered: false");
 
@@ -1917,7 +1917,7 @@ describe("custody — an anchored edit never changes a document's line endings",
   const CRLF = "crlf/doc.md";
   const ORIGINAL = "# CRLF\r\n\r\nalpha line\r\nbravo line\r\ncharlie line\r\n";
 
-  test("replace splices CRLF into a CRLF file (SPEC §1: byte-faithful)", async () => {
+  test("replace splices CRLF into a CRLF file (byte-faithful)", async () => {
     await seedDoc(srv, CRLF, ORIGINAL);
     mock.reset();
     /* the model sends LF-only text — which is exactly what pass 2 of findAnchor
@@ -2154,7 +2154,7 @@ describe("events — reverting an op:create attributes the removal to the propos
       const m1 = sse.mark();
       expect((await revert(srv, p.id)).status).toBe(200);
       const removed = await sse.waitFor("doc-changed", { from: m1, match: (d) => d.path === CREATED });
-      /* API.md: revert "Emits doc-changed (reason proposal-reverted)" and a
+      /* the contract: revert "Emits doc-changed (reason proposal-reverted)" and a
          create-revert "removes the document it created (that path then reports
          removed:true)" — the two are meant to co-occur. Hardcoding "external"
          made the client toast "<path> was deleted on disk" one click after the
@@ -2197,7 +2197,13 @@ describe("endpoint status — probed at boot, and truthful between probes", () =
 
     const mark = m.mark();
     const s = await newServer({ vault });
-    await m.waitForRequests(mark + 1, 10000);
+    /* the probe's FIRST request is GET /models — waiting on a bare count races
+       the /responses call that the assertions below are actually about */
+    await waitUntil(async () => m.since(mark).some((r) => r.path === "/responses" && !r.stream), {
+      timeout: 15000,
+      interval: 50,
+      label: "the boot probe to reach /responses",
+    });
 
     /* the credential really was absorbed, not left in the committed file */
     expect(`the key stayed in settings.toml: ${readVaultText(vault, ".znotes/settings.toml").includes(KEY)}`).toBe(

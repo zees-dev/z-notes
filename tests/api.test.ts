@@ -1,10 +1,10 @@
 /* ============================================================
-   CONTRACT GATE — prototypes/app/API.md (normative v0) + SPEC.md §3 deltas.
+   CONTRACT GATE — the normative v0 HTTP/SSE contract, plus the deltas below.
 
    The frontend talks to nothing but this contract, so every assertion here is
    something app.js/api.js would notice if it moved.
 
-   SPEC §3 deltas encoded below:
+   Deltas from v0 encoded below:
      1. no /api/secrets/unlock (404 like any unknown route)
      2. PATCH / DELETE /api/docs/{path} are implemented (phase 5): rename/move
         rewrites backlinks, delete answers 204 and leaves backlinks broken
@@ -208,7 +208,7 @@ describe("GET /api/docs", () => {
     expect(inbox.bytes).toBe(0);
     expect(inbox.slug).toBe("inbox");
     /* no H1 ⇒ the title falls back to the file NAME, exactly as the normative
-       tree example in API.md shows ({"name":"inbox.md","title":"inbox.md"}) */
+       tree example in the contract shows ({"name":"inbox.md","title":"inbox.md"}) */
     expect(inbox.title).toBe("inbox.md");
 
     const body = await srv.doc("inbox.md");
@@ -226,7 +226,7 @@ describe("GET /api/docs", () => {
    GET / PUT a doc
    ============================================================ */
 describe("GET/PUT /api/docs/{path}", () => {
-  test("GET returns the doc body documented in API.md", async () => {
+  test("GET returns the doc body documented in the contract", async () => {
     const r = await srv.doc("architecture/event-pipeline.md");
     expect(r.status).toBe(200);
     expect(r.body.path).toBe("architecture/event-pipeline.md");
@@ -573,10 +573,10 @@ describe("GET /api/search", () => {
 
   /**
    * The seeded vault has fewer than 24 docs, so the default limit and the cap
-   * are invisible to every test above — including for empty `q`, where API.md
+   * are invisible to every test above — including for empty `q`, where the contract
    * ("an empty q returns every doc") and sw.js (`out.slice(0, limit || 24)`,
    * with limit capped at 100) read differently. sw.js is the tie-breaker for an
-   * API.md ambiguity, so `limit` applies to empty `q` exactly as to any query.
+   * the contract ambiguity, so `limit` applies to empty `q` exactly as to any query.
    */
   test("limit default (24) and cap (100) apply to empty q as well as to a query", async () => {
     const seed: Record<string, string> = {};
@@ -718,12 +718,12 @@ describe("/api/settings", () => {
   /**
    * Regression: every masking test above uses a >20-char credential, which is
    * exactly why a "short values echo unchanged" branch in mask() went unnoticed
-   * and served the shipped 16-char fixture token raw. API.md is unconditional —
+   * and served the shipped 16-char fixture token raw. the redaction rule is unconditional —
    * "the raw token/key never leaves the server" — so length must not matter.
    */
   test.each([
     ["shorter than the fixture token", "ghp_short1"],
-    ["exactly the API.md fixture length", "ghp_9f3kx2Qm7Lp0"],
+    ["exactly the the contract fixture length", "ghp_9f3kx2Qm7Lp0"],
     ["a mid-length key", "sk-proj-7hQ2vN8xR1"],
     ["a realistic 40-char PAT", "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6".slice(0, 36)],
   ])("a %s credential is never echoed raw", async (_why, RAW) => {
@@ -749,7 +749,7 @@ describe("/api/settings", () => {
   });
 
   /**
-   * SPEC §7: settings.toml is committed, credentials live in sqlite only. A
+   * settings.toml is committed, credentials live in sqlite only. A
    * hand-edited (or historical) settings.toml carrying a raw token must be
    * absorbed into sqlite and rewritten *without* it on boot — otherwise the
    * next `git commit` publishes the secret. Untested until now, and it is a
@@ -817,7 +817,7 @@ describe("/api/settings", () => {
   }, 30000);
 
   /**
-   * settings.toml is committed and pulled (SPEC §7), so it can arrive from
+   * settings.toml is committed and pulled, so it can arrive from
    * another machine carrying anything at all — and `load()` re-reads it live,
    * not only at boot. `git.branch` has been held to the same standard as PUT
    * since healGit; `ai.baseUrl` — the address the server fires the AI
@@ -876,7 +876,7 @@ describe("/api/settings", () => {
     }
   }, 30000);
 
-  test("credentials never reach the committed settings.toml (SPEC §7: sqlite only)", async () => {
+  test("credentials never reach the committed settings.toml (sqlite only)", async () => {
     const p = join(srv.vault, ".znotes", "settings.toml");
     expect(existsSync(p)).toBe(true);
     const toml = readFileSync(p, "utf8");
@@ -887,7 +887,7 @@ describe("/api/settings", () => {
 });
 
 /* ============================================================
-   sync — API.md "Sync" + SPEC §7.
+   sync — the contract's "Sync" surface.
 
    This fixture's vault is a plain directory, never a checkout, so it pins the
    documented degraded path: "offline means the vault directory is not a git
@@ -911,7 +911,7 @@ describe("sync against a vault that is not a git repository", () => {
   });
 
   test("POST /api/sync/now answers 200 with the same object and never runs git init", async () => {
-    // SPEC §7 / git.ts: an un-initialised vault stays un-initialised. A manual
+    // git.ts: an un-initialised vault stays un-initialised. A manual
     // "Sync now" must degrade, not silently create a repo the user never asked for.
     const r = await srv.api("POST", "/api/sync/now", {});
     expect(r.status).toBe(200);
@@ -946,7 +946,7 @@ describe("sync against a vault that is not a git repository", () => {
     expect(after.body.state).toBe("offline");
   });
 
-  test("the status object never carries the stored GitHub token (SPEC §7)", async () => {
+  test("the status object never carries the stored GitHub token", async () => {
     // A token was PUT into settings earlier in this file and lives in sqlite.
     // It must appear in no response — the raw text, not just the parsed body.
     const r = await srv.get("/api/sync/status");
@@ -970,7 +970,7 @@ describe("sync against a vault that is not a git repository", () => {
 });
 
 /* ============================================================
-   AI session / proposal surface (SPEC §3 delta 4)
+   AI session / proposal surface (delta 4)
 
    The relay itself is exercised against a scripted upstream in ai.test.ts.
    What is pinned HERE is the part of the contract app.js/api.js binds to
@@ -1006,7 +1006,7 @@ describe("AI session and message contract", () => {
     expect(r.status).toBe(200);
   });
 
-  /* SPEC §3 delta 4: this route streams. The old blob response is gone, but
+  /* delta 4: this route streams. The old blob response is gone, but
      every guarantee it carried has to survive the change of transport — the
      user turn is persisted, an assistant turn always answers it, and a turn
      that produced no edit says `proposal: null` rather than omitting it. */
@@ -1112,7 +1112,7 @@ describe("AI session and message contract", () => {
 });
 
 /* ============================================================
-   SPEC §3 deltas
+   the contract deltas
    ============================================================ */
 describe("phase-1 deltas", () => {
   /**
@@ -1174,7 +1174,7 @@ describe("phase-1 deltas", () => {
    * The route is gone, but "gone" has to be legible: the shipped frontend still
    * has an Unlock button, and `apiFail` toasts `message` verbatim. A generic
    * no-route answer surfaces a router internal in the UI and gives the client
-   * no slug to branch on for the SPEC §6 degraded state.
+   * no slug to branch on for the secrets-are-client-side degraded state.
    */
   test("/api/secrets/* is 404 secrets-client-side — a slug the client can degrade on", async () => {
     const post = await srv.api("POST", "/api/secrets/unlock", {
@@ -1305,14 +1305,19 @@ describe("vault containment and path shape", () => {
     });
     expect(created.status).toBe(201);
 
+    /* the index canonicalises the client's spelling on EVERY platform
+       (canonicalDocPath folds NFC + case against the indexed rows), so a
+       case-variant PUT lands on the indexed file whether or not the volume
+       itself folds case */
     const caseInsensitive = existsSync(join(srv.vault, "folding/CASE.md"));
     const put = await srv.api("PUT", "/api/docs/folding/CASE.md", { markdown: "# case\n\nsaved\n" });
-    if (caseInsensitive) {
-      expect(put.status).toBe(200);
-      expect(put.body.path).toBe("folding/case.md"); // canonicalised to the indexed spelling
-      expect(readVaultText(srv.vault, "folding/case.md")).toBe("# case\n\nsaved\n");
-    } else {
-      expect(put.status).toBe(404); // separate file on a case-sensitive volume
+    expect(put.status).toBe(200);
+    expect(put.body.path).toBe("folding/case.md"); // canonicalised to the indexed spelling
+    expect(readVaultText(srv.vault, "folding/case.md")).toBe("# case\n\nsaved\n");
+    if (!caseInsensitive) {
+      /* on a case-sensitive volume the write must land on the indexed
+         spelling, not mint a second file under the client's */
+      expect(existsSync(join(srv.vault, "folding/CASE.md"))).toBe(false);
     }
     expect(put.status).not.toBe(500);
 
@@ -1374,7 +1379,7 @@ describe("index.db recovery", () => {
 });
 
 /* ============================================================
-   Cross-site writes (SPEC §10 — the perimeter is a NETWORK boundary)
+   Cross-site writes — the perimeter is a NETWORK boundary
 
    `readJsonBody` parses a body whatever its content-type, so every bodied
    /api/* route was reachable as a CORS-*simple* request: `fetch(url, {method:
