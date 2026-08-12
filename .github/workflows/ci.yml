@@ -1,4 +1,4 @@
-# z-notes CI — PHASE 6 (SPEC.md §11 + §12).
+# z-notes CI — the acceptance gates plus the full test suite, on a bun-only toolchain.
 #
 # Three jobs, run in parallel:
 #   hygiene  — bun-only toolchain and no disabled tests (seconds, no install)
@@ -101,7 +101,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   gates:
-    name: SPEC §11 gates
+    name: gates
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:

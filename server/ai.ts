@@ -1,5 +1,5 @@
 /* ============================================================
-   ai.ts — the AI relay (SPEC §8, phase 4).
+   ai.ts — the AI relay.
 
    The browser never talks to a model endpoint. It POSTs to same-origin
    /api/ai/* and gets back a NORMALIZED event stream; everything upstream —
@@ -65,7 +65,7 @@ import { ARMOR_BEGIN,
    Constants
    ============================================================ */
 
-/** The one string that must never leave this process (SPEC §6/§11) — defined
+/** The one string that must never leave this process — defined
     in vault.ts next to ARMOR_BEGIN/END, re-exported here because this module
     is where the canary is enforced. */
 export { ARMOR_CANARY };
@@ -80,7 +80,7 @@ const MAX_TOOL_RETRIES = 2;
 const UPSTREAM_TIMEOUT_MS = 300_000;
 
 /**
- * SPEC §8 restricts the ops to four: no `delete_doc`, no rename. The rest of
+ * The ops are exactly four: no `delete_doc`, no rename. The rest of
  * the schema is research §4.4 verbatim — strict structured outputs require every
  * property in `required`, so optional fields are nullable unions, not absences.
  */
@@ -127,7 +127,7 @@ const PROPOSE_EDITS_TOOL = {
 } as const;
 
 /**
- * The second strict tool (SPEC §13). Only ever DECLARED when the terminal is
+ * The second strict tool. Only ever DECLARED when the terminal is
  * enabled and has a password — a vault that never configured one does not tell
  * the model the capability exists, so there is nothing for an injected
  * instruction in a note to reach for.
@@ -202,7 +202,7 @@ const INSTRUCTIONS = [
 class CanaryError extends Error {
   constructor(readonly where: string) {
     super(
-      `refusing to send: the upstream payload contains age armor (${where}). No request was made. This is the SPEC §6 leak canary — redaction is broken, not the endpoint.`
+      `refusing to send: the upstream payload contains age armor (${where}). No request was made. This is the leak canary — redaction is broken, not the endpoint.`
     );
     this.name = "CanaryError";
   }
@@ -319,7 +319,7 @@ interface AiDeps {
   docBody(path: string): Promise<DocBody | null>;
   contextWindow: number;
   /**
-   * The command runner (SPEC §13). Optional and narrow on purpose: the relay
+   * The command runner. Optional and narrow on purpose: the relay
    * can only ask whether the terminal is AVAILABLE and UNLOCKED, queue a
    * command for the user's approval, auto-run one when the user has explicitly
    * allowed that, and read back records that already exist. It cannot unlock
@@ -473,7 +473,7 @@ export class AI {
      server/index.ts routes against (status/metaAi/probe/announce/
      onSettingsSaved/onEffortChanged/probeAtBoot) unchanged. */
 
-  /** Server-declared AI capability for GET /api/settings `meta` (API.md). */
+  /** Server-declared AI capability for GET /api/settings `meta`. */
   metaAi() {
     const { budget, maxOutputTokens } = this.endpoint.cfg();
     const rungs = this.endpoint.degraded();
@@ -548,8 +548,8 @@ export class AI {
 
   /**
    * The thread's token cost as the server sees it: the real BPE count of the
-   * conversation plus the context it would attach. API.md: "the client
-   * displays it and never computes its own". The context part is the last
+   * conversation plus the context it would attach — the client displays it
+   * and never computes its own. The context part is the last
    * turn's MEASURED assembly when one exists; before any turn it falls back to
    * the static approximation (manifest + current doc), which undercounts the
    * linked-docs/search/commands blocks it cannot cheaply predict.
@@ -812,7 +812,7 @@ export class AI {
    * text ends up in the SSE `error` event, in `ai_messages` (durable, re-served
    * on every session load, and REPLAYED UPSTREAM as history on the next turn,
    * possibly to a different endpoint), and in `meta.ai.probe.error` on
-   * GET /api/settings. SPEC §8: the key never reaches the browser.
+   * GET /api/settings. The key never reaches the browser.
    */
   private scrub(text: string): string {
     let out = String(text ?? "");
@@ -1276,7 +1276,7 @@ export class AI {
              assistant an effective delete for every file the decoder chokes on
              — the write clobbered the bytes, and because the image was recorded
              as `existed:false`, revert then `rm`ed the file instead of
-             restoring it. SPEC §8 gives the AI no delete. So the occupancy
+             restoring it. The AI has no delete. So the occupancy
              question goes to the same stat-based `exists()` the human create
              path uses (server/index.ts POST /api/docs), and a null read on an
              occupied path is a hard rejection, never `existed:false`. */
@@ -1388,7 +1388,7 @@ export class AI {
     });
   }
 
-  /** API.md § Proposal object. `revertable` is true only for the stack top. */
+  /** The proposal object as the API serves it. `revertable` is true only for the stack top. */
   proposalOut(row: ProposalRow): ProposalOut {
     const top = this.deps.index.stack().slice(-1)[0] ?? null;
     return {
@@ -1513,7 +1513,7 @@ export class AI {
         removed,
       });
 
-      /* one commit per proposal (research §5, SPEC §8). A vault that is not a
+      /* one commit per proposal (research §5). A vault that is not a
          repo still applies the edit — the reason is recorded, not raised. */
       const message = [
         `ai: ${row.label}`,
@@ -1557,7 +1557,7 @@ export class AI {
       const stack = this.deps.index.stack();
       const top = stack[stack.length - 1];
       if (!top || top.id !== id) {
-        // LIFO is the SERVER's rule, not the UI's (SPEC §11, API.md)
+        // LIFO is the SERVER's rule, not the UI's
         return {
           status: 409,
           body: {
@@ -1626,7 +1626,7 @@ export class AI {
                goes back to `pending` with its post-image intact and re-accepting
                it recreates the doc byte for byte.
 
-               It is also what keeps SPEC §8's "the assistant has no delete power"
+               It is also what keeps "the assistant has no delete power"
                structural rather than merely intended: nothing in ai.ts can reach
                the trash module, exactly as nothing in it can reach `moveNode` or
                the DELETE route. The absence is the guarantee. */
@@ -1712,7 +1712,7 @@ export class AI {
   }
 
   /* ============================================================
-     POST /api/ai/messages — the streamed turn (SPEC §3 delta 4)
+     POST /api/ai/messages — the streamed turn
      ============================================================ */
 
   handleMessage(content: string, docPath: unknown): Response {
@@ -1790,7 +1790,7 @@ export class AI {
         }
         if (!turn.toolCall) break;
 
-        /* ---------- run_command (SPEC §13) ----------
+        /* ---------- run_command ----------
            Handled BEFORE propose_edits' validation ladder because it is a
            different kind of tool: it never touches a document, and its "result"
            is either an approval card the user has to press (the default) or a
@@ -1912,7 +1912,7 @@ export class AI {
   }
 
   /* ============================================================
-     run_command — the safety gate (SPEC §13)
+     run_command — the safety gate
 
      THE THREAT. Everything in a model's context is attacker-influenceable: a
      note can be pasted from anywhere, a document can be fetched, and this

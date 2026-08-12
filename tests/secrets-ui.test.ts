@@ -16,7 +16,7 @@
    · an armor body indented into a list item could never be decrypted
    · Lock cancelled the 30s clipboard clear WITHOUT clearing the clipboard
    · Tab out of the passphrase modal landed in the hidden ⌘K box and shipped the
-     vault passphrase to GET /api/search?q=… (SPEC §11)
+     vault passphrase to GET /api/search?q=…
    · Esc during scrypt closed the modal and unlocked the vault anyway
    · deleting a revealed-and-edited block in Raw wedged every later save
    · three fast ⌘S raised "reload before saving" — advice that destroys work
@@ -603,7 +603,7 @@ describe("locking clears the clipboard (research §6)", () => {
   }, 90000);
 });
 
-describe("the passphrase cannot escape its modal (SPEC §11)", () => {
+describe("the passphrase cannot escape its modal", () => {
   test("Tab never leaves #ppVeil, and the passphrase never reaches a request", async () => {
     const p = await newPage(srv);
     const sent: string[] = [];
@@ -1018,7 +1018,7 @@ describe("vault.pub without identity.age says so, instead of claiming to be read
   }, 90000);
 });
 
-describe("degradation without crypto.subtle (SPEC §6)", () => {
+describe("degradation without crypto.subtle", () => {
   test("the toolbar's encrypt button is not live either", async () => {
     const p = await newPage(srv, { noSubtle: true });
     try {
@@ -1057,11 +1057,12 @@ describe("the ? overlay lists every global shortcut", () => {
     }
   }, 60000);
 
-  /* Each of these is a chord app.js really binds and SPEC §9 really lists, and
-     each was missing from the one surface whose whole job is to enumerate them
-     — a user who reaches for ⌘P out of VS Code muscle memory and then checks
-     `?` was told it does not exist. Both halves are asserted together (the
-     binding WORKS and the overlay SAYS SO), so they cannot drift apart again. */
+  /* Each of these is a chord app.js really binds and the shortcuts overlay is
+     supposed to list, and each was missing from the one surface whose whole
+     job is to enumerate them — a user who reaches for ⌘P out of VS Code
+     muscle memory and then checks `?` was told it does not exist. Both halves
+     are asserted together (the binding WORKS and the overlay SAYS SO), so they
+     cannot drift apart again. */
   test("⌘P, Home / End in the menu, and the Menu key are in it — and all of them work", async () => {
     const p = await newPage(srv);
     try {
@@ -1229,7 +1230,7 @@ describe("the create-identity modal reads as prose in every theme", () => {
 });
 
 /* ============================================================
-   The LOCKED block shows NO CIPHERTEXT, and UNLOCKING IS VAULT-WIDE (SPEC §6)
+   The LOCKED block shows NO CIPHERTEXT, and UNLOCKING IS VAULT-WIDE
 
    Two findings, one model.
 
@@ -2270,7 +2271,7 @@ describe("a save that lands while the pane is in Raw", () => {
    and the repaint that followed re-entered `autoReveal` for a key that was in
    no map, which asked again, which repainted again: an unbounded hot retry
    loop under a block stuck on "Unlocking" with no button to escape it and no
-   integrity alarm (SPEC §6).
+   integrity alarm.
    ============================================================ */
 
 describe("a decrypt failure the classifier does not recognise", () => {
@@ -2331,7 +2332,7 @@ describe("a decrypt failure the classifier does not recognise", () => {
    `state.reveal` and repainting. `putDoc` is a bare fetch with no deadline, so
    a wedged or suspended server held the plaintext in an open editor
    indefinitely — measured unchanged 30s after an idle lock, the exact moment
-   the screen is unattended (SPEC §84).
+   the screen is unattended.
    ============================================================ */
 
 describe("locking wipes the screen before it waits on the network", () => {

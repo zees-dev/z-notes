@@ -10,7 +10,7 @@
 
    1. NOTHING bound encryption to a verified recipient. `OPS.encrypt` gated on
       `if (!S.recipient)` and nothing else, and encrypt-while-locked is a
-      headline feature (SPEC §6), so the one pairing check that existed (inside
+      headline feature, so the one pairing check that existed (inside
       `unlock`) could be bypassed forever. `.znotes/vault.pub` is a tracked,
       pushed file: pointing it at a foreign key made every new secret
       unreadable by its owner and readable by whoever planted the key —
@@ -66,7 +66,7 @@ let truncated = "";
 const wrap = async (payload: string) => {
   const e = new age.Encrypter();
   e.setPassphrase(PASSPHRASE);
-  e.setScryptWorkFactor(18); // exactly what the app writes (SPEC §6)
+  e.setScryptWorkFactor(18); // exactly what the app writes
   return age.armor.encode(await e.encrypt(payload));
 };
 
@@ -209,7 +209,7 @@ describe("crypto worker — encryption is bound to a VERIFIED recipient", () => 
     expect(r[5].result.recipient).toBe(recipient);
   }, 120000);
 
-  test("encrypt still works while LOCKED (SPEC §6) but says the key is UNVERIFIED", async () => {
+  test("encrypt still works while LOCKED but says the key is UNVERIFIED", async () => {
     const r = await runWorker([
       { op: "init", recipient },
       { op: "status" },
@@ -352,7 +352,7 @@ describe("crypto worker — an indented block decrypts (research §4.1)", () => 
 
 /* ============================================================
    `rewrap` — change the PASSPHRASE without changing the KEY
-   (SPEC §6; docs/specs/done/0004-secrets-client-side-crypto.md §5.3, the "routine" half)
+   (the routine half of the passphrase-change flow)
 
    The whole security argument for offering this in Settings at all is that the
    KEY is invariant: same identity, same recipient, no corpus pass, so every

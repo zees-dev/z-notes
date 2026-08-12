@@ -3,9 +3,9 @@
 
    Hard rule (inherited from the single-file era, and still true of every
    module in this directory): NO document content, NO vault data, NO settings
-   defaults and NO network calls outside api.js, which speaks the contract in
-   docs/specs/done/0002-http-api-v0.md (normative, SPEC §3). Swap what serves that contract
-   and nothing here changes.
+   defaults and NO network calls outside api.js, which speaks the app's
+   normative HTTP/SSE contract. Swap what serves that contract and nothing
+   here changes.
 
    Split from the original single-file app.js along its own section markers;
    behaviour is unchanged. See that file's history for each section's full
@@ -388,7 +388,7 @@ function wire() {
       setDraft(path, v);
     })
   );
-  /* ---------- vault key (SPEC §6) ---------- */
+  /* ---------- vault key ---------- */
   $("#keyLockBtn").addEventListener("click", () => lockVault("manual"));
   $("#keyChangeBtn").addEventListener("click", changeVaultPassphrase);
   $("#keyGen").addEventListener("click", () => {
@@ -400,7 +400,7 @@ function wire() {
        there is no reveal control anywhere in the panel, so "write it down NOW"
        was printed over a column of dots: a user who followed it literally, saw
        nothing and pressed Change had locked their vault with a string nothing
-       can produce again (SPEC §6 — there is no recovery path by design). This
+       can produce again — there is no recovery path by design. This
        is the one moment the passphrase is MEANT to be legible; typing anything
        into the field masks it again, and it leaves the DOM entirely on success
        or on leaving the page (`clearKeyFields`). */
@@ -419,7 +419,7 @@ function wire() {
       changeVaultPassphrase();
     })
   );
-  /* ---------- terminal (SPEC §13) ---------- */
+  /* ---------- terminal ---------- */
   $("#termUnlockBtn").addEventListener("click", terminalUnlock);
   $("#termPass").addEventListener("keydown", (e) => {
     e.stopPropagation();
@@ -944,7 +944,7 @@ export async function start() {
   refreshTrash();
 
   /* Secrets probe last and off the critical path: whether it succeeds or is
-     disabled, everything above already works (SPEC §6 degradation). */
+     disabled, everything above already works — secrets degrade, never gate. */
   initSecrets().then(() => {
     paintVaultChip();
     repaintSecretsUI();

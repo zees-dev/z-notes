@@ -1,5 +1,5 @@
 /* ============================================================
-   helpers.ts — harness for the PHASE 1 acceptance gates (SPEC §11).
+   helpers.ts — harness for the PHASE 1 acceptance gates.
 
    Nothing in here knows anything about the backend's internals. It only
    knows the fixed conventions:
@@ -7,7 +7,7 @@
      - `bun server/index.ts` at the repo root, env ZNOTES_VAULT / ZNOTES_PORT
      - one ready line on stdout: "z-notes listening on http://localhost:<port>"
      - clean exit on SIGTERM
-     - HTTP contract per docs/specs/done/0002-http-api-v0.md + SPEC.md §3 deltas
+     - the public HTTP/JSON contract, error bodies (`{error, message, …}`) included
      - SSE at /events
 
    Every test spawns its own server against its own freshly-built temp vault,

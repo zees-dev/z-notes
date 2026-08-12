@@ -1,5 +1,5 @@
 /* ============================================================
-   ai-edits.ts — the pure edit engine under the AI relay (SPEC §8).
+   ai-edits.ts — the pure edit engine under the AI relay.
 
    Everything here operates on strings and plain objects: no deps bag, no
    sqlite, no fetch, no disk. ai.ts owns the ORCHESTRATION — reading current
@@ -21,7 +21,7 @@ import { structuredPatch } from "diff";
 import { intersectsAgeFence, safePath } from "./vault.ts";
 
 /**
- * SPEC §8 restricts the ops to four: no `delete_doc`, no rename. The rest of
+ * The ops are exactly four: no `delete_doc`, no rename. The rest of
  * the propose_edits schema (ai.ts) is research §4.4 verbatim.
  */
 export const OPS = new Set(["replace", "insert_after", "create", "rewrite"]);
@@ -356,7 +356,7 @@ export function applyEditToText(cur: string, e: EditSpec): { ok: true; post: str
   /* Pass 2 matched an LF-only needle against CRLF bytes and returns the
      span in ORIGINAL coordinates — so the span swallows the \r\n while the
      model's text is LF-only, and splicing it verbatim left bare LFs inside
-     an otherwise-CRLF file. SPEC §1 (byte-faithful) and the relay's own
+     an otherwise-CRLF file. Writes are byte-faithful, and the relay's own
      instruction ("preserve the file's existing line endings") both say no:
      the server's tolerance must not defeat the rule it ships. Re-encode to
      whatever the matched span (else the document) actually uses. */
@@ -368,7 +368,7 @@ export function applyEditToText(cur: string, e: EditSpec): { ok: true; post: str
 }
 
 /* ============================================================
-   Unified diff (API.md § Proposal object)
+   Unified diff — the `diff` array on a proposal object
    ============================================================ */
 
 export function buildDiff(files: FileImage[]): { diff: Array<{ marker: string; text: string }>; added: number; removed: number } {

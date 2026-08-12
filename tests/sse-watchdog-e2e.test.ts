@@ -1,6 +1,6 @@
 /* ============================================================
    sse-watchdog-e2e.test.ts — the connection chip tells the truth, and the
-   watchdog keeps trying (SPEC §9).
+   watchdog keeps trying.
 
    `EventSource.readyState` is not liveness. A NAT rebind stops the flow
    without closing it: measured, `readyState` stayed 1 for 75s with `onerror`
@@ -16,8 +16,8 @@
         near-certain by reusing a pooled keep-alive socket, which the rebind
         killed too.
      2. "NO SIGNAL" WAS NEVER RENDERED. `paintConn()` and `connect()` ran in one
-        task, so the word SPEC §9 promises an open-but-silent stream was written
-        and replaced before a frame could carry it.
+        task, so "no signal" — the word an open-but-silent stream is owed — was
+        written and replaced before a frame could carry it.
 
    THE FIXTURE, and why it is not a proxy: the black hole is installed at the
    `EventSource` constructor, which is the exact boundary the app's recovery is
@@ -153,7 +153,7 @@ describe("the SSE watchdog", () => {
     }
   }, 150000);
 
-  test("an OPEN stream that goes silent wears the word SPEC §9 gives it, and then reconnects", async () => {
+  test("an OPEN stream that goes silent wears the word \"no signal\", and then reconnects", async () => {
     const page = await blackHolePage(true);
     try {
       await page.waitForFunction(() => (document.getElementById("stConnTxt")!.textContent ?? "") === "connected", {

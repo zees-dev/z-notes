@@ -1,5 +1,5 @@
 /* ============================================================
-   codeblock-e2e.test.ts — how a fenced code block RENDERS (SPEC §4).
+   codeblock-e2e.test.ts — how a fenced code block RENDERS.
 
    The change this file exists to hold still: code blocks used to scroll
    sideways, ignore density entirely, and wear three decorative "traffic light"
@@ -203,7 +203,7 @@ function measureCode() {
    1 · WRAP — nothing here ever scrolls sideways
    ============================================================ */
 
-describe("a fenced code block wraps instead of scrolling (SPEC §4)", () => {
+describe("a fenced code block wraps instead of scrolling", () => {
   test("a 240-character line leaves the <pre> with nothing to scroll to", async () => {
     await bootAs("minimal", "comfy", WRAP_DOC);
     const m = await measureCode();

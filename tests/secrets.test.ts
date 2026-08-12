@@ -1,6 +1,6 @@
 /* ============================================================
-   secrets.test.ts — PHASE 3 gate, bun side (SPEC §6, §11; the crypto design is
-   fixed in docs/specs/done/0004-secrets-client-side-crypto.md and is NOT re-derived here).
+   secrets.test.ts — PHASE 3 gate, bun side. The client-side crypto design is a
+   fixed given here — age v1, scrypt logN=18, PEM armor — and is NOT re-derived.
 
    What this file measures, and nothing else:
 
@@ -12,7 +12,7 @@
         `GET /api/vault/recipient`, `PUT /api/vault/identity`) behave, validate
         shapes only, and never decrypt anything.
      3. `.znotes/identity.age` + `.znotes/vault.pub` land in the phase-2 git
-        tracked set (SPEC §7) once the endpoint has written them.
+        tracked set once the endpoint has written them.
      4. The server has NO plaintext surface at all: no endpoint accepts a
         passphrase or a plaintext, the retired mock `POST /api/secrets/unlock`
         is gone, and no backend module imports the crypto library.
@@ -46,7 +46,7 @@ import {
   type TestServer, git, gitOk, stripComments } from "./helpers";
 
 /* ------------------------------------------------------------------
-   fixed conventions of the phase (SPEC §6/§7, research §5.1)
+   fixed conventions of the phase (research §5.1)
    ------------------------------------------------------------------ */
 
 const IDENTITY_REL = ".znotes/identity.age";
@@ -451,12 +451,12 @@ describe("secrets — PUT /api/vault/identity validates shapes and nothing else"
 });
 
 /* ============================================================
-   3. GIT — the two files join the phase-2 tracked set (SPEC §7)
+   3. GIT — the two files join the phase-2 tracked set
    ============================================================ */
 
 
 
-describe("secrets — identity.age and vault.pub are committed (SPEC §7)", () => {
+describe("secrets — identity.age and vault.pub are committed", () => {
   test("a sync after PUT /api/vault/identity commits both files", async () => {
     const vault = tempVault();
     await gitOk(vault, "init", "-b", "main");
@@ -500,7 +500,7 @@ describe("secrets — identity.age and vault.pub are committed (SPEC §7)", () =
    4. NO PLAINTEXT SURFACE ANYWHERE ON THE SERVER
    ============================================================ */
 
-describe("secrets — the server has no plaintext surface (SPEC §3 delta 1, §6)", () => {
+describe("secrets — the server has no plaintext surface", () => {
   let srv: TestServer;
   let vault: string;
 
@@ -617,7 +617,7 @@ function vaultFiles(dir: string): Array<[string, string]> {
 }
 
 /* ============================================================
-   5. /vendor/age.js — typage bundled at startup, no build step (SPEC §6 note)
+   5. /vendor/age.js — typage bundled at startup, no build step
    ============================================================ */
 
 describe("secrets — the typage bundle is served, cached and immutable", () => {

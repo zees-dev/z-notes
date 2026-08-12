@@ -12,8 +12,8 @@
    MARKUP rather than as text. Everywhere else in the preview, doc content
    reaches the DOM through `esc()` or `.textContent`. A diagram cannot: mermaid
    emits SVG, and SVG is markup. The bytes it is emitted FROM are not
-   necessarily the owner's own typing — a vault syncs over git (SPEC §7) and
-   the AI relay writes docs (SPEC §8) — so a fence is treated as untrusted
+   necessarily the owner's own typing — a vault syncs over git and the AI
+   relay writes docs — so a fence is treated as untrusted
    input. Three independent layers, in order:
 
      1. `securityLevel: "strict"` — mermaid runs its own DOMPurify pass over

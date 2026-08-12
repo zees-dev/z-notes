@@ -1,12 +1,12 @@
 # =============================================================================
 # TLS — cert-manager, signed by the CLUSTER's existing private CA.
 #
-# WHY THIS EXISTS AT ALL: SPEC §6 encrypts secrets in the browser with
+# WHY THIS EXISTS AT ALL: the app encrypts secrets in the browser with
 # WebCrypto, and window.crypto.subtle is only defined in a SECURE CONTEXT.
-# Over plain http:// on a LAN hostname the app still works — SPEC §6/§13
-# require graceful degradation — but every secret block stays armored and the
-# unlock UI is replaced by a badge explaining why. HTTPS is what turns the
-# secrets half of the product on.
+# Over plain http:// on a LAN hostname the app still works — graceful
+# degradation is required, not optional — but every secret block stays armored
+# and the unlock UI is replaced by a badge explaining why. HTTPS is what turns
+# the secrets half of the product on.
 #
 # If your cluster already runs a private CA that every device on the LAN
 # trusts (a ClusterIssuer shared by its other apps), issue against that instead

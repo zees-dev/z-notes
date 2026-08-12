@@ -1,5 +1,5 @@
 /* ============================================================
-   terminal.js — the password-locked command runner panel (SPEC §13).
+   terminal.js — the password-locked command runner panel.
 
    Split from the original single-file app.js along its own section markers;
    behaviour is unchanged. See that file's history for each section's full
@@ -14,7 +14,7 @@ import { confirmDialog } from "./dialogs.js";
 import { openSettings, paintDraftFields, showSettings } from "./settings.js";
 
 /* ============================================================
-   TERMINAL (SPEC §13)
+   TERMINAL
 
    A password-locked streaming command runner, living in its own Settings
    section. Three things this file is careful about:
@@ -44,7 +44,7 @@ const stripAnsi = (s) => String(s).replace(ANSI_RE, "").replace(/\r\n?/g, "\n");
    boundary is two halves, neither of which matches. The lone ESC at the end of
    chunk one was eaten as a C0 byte and `[31m` at the head of chunk two was
    then printed as literal text — "half-rendered", which is the one thing
-   SPEC §13 says this does not do. An OSC split the same way leaks its whole
+   this runner promises it does not do. An OSC split the same way leaks its whole
    payload (a window title) into the scrollback.
 
    So a per-stream stripper holds back a trailing FRAGMENT — an unfinished
@@ -272,7 +272,7 @@ export function terminalSavePassword() {
       path: "Settings › Terminal",
       body: "The terminal is disabled without one, every unlocked session ends, and the assistant loses the run_command tool.",
       ok: "Remove",
-      /* the hash lives in .znotes/index.db, which SPEC §7 keeps out of git —
+      /* the hash lives in .znotes/index.db, which is never committed —
          so the delete dialog's "recoverable from git history" is false here */
       note: "The stored hash is in .znotes/index.db, which git never sees — set a new one to re-enable it.",
       onOk: () => doSaveTerminalPassword(),

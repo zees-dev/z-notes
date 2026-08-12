@@ -9,8 +9,8 @@
 
    HARDENING is the half that earns its keep. A ```mermaid fence is the first
    place in this app where doc content becomes MARKUP instead of text, and doc
-   content is not necessarily the owner's typing — a vault syncs over git
-   (SPEC §7) and the AI relay writes docs (SPEC §8). mermaid has shipped XSS
+   content is not necessarily the owner's typing — a vault syncs over git and
+   the AI relay writes docs. mermaid has shipped XSS
    advisories in every year it has existed, and every one of them against an
    EMBEDDER came from the same two mistakes: `securityLevel` below strict, or
    `htmlLabels` on. Both are settable from INSIDE a diagram — via YAML

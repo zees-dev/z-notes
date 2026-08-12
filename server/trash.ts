@@ -1,5 +1,5 @@
 /* ============================================================
-   trash.ts — the recoverable delete (SPEC §5, phase 7).
+   trash.ts — the recoverable delete.
 
    `DELETE /api/docs/{path}` does not unlink any more: it MOVES the doc (or the
    whole folder subtree) into `.znotes/trash/<id>/`, where it is invisible to
@@ -437,8 +437,8 @@ export class Trash {
 
   /**
    * The retention sweep: remove every entry whose `deletedAt` is older than
-   * `trash.retentionDays`. Runs at boot, on an interval and after every delete
-   * (API.md § Trash), and is what `POST /api/trash/purge` calls with no body.
+   * `trash.retentionDays`. Runs at boot, on an interval and after every delete,
+   * and is what `POST /api/trash/purge` calls with no body.
    *
    * An entry whose `meta.json` is unreadable is swept on the SAME clock, using
    * the ENTRY DIRECTORY's mtime — it can never be restored, so leaving it

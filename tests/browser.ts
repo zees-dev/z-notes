@@ -217,7 +217,7 @@ export async function gotoSettings(p: Page, opts: { settle?: number } = {}): Pro
   await pause(opts.settle ?? SETTINGS_SETTLE_MS);
 }
 
-/** …and browser Back off it, which is the exit SPEC §9 says Esc is not. */
+/** …and browser Back off it, which is the exit Esc deliberately is not. */
 export async function leaveSettings(p: Page, opts: { settle?: number } = {}): Promise<void> {
   await p.evaluate(() => history.back());
   await waitSettings(p, false);
@@ -254,7 +254,7 @@ export async function clickWhenHittable(p: Page, sel: string, timeout = 8000): P
 }
 
 /** which of the two views of the document is up — `#doc.raw-mode` is the
-    contract everything addresses the editor mode by (SPEC §4). */
+    contract everything addresses the editor mode by. */
 export const docMode = (p: Page): Promise<"raw" | "preview"> =>
   p.evaluate(() => (document.getElementById("doc")!.classList.contains("raw-mode") ? "raw" : "preview"));
 

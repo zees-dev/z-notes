@@ -71,8 +71,8 @@ let toastT;
  * window — and the next thing they do, ⌘S, will now behave differently. A
  * notice about that has to still be there when they look up.
  *
- * Deliberately NOT extended to "Reloaded from disk": SPEC §5 fixes that one as
- * a blip, and it describes something that already finished harmlessly.
+ * Deliberately NOT extended to "Reloaded from disk": that one is fixed as a
+ * blip, and it describes something that already finished harmlessly.
  */
 export function toast(msg, opts) {
   const sticky = !!(opts && opts.sticky);
@@ -136,7 +136,7 @@ const unesc = (s) =>
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
 
-/* ---------- [[link]] resolution (SPEC §5) ----------
+/* ---------- [[link]] resolution ----------
 
    The client's rule is the SERVER's rule, restated: `[[slug]]` resolves by
    unique filename slug vault-wide, `[[path/slug]]` is the disambiguating form,

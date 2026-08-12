@@ -1,5 +1,5 @@
 /* ============================================================
-   terminal.test.ts — SPEC §13, the streaming command runner.
+   terminal.test.ts — the streaming command runner.
 
    The whole surface at the API level, against the real server and a real
    shell: the password (set / unlock / lock / change), the exec stream, the
@@ -651,8 +651,8 @@ describe("terminal — running commands", () => {
     const srv = await newServer();
     const token = await armed(srv);
 
-    /* `cat` with no argument is the honest shape of the `vim` case SPEC §13
-       names: there is no TTY, so it sits on stdin forever and the only ends are
+    /* `cat` with no argument is the honest shape of the `vim` case: there is
+       no TTY, so it sits on stdin forever and the only ends are
        Stop/Ctrl+C and the 30-minute clock. TERM=dumb and the GIT_EDITOR shim
        cannot reach it — it is not a pager and not an editor git invoked — so
        the runner says out loud that nothing has been printed. */

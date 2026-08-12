@@ -1,5 +1,5 @@
 /* ============================================================
-   fileops-e2e.test.ts — PHASE 5 e2e gate: sidebar IDE parity (SPEC §5).
+   fileops-e2e.test.ts — PHASE 5 e2e gate: sidebar IDE parity.
 
    A real browser, the real backend, the real app. What is measured:
 
@@ -280,7 +280,7 @@ async function invokeRowAction(p: Page, path: string, act: "rename" | "delete" |
   throw new Error(
     `no "${act}" affordance found for ${path}. Tried:\n  - ` +
       tried.join("\n  - ") +
-      `\nSPEC §5 requires rename/move/delete from the sidebar; whichever control the app uses ` +
+      `\nrename/move/delete must be reachable from the sidebar; whichever control the app uses ` +
       `must be discoverable by one of these (a data-act attribute is the app's existing idiom).`
   );
 }
@@ -353,7 +353,7 @@ async function waitForDialog(p: Page, label: string) {
     )
     .catch(() => {
       throw new Error(
-        `${label}: no confirm surface appeared. A destructive op is human-confirmed (SPEC §5) and must reuse ` +
+        `${label}: no confirm surface appeared. A destructive op is human-confirmed and must reuse ` +
           `the app's existing .veil/.modal chrome so Esc dismisses it.`
       );
     });
@@ -389,7 +389,7 @@ async function clickConfirm(p: Page) {
    never was. Everything below is measured through the real sidebar buttons.
    ------------------------------------------------------------------ */
 
-describe("e2e — sidebar inline create (SPEC §5)", () => {
+describe("e2e — sidebar inline create", () => {
   const NEWROW = "#tree .newrow input";
 
   test("the New doc button opens a focused, empty inline row with a placeholder", async () => {
@@ -415,7 +415,7 @@ describe("e2e — sidebar inline create (SPEC §5)", () => {
     }, NEWROW);
     expect(`focused: ${st.focused}`).toBe("focused: true");
     expect(`seeded empty: ${JSON.stringify(st.value)}`).toBe('seeded empty: ""');
-    /* the field EXPLAINS NOTHING (SPEC §5): the placeholder is a bare "name",
+    /* the field EXPLAINS NOTHING: the placeholder is a bare "name",
        the grammar is not narrated, and there is no hint line under the input */
     expect(`placeholder: ${st.placeholder}`).toBe("placeholder: name");
     expect(`no hint line: ${await page.evaluate(() => !document.querySelector("#tree .newhint"))}`).toBe(
@@ -504,7 +504,7 @@ describe("e2e — sidebar inline create (SPEC §5)", () => {
    1 — rename via the inline input
    ------------------------------------------------------------------ */
 
-describe("e2e — sidebar rename (SPEC §5, inline-create idiom)", () => {
+describe("e2e — sidebar rename (inline-create idiom)", () => {
   test("Esc cancels the inline rename and changes nothing", async () => {
     await openDoc(page, RENAME_FROM);
     const strategy = await invokeRowAction(page, RENAME_FROM, "rename", ["F2", "Enter"]);
@@ -589,7 +589,7 @@ describe("e2e — sidebar rename (SPEC §5, inline-create idiom)", () => {
    2 — delete, confirmed
    ------------------------------------------------------------------ */
 
-describe("e2e — sidebar delete needs a confirm (SPEC §5, human-only)", () => {
+describe("e2e — sidebar delete needs a confirm (human-only)", () => {
   test("Esc on the confirm leaves the doc alone", async () => {
     await openDoc(page, DOOMED);
     await invokeRowAction(page, DOOMED, "delete", ["Delete", "Backspace"]);
@@ -657,7 +657,7 @@ describe("e2e — sidebar delete needs a confirm (SPEC §5, human-only)", () => 
    3 — move, keyboard-reachable
    ------------------------------------------------------------------ */
 
-describe("e2e — sidebar move is keyboard-reachable (SPEC §5)", () => {
+describe("e2e — sidebar move is keyboard-reachable", () => {
   test("a move can be driven with the keyboard alone and lands the doc in the new folder", async () => {
     await openDoc(page, MOVER);
 
@@ -731,7 +731,7 @@ describe("e2e — sidebar move is keyboard-reachable (SPEC §5)", () => {
    4 — broken links
    ------------------------------------------------------------------ */
 
-describe("e2e — a broken [[link]] is flagged and offers to create the doc (SPEC §5)", () => {
+describe("e2e — a broken [[link]] is flagged and offers to create the doc", () => {
   test("the dead pill is flagged, the live one is not, and the create affordance creates + opens", async () => {
     await openDoc(page, BROKEN);
     await ensurePreview(page);
@@ -817,7 +817,7 @@ describe("e2e — a broken [[link]] is flagged and offers to create the doc (SPE
    5 — a second client converges over SSE
    ------------------------------------------------------------------ */
 
-describe("e2e — a second page converges after a rename, with no refresh (SPEC §5 SSE)", () => {
+describe("e2e — a second page converges after a rename, with no refresh (SSE)", () => {
   test("page two's tree and open doc follow the rename made in page one", async () => {
     const p2 = await instrument(await browser.newPage());
     try {
@@ -870,7 +870,7 @@ describe("e2e — a second page converges after a rename, with no refresh (SPEC 
 });
 
 /* ------------------------------------------------------------------
-   6 — a save that 409s raises the conflict banner (SPEC §5)
+   6 — a save that 409s raises the conflict banner
 
    "buffer clean → silent reload …; buffer dirty → conflict banner with diff,
    take-disk / keep-mine". The client used to do neither: on `rev-conflict` it
@@ -880,7 +880,7 @@ describe("e2e — a second page converges after a rename, with no refresh (SPEC 
    in its referrers, one of which the user may be typing in right now.
    ------------------------------------------------------------------ */
 
-describe("e2e — a dirty buffer is never overwritten by a 409 (SPEC §5)", () => {
+describe("e2e — a dirty buffer is never overwritten by a 409", () => {
   const TYPED = "MY UNSAVED PARAGRAPH";
 
   test("renaming a linked doc while typing raises the banner, and Keep mine wins", async () => {
@@ -956,7 +956,7 @@ describe("e2e — a dirty buffer is never overwritten by a 409 (SPEC §5)", () =
 });
 
 /* ------------------------------------------------------------------
-   0b — CONTEXT-AWARE, PATH-AWARE creation (SPEC §5)
+   0b — CONTEXT-AWARE, PATH-AWARE creation
 
    Two claims, both measured through the real keyboard and the real sidebar,
    both checked against the FILES the server actually holds:
@@ -972,7 +972,7 @@ describe("e2e — a dirty buffer is never overwritten by a 409 (SPEC §5)", () =
    type. The only second line that ever mounts is a refusal.
    ------------------------------------------------------------------ */
 
-describe("e2e — creation is context-aware and path-aware (SPEC §5)", () => {
+describe("e2e — creation is context-aware and path-aware", () => {
   const NEWROW = "#tree .newrow input";
   /* the ONLY thing this selector can ever match now is a refusal */
   const HINT = "#tree .newhint";
@@ -1126,7 +1126,7 @@ describe("e2e — creation is context-aware and path-aware (SPEC §5)", () => {
     await page.keyboard.type("2", { delay: 4 });
     /* the refusal described the OLD value: typing retires the whole LINE, and
        nothing informational takes its place. Asserted as absence rather than as
-       "empty or hidden": SPEC §5 says the line is mounted only to carry a
+       "empty or hidden": the line is mounted only to carry a
        refusal, and an emptied one left in the DOM at zero height is the shape
        that claim used to be false of. */
     expect(`the refusal line is gone: ${await page.evaluate(() => !document.querySelector("#tree .newhint"))}`).toBe(

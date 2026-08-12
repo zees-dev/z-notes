@@ -281,7 +281,7 @@ export function extractLinks(markdown: string): string[] {
 }
 
 /* ============================================================
-   Link resolution and rewriting (SPEC §5, ticket 15).
+   Link resolution and rewriting.
 
      [[slug]]       resolves by unique filename slug, vault-wide
      [[path/slug]]  the disambiguating form, needed on a collision
@@ -664,7 +664,7 @@ async function writeDocAtomic(vault: string, rel: string, text: string): Promise
 }
 
 /* ============================================================
-   Vault keyring — `.znotes/identity.age` + `.znotes/vault.pub` (SPEC §6).
+   Vault keyring — `.znotes/identity.age` + `.znotes/vault.pub`.
 
    The server is a dumb courier here: it stores and serves two opaque strings
    and validates their SHAPE only. It never derives a key, never decrypts, and
@@ -677,7 +677,7 @@ export const ARMOR_END = "-----END AGE ENCRYPTED FILE-----";
 
 /**
  * The dash-free core of the header — the one string that must never leave this
- * process (SPEC §6/§11), and what the AI relay's canary greps for so a fence
+ * process, and what the AI relay's canary greps for so a fence
  * with the dashes mangled still trips it.
  *
  * It lives HERE, next to the constants it is derived from, because it is now
@@ -781,7 +781,7 @@ async function makeFolder(vault: string, rel: string): Promise<void> {
 /**
  * The folders a create at `rel` would have to MAKE, outermost first.
  *
- * `POST /api/docs` creates parent folders implicitly (API.md), which means a
+ * `POST /api/docs` creates parent folders implicitly, which means a
  * failed create can leave a tree of directories nobody asked for behind — the
  * `mkdir -p` succeeds and the write that justified it does not. Naming them up
  * front is what makes `pruneEmptyFolders` a real rollback rather than a guess.
@@ -820,7 +820,7 @@ async function pruneEmptyFolders(vault: string, rels: string[]): Promise<void> {
   }
 }
 
-/* ---------- move / delete primitives (SPEC §3 delta 2, phase 5) ---------- */
+/* ---------- move / delete primitives ---------- */
 
 /**
  * Same file, two spellings? macOS is case- and normalisation-insensitive, so
@@ -1111,9 +1111,9 @@ export class Vault {
   }
 
   /** PUT /api/vault/identity — ciphertext + public key in, shape-checked, stored.
-      Nothing here decrypts and no passphrase reaches the process (SPEC §6).
+      Nothing here decrypts and no passphrase reaches the process.
       `stored` tells the router to schedule a sync — the keyring files are in
-      TRACKED_META (git.ts) and this is what stages them (SPEC §7). */
+      TRACKED_META (git.ts) and this is what stages them. */
   async storeIdentity(body: any): Promise<{ status: number; body: unknown; stored: boolean }> {
     const identity = typeof body?.identity === "string" ? body.identity.trim() : "";
     const recipient = typeof body?.recipient === "string" ? body.recipient.trim() : "";

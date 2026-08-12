@@ -1,5 +1,5 @@
 /* ============================================================
-   gitsync.test.ts — PHASE 2 acceptance gate (SPEC §7, tickets 04 + 14).
+   gitsync.test.ts — PHASE 2 acceptance gate for git sync.
 
    What is being measured, in the same spirit as the phase-1 files: nothing in
    here reaches into the backend's internals. It knows only the fixed
@@ -339,7 +339,7 @@ async function settle(srv: TestServer, debounce: number): Promise<void> {
   await sleep(debounce + 400);
 }
 
-/** every documented field of the sync-status object (API.md § Sync) */
+/** every documented field of the sync-status object (the sync contract) */
 function expectStatusShape(body: any) {
   expect(body && typeof body).toBe("object");
   expect(STATES).toContain(body.state);
@@ -610,7 +610,7 @@ describe("git vault with an origin", () => {
    ================================================================== */
 
 describe("auto-sync debounce", () => {
-  /* SPEC §7 / phase brief: default 60 s, live-reloadable, and small values are
+  /* the interval defaults to 60 s and is live-reloadable, and small values are
      what makes this suite (and hand-testing) practical — a hidden floor would
      silently ignore what the user configured. */
   test(
@@ -971,7 +971,7 @@ describe("external edits", () => {
 /* ==================================================================
    9. a repo the USER is in the middle of
 
-   SPEC §7: "the app never auto-destroys either side". A vault parked
+   the app never auto-destroys either side. A vault parked
    mid-merge/mid-rebase, or sitting on a detached HEAD, is a repo whose next
    `git add`/`commit` belongs to the user and to nobody else — staging over a
    conflicted index marks every conflict RESOLVED with its marker text as the
@@ -1060,7 +1060,7 @@ describe("a repo the user is in the middle of", () => {
 
       const srv = await serverOn(vault, 2);
 
-      /* the user keeps working, which SPEC §7 explicitly promises they can */
+      /* the user keeps working, which sync is never allowed to block */
       const doc = await srv.doc("inbox.md");
       expect(doc.status).toBe(200);
       const typed = "# Inbox\n\nIMPORTANT NOTE THE USER JUST TYPED\n";
@@ -1116,7 +1116,7 @@ describe("a repo the user is in the middle of", () => {
 });
 
 /* ==================================================================
-   10. ignore custody — the sqlite db holds the credentials (SPEC §7)
+   10. ignore custody — the sqlite db holds the credentials
    ================================================================== */
 
 describe("ignore custody", () => {
@@ -1333,10 +1333,10 @@ describe("settings.toml credential custody", () => {
     40000
   );
 
-  /* SPEC §13: "`settings.toml` can carry `[terminal] password = "…"` to
-     bootstrap a fresh install — absorbed, hashed, stripped from the file, never
-     committed." The pre-staging canary used to look only for token/apiKey, so
-     the bootstrap line this documents was committed and PUSHED in plaintext —
+  /* `settings.toml` can carry `[terminal] password = "…"` to bootstrap a fresh
+     install — absorbed, hashed, stripped from the file, never committed. The
+     pre-staging canary used to look only for token/apiKey, so the bootstrap
+     line this documents was committed and PUSHED in plaintext —
      irreversible once a remote exists. Both halves are pinned here: the canary
      has to NOTICE the line (git.ts) and the absorb it calls has to be able to
      REMOVE it (settings.ts), or sync stops forever with no way out but an
@@ -1464,7 +1464,7 @@ describe("hung git", () => {
 });
 
 /* ==================================================================
-   15. attach — POST /api/sync/remote (spec 0007, ADR 0017)
+   15. attach — POST /api/sync/remote (ADR 0017)
 
    The one operation allowed to create a repository, and the only one that has
    to be trusted with a vault full of the user's only copy of something. Every

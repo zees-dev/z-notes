@@ -6,7 +6,7 @@
    purge, the retention sweep, and the git commit that seals each one. The
    router in index.ts holds no doc logic — each route is one delegation.
 
-   HUMAN-ONLY, STRUCTURALLY (SPEC §8): the assistant's propose_edits accepts
+   HUMAN-ONLY, STRUCTURALLY: the assistant's propose_edits accepts
    exactly replace | insert_after | create | rewrite; ai.ts writes through
    vault.writeDocAtomic and nothing else, and nothing in ai.ts can reach the
    move/delete methods below — they are not on the AI deps object, and the AI
@@ -133,9 +133,9 @@ export class DocStore {
   }
 
   /* ============================================================
-     File ops — PATCH (rename/move) + DELETE (SPEC §3 delta 2, §5, phase 5).
+     File ops — PATCH (rename/move) + DELETE.
 
-     HUMAN-ONLY, STRUCTURALLY. SPEC §8 gives the assistant no delete and no
+     HUMAN-ONLY, STRUCTURALLY. The assistant has no delete and no
      rename: `propose_edits` accepts exactly `replace | insert_after | create |
      rewrite`, ai.ts writes through `writeDocAtomic` and nothing else, and nothing
      in ai.ts can reach the two functions below — they are not exported, not on
@@ -225,7 +225,7 @@ export class DocStore {
 
   /** GET /api/docs/{path} — .md gate, canonical spelling, disk-derived body. */
   async read(decoded: string): Promise<Response> {
-    // SPEC §5: a doc is a .md file. Without this, GET hands out any file that
+    // a doc is a .md file. Without this, GET hands out any file that
     // happens to sit in the vault (.env, an ssh key) even though it is in no
     // tree and no search result.
     if (!isMd(decoded)) return fail(404, "not-found", { message: `No doc at ${decoded}` });
@@ -292,7 +292,7 @@ export class DocStore {
 
       const kind = await this.vault.exists(rel);
       if (!kind) return fail(404, "not-found", { message: `Nothing at ${rel}` });
-      // a doc is a .md file (SPEC §5). Anything else that happens to sit in the
+      // a doc is a .md file. Anything else that happens to sit in the
       // vault is in no tree, no search result, and is not renamable or deletable
       // through this API either.
       if (kind === "file" && !isMd(rel)) return fail(404, "not-found", { message: `No doc at ${rel}` });
@@ -302,7 +302,7 @@ export class DocStore {
       const subtree = kind === "file" ? [from] : beforeDocs.filter((d) => d.startsWith(from + "/"));
       /* Every FILE the op will actually touch, `.md` or not: `moveNode` is one
          rename(2) and the trash move another, so a folder carries its images and
-         its README along (API.md § PATCH). Naming only the `.md` children in the
+         its README along. Naming only the `.md` children in the
          commit left those deleted-in-the-worktree and alive-in-HEAD forever — the
          bulk `stage()` is `.md`-only too, so nothing downstream could ever heal
          it, and `dirtyOutsideAllowlist()` then wedged every future push. */
@@ -442,7 +442,7 @@ export class DocStore {
     for (const r of rewrites) if (!hints.has(r.path)) hints.set(r.path, "write");
     await this.recon.reconcileHeld(hints);
 
-    /* ---------- one commit (SPEC §5: "rewrites all backlinks in one commit") ---------- */
+    /* ---------- one commit: a rename rewrites all backlinks in it ---------- */
 
     const links = rewrites.reduce((n, r) => n + r.links, 0);
     const message =
@@ -513,7 +513,7 @@ export class DocStore {
   }
 
   /**
-   * DELETE — now a MOVE TO TRASH rather than an unlink (SPEC §5).
+   * DELETE — a MOVE TO TRASH rather than an unlink.
    *
    * The doc (or the whole folder subtree) is renamed into `.znotes/trash/<id>/`,
    * which the vault scan, search and the backlink graph cannot see, and the
@@ -554,7 +554,7 @@ export class DocStore {
        the trash entry that now holds them, so the delete and its undo are the
        same commit and a clone can restore from it */
     const paths = [...new Set([...gone, ...payload, ...this.trash.entryGitPaths(meta.id, meta)])];
-    // API.md fixes DELETE at 204 with no body, so the skip reason goes to the log
+    // DELETE answers 204 with no body, so the skip reason goes to the log
     if (paths.length) await this.commitFileOp(paths, `delete: ${from}`);
     await this.announceTrash();
     /* Sweeping HERE as well as at boot and on the interval is what makes the
@@ -566,7 +566,7 @@ export class DocStore {
   }
 
   /* ============================================================
-     Trash routes (API.md § Trash)
+     Trash routes
 
      Every one of them runs under the reconcile lock, for the same reason the file
      ops do: restore WRITES into the vault, and the plan (is the path free? what

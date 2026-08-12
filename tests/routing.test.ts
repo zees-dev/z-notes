@@ -356,7 +356,7 @@ describe("routing — deep links and reloads", () => {
   test("assets, the worker and the API still resolve when the shell came from a nested /d/ URL", async () => {
     const bad: string[] = [];
     /* /api/vault/{identity,recipient} 404 by design in a vault with no keyring
-       (SPEC §6) — the client feature-detects on them. Everything else is a bug. */
+       — the client feature-detects on them. Everything else is a bug. */
     const expected404 = (u: string) => u.includes("/api/vault/");
     page.on("requestfailed", (r) => bad.push("FAILED " + r.url()));
     page.on("response", (r) => {

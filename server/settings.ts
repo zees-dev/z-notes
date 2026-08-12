@@ -124,7 +124,7 @@ export const DEFAULTS = {
     maxOutputTokens: 32_000,
     contextBudgetTokens: 200_000,
   },
-  /* SPEC §13. `enabled` is the hard off-switch; it is NOT the lock. The lock is
+  /* `enabled` is the hard off-switch; it is NOT the lock. The lock is
      the password, which lives in sqlite and has no representation here — with
      no password set the terminal is disabled whatever this says, and the AI is
      never even told the `run_command` tool exists. `shell` and `startupCwd`
@@ -146,8 +146,8 @@ const CRED_KEYS = {
 } as const;
 
 /**
- * The terminal password is a credential too (SPEC §13: "absorbed, hashed,
- * stripped from the file, never committed") — it is just absorbed by
+ * The terminal password is a credential too — absorbed, hashed, stripped from
+ * the file, never committed. It is just absorbed by
  * `absorbTerminalPassword` rather than by `absorbCredentials`, because the
  * server stores a scrypt hash and there is no masked twin to serve back.
  * `passwordSet` is the OUTPUT of get(); it is stripped on the same pass.
@@ -214,25 +214,25 @@ function defaultAt(path: string): any {
  * not "the fastest possible".
  */
 function coerceNumber(path: string, raw: unknown): number {
-  const spec = NUMBERS[path];
+  const range = NUMBERS[path];
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return Number(defaultAt(path));
-  const clamped = Math.min(spec.max, Math.max(spec.min, n));
-  const steps = Math.round((clamped - spec.min) / spec.step);
-  return Math.min(spec.max, spec.min + steps * spec.step);
+  const clamped = Math.min(range.max, Math.max(range.min, n));
+  const steps = Math.round((clamped - range.min) / range.step);
+  return Math.min(range.max, range.min + steps * range.step);
 }
 
 /**
- * Prefix-preserving mask. API.md: "Secrets are returned pre-masked; the raw
- * token/key never leaves the server" (and SPEC §1/§7) — so this must never
+ * Prefix-preserving mask. Secrets are returned pre-masked; the raw token/key
+ * never leaves the server — so this must never
  * return its input, at any length. Below credential length there is nothing
  * safe to reveal, so we emit a constant, which by construction carries no
  * information about the value at all.
  *
- * (API.md's `GET /api/settings` example shows `"tokenMasked":
- * "ghp_9f3kx2Qm7Lp0"` — but that is the mock's *stored* fixture rendered by a
- * mock that does no masking, not a masked value. The prose is normative and
- * sw.js ranks below it, so the fixture token now comes back as `ghp_…7Lp0`.)
+ * (An old `GET /api/settings` example showed `"tokenMasked":
+ * "ghp_9f3kx2Qm7Lp0"` — but that was the mock's *stored* fixture rendered by a
+ * mock that does no masking, not a masked value. The rule above wins, so the
+ * fixture token comes back as `ghp_…7Lp0`.)
  */
 function mask(value: string | null | undefined): string {
   const v = String(value ?? "");
@@ -265,7 +265,7 @@ const looksMasked = (v: string, current: string): boolean =>
   v.includes("…") || v.includes("•") || (!!current && isSubsequence(v, current));
 
 /**
- * The vault identity is passphrase-wrapped with scrypt logN=18 (SPEC §6). This
+ * The vault identity is passphrase-wrapped with scrypt logN=18. This
  * is the same primitive one notch down, and the notch is deliberate: logN=18 is
  * 256 MiB per derivation and this one runs SERVER-side on an endpoint an
  * attacker can call in a loop, so the memory cost is also a self-inflicted
@@ -277,7 +277,8 @@ const looksMasked = (v: string, current: string): boolean =>
  * would introduce a third KDF into a project that already has exactly one, and
  * rather than `@noble/hashes` (reachable through age-encryption) because that
  * dependency is the BROWSER's crypto and importing it server-side would blur
- * the one boundary SPEC §6 cares about. scrypt with explicit, stored parameters
+ * the one boundary that matters — the server never sees a passphrase or a
+ * plaintext secret. scrypt with explicit, stored parameters
  * is the smallest thing that is honest about what it is.
  */
 const SCRYPT_LOG_N = 17;
@@ -452,8 +453,8 @@ export class Settings {
   }
 
   /**
-   * `meta` is server-declared capability, not user state (API.md § Settings).
-   * Phase 4 has capability that is DISCOVERED rather than compiled in — what
+   * `meta` is server-declared capability, not user state.
+   * The AI relay has capability that is DISCOVERED rather than compiled in — what
    * the configured AI endpoint actually accepted, and every parameter the
    * degradation ladder had to give up (research §7.4) — so ai.ts registers a
    * provider here instead of settings.ts importing the relay.
@@ -469,8 +470,8 @@ export class Settings {
 
   /** Read settings.toml, absorbing any raw credentials it carries. */
   async load(): Promise<void> {
-    // before anything can need it: boot provisioning (spec 0007 §5) attaches a
-    // vault repo with this token, and that happens right after load() returns
+    // before anything can need it: boot provisioning attaches a vault repo
+    // with this token, and that happens right after load() returns
     this.absorbEnvToken();
     const file = Bun.file(this.vault.settingsPath);
     let parsed: Json = {};
@@ -541,8 +542,8 @@ export class Settings {
    * merging a one-field patch into it silently REVERTED every change made on
    * disk since boot — and, because settings.toml is in TRACKED_META, committed
    * and pushed the revert. A setting changed on another machine and pulled here
-   * (SPEC §7: "committed with the vault", pull-on-focus) never survived the next
-   * save. Cheap: one small read on the settings routes only.
+   * (settings.toml is committed with the vault and pulled on focus) never
+   * survived the next save. Cheap: one small read on the settings routes only.
    */
   async reloadIfChanged(): Promise<boolean> {
     const file = Bun.file(this.vault.settingsPath);
@@ -840,8 +841,8 @@ export class Settings {
   /**
    * FIRST-RUN ONLY, for the same reason `absorbTerminalPassword` is: a
    * container's first boot has no UI and no settings.toml, so `ZNOTES_GIT_TOKEN`
-   * is how a fresh PVC gets a credential to attach its vault repo with (spec
-   * 0007 §5). Once one is stored the env var is IGNORED — rotation happens in
+   * is how a fresh PVC gets a credential to attach its vault repo with.
+   * Once one is stored the env var is IGNORED — rotation happens in
    * Settings, and a stale value left on the deployment must not silently
    * un-rotate the live token on the next restart.
    *
@@ -1049,13 +1050,13 @@ export class Settings {
    told, because there is someone there to tell. */
 
 function validateNumbers(patch: Json): void {
-  for (const [path, spec] of Object.entries(NUMBERS)) {
+  for (const [path, range] of Object.entries(NUMBERS)) {
     const [group, key] = splitPath(path);
     const section = patch[group];
     if (!isPlainObject(section) || !(key in section) || section[key] == null) continue;
     const n = Number(section[key]);
     if (!Number.isFinite(n) || n <= 0)
-      throw new SettingsError(spec.code ?? "bad-number", `${path} must be a positive number of ${spec.unit}.`);
+      throw new SettingsError(range.code ?? "bad-number", `${path} must be a positive number of ${range.unit}.`);
   }
 }
 
@@ -1261,8 +1262,8 @@ function keyDoc(path: string, key: string): string {
   const bits: string[] = [];
   const doc = KEY_DOC[path];
   if (doc) bits.push(doc);
-  const spec = NUMBERS[path];
-  if (spec) bits.push(`${spec.min}–${spec.max} ${spec.unit}, step ${spec.step}.`);
+  const range = NUMBERS[path];
+  if (range) bits.push(`${range.min}–${range.max} ${range.unit}, step ${range.step}.`);
   const def = path.includes(".") ? defaultAt(path) : (DEFAULTS as Json)[key];
   if (def !== undefined) bits.push(`Default: ${tomlValue(def)}.`);
   return bits.length ? `# ${bits.join(" ")}` : "";

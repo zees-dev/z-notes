@@ -1,9 +1,9 @@
 /* ============================================================
-   SPEC §11 — LEAK-CANARY GATE
+   LEAK-CANARY GATE
 
-   "age armor never appears in AI relay payloads, logs, or search index"
+   age armor never appears in AI relay payloads, logs, or the search index.
 
-   The leak rule is structural (SPEC §6): every indexer-facing read goes through
+   The leak rule is structural: every indexer-facing read goes through
    `redact()`, so the armor inside a ```age fence must never reach sqlite, FTS,
    a /api/search response or the process's own output. There is no phase-1 AI
    relay to inspect, so the three reachable surfaces are asserted here.
@@ -95,7 +95,7 @@ afterAll(async () => {
 
 const contains = (hay: string, needle: string) => hay.includes(needle);
 
-describe("leak canary (SPEC §11)", () => {
+describe("leak canary", () => {
   test("every fence shape is recognised as a secret block", async () => {
     const r = await srv.get("/api/docs");
     expect(r.status).toBe(200);
@@ -466,7 +466,7 @@ describe("fence grammar — the server is never narrower than the renderer", () 
 
    Everything above uses a hand-written armor lookalike, which is the right
    fixture for "can the redactor SEE the fence". It cannot answer the other
-   half of SPEC §11 — "plaintext never in any server-bound request" — because
+   half of the rule — plaintext never in any server-bound request — because
    there is no plaintext behind it.
 
    So: generate a vault identity, encrypt a canary string to it, and then look
@@ -498,7 +498,7 @@ function walkVault(dir: string): Array<[string, string]> {
   return out;
 }
 
-describe("leak canary — a real age block (SPEC §11, phase 3)", () => {
+describe("leak canary — a real age block (phase 3)", () => {
   const DOC = "keys/real.md";
   let vault = "";
   let real: TestServer;
@@ -632,7 +632,7 @@ describe("leak canary — a real age block (SPEC §11, phase 3)", () => {
     expect(contains(objects, identity)).toBe(false);
   }, 60000);
 
-  test("the AI session surface never returns a secret's contents (SPEC §6)", async () => {
+  test("the AI session surface never returns a secret's contents", async () => {
     /* nothing the client can reach may return, echo or store a secret's
        contents — asserted here without an upstream; the relay itself is the
        phase-4 describe below. */
@@ -649,8 +649,8 @@ describe("leak canary — a real age block (SPEC §11, phase 3)", () => {
 });
 
 /* ============================================================
-   PHASE 4 — THE AI LEAK GATE (SPEC §11: "age armor never appears in AI relay
-   payloads … plaintext never in any server-bound request").
+   PHASE 4 — THE AI LEAK GATE: age armor never appears in AI relay payloads,
+   and plaintext never in any server-bound request.
 
    Phase 3 could only assert the absence of a relay. Now there is one, and the
    only surface that settles the question is the set of request bodies the
@@ -664,7 +664,7 @@ describe("leak canary — a real age block (SPEC §11, phase 3)", () => {
         all" would pass an absence-only test.)
      2. The canary is belt-and-braces. A doc carrying armor the fence grammar
         cannot see — bare armor, no ```age fence — must STILL never reach the
-        upstream: the relay refuses the payload outright (SPEC §6/§8). This is
+        upstream: the relay refuses the payload outright. This is
         the one check that does not depend on the redactor being right.
      3. Nothing comes back in. An upstream that ECHOES armor inside a
         propose_edits call gets it rejected: no proposal, no write, and no
@@ -674,7 +674,7 @@ describe("leak canary — a real age block (SPEC §11, phase 3)", () => {
 const ECHO_MARKER = "RUNITzBFQ0hPTUFSS0VSMDA5OQ=="; // unique to the sabotage payload
 const DECOY_PLAINTEXT = "DECOYPLAINTEXTNEVERINDEXED";
 
-describe("leak canary — the AI relay (SPEC §11, phase 4)", () => {
+describe("leak canary — the AI relay (phase 4)", () => {
   const DOC = "keys/ai-real.md";
   const NEIGHBOUR = "notes/links-to-keys.md";
   const BARE = "keys/bare-armor.md";
@@ -892,13 +892,13 @@ describe("leak canary — the AI relay (SPEC §11, phase 4)", () => {
 });
 
 /* ============================================================
-   PHASE 5 — THE TERMINAL (SPEC §11 leak canary over the §13 runner).
+   PHASE 5 — THE TERMINAL: the leak canary over the command runner.
 
    The command runner is the most direct route from arbitrary vault bytes into
    the model's context that this app has: the model chooses a shell line, the
    output is PERSISTED, and every later turn replays the last few records into
    the assembled context. `cat` of a note with an age block — the exact thing
-   §13 advertises the terminal for — therefore has to be checked here and not
+   the terminal is advertised for — therefore has to be checked here and not
    only in terminal.test.ts, which knows nothing about armor.
 
    Two failures, one input:
@@ -912,7 +912,7 @@ describe("leak canary — the AI relay (SPEC §11, phase 4)", () => {
         index.db. The turn AFTER the command is what proves that is gone.
    ============================================================ */
 
-describe("leak canary — the terminal runner (SPEC §11, phase 5)", () => {
+describe("leak canary — the terminal runner (phase 5)", () => {
   const DOC = "keys/terminal-real.md";
   const PASSWORD = "TERMLEAK-pw-31c4a9f2";
 
@@ -1129,7 +1129,7 @@ function flatten(nodes: any[]): any[] {
 }
 
 /* ============================================================
-   PHASE 6 — THE LEAK CANARY WITH THE VAULT OPEN (SPEC §6, §11)
+   PHASE 6 — THE LEAK CANARY WITH THE VAULT OPEN
 
    Every canary above runs against a vault nobody has unlocked: the plaintext
    exists only inside an armor blob on disk, so "the canary is nowhere" is a
@@ -1139,7 +1139,7 @@ function flatten(nodes: any[]): any[] {
    user visits is decrypted and painted into the document — which means the
    plaintext really is live, in a browser, in the same tab that autosaves the
    file, feeds the search index and talks to the AI relay. That is the state the
-   §11 rule has to survive, and the only honest way to assert it is to reach it:
+   leak rule has to survive, and the only honest way to assert it is to reach it:
    a real Chromium, the real worker, the real passphrase.
 
    The positive control is the whole point of the setup: the first test proves
@@ -1148,7 +1148,7 @@ function flatten(nodes: any[]): any[] {
    payload, not the server's own output, and not one request the browser sent.
    ============================================================ */
 
-describe("leak canary — the vault is OPEN and every block is revealed (SPEC §11, phase 6)", () => {
+describe("leak canary — the vault is OPEN and every block is revealed (phase 6)", () => {
   const DOC = "keys/revealed.md";
   const PASS = "correct horse battery staple mango velvet";
   /* the SECOND canary: what the user types INTO a revealed block. It exists
@@ -1276,7 +1276,7 @@ describe("leak canary — the vault is OPEN and every block is revealed (SPEC §
     expect(`the plaintext is live in the DOM: ${shown.includes(PT_CANARY)}`).toBe(
       "the plaintext is live in the DOM: true"
     );
-    /* …and the ciphertext is NOT, which is the other half of SPEC §6 */
+    /* …and the ciphertext is NOT, which is the other half of the rule */
     const html = await page.evaluate(() => document.documentElement.outerHTML);
     expect(`the armor is on screen too: ${html.includes(ARMOR_HEAD)}`).toBe("the armor is on screen too: false");
   }, 120000);

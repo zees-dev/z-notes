@@ -1,8 +1,7 @@
 /* ============================================================
    watch.ts — doorbell → debounce → reconcile → SSE.
 
-   fs.watch on macOS is a CONTENTLESS DOORBELL (verified, see
-   docs/specs/done/0005-bun-platform-foundation.md §3): eventType is always "rename"
+   fs.watch on macOS is a CONTENTLESS DOORBELL (verified): eventType is always "rename"
    and an intra-vault atomic save names only the temp file — the file that
    actually changed is never mentioned. So the callback arguments are never
    read. We debounce 120ms and re-derive truth from disk:
@@ -31,7 +30,7 @@ export type ChangeReason =
   | "external"
   | "proposal-accepted"
   | "proposal-reverted"
-  /* phase 5 (SPEC §3 delta 2): a rename/move emits a PAIR of `moved` events —
+  /* a rename/move emits a PAIR of `moved` events —
      the old path with `removed:true` + `to`, the new path with `from`. A second
      client follows the doc it has open across the move from those two alone. */
   | "moved"
@@ -62,7 +61,7 @@ export interface DocChange {
   reason: ChangeReason;
   bytes: number;
   mtime: string;
-  /** present (and true) only when the doc left the vault — see API.md § Events */
+  /** present (and true) only when the doc left the vault */
   removed?: true;
   /** on the NEW path of a move: where it came from */
   from?: string;
@@ -155,7 +154,7 @@ export class Reconciler {
   private async pass(hints?: ChangeHints): Promise<DocChange[]> {
     const onDisk = await this.vault.scanDocs();
     const rows = new Map(this.index.allFileMeta().map((r) => [r.path, r]));
-    /* Two lists, not one: API.md § Events is normative about the ORDER of a
+    /* Two lists, not one: the event contract fixes the ORDER of a
        `moved` pair — the old path (`removed:true` + `to`) first, THEN the new
        path (`from`) — and the on-disk walk below naturally produces the new
        half first. A client written against the doc must not have to guess. */
@@ -165,7 +164,7 @@ export class Reconciler {
     for (const path of onDisk) {
       const prev = rows.get(path);
       rows.delete(path);
-      /* stat FIRST, read second — the order the header and SPEC §2 promise.
+      /* stat FIRST, read second — the order the header promises.
          The gate exists so an unchanged doc costs a stat and nothing else;
          reading before it pulled the whole corpus through JS on every pass,
          under the reconcile lock every write awaits. */

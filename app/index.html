@@ -260,7 +260,7 @@
            line and word counts, clickable, and still ⌘E. A 100px two-button
            control in the topbar was more chrome than the fact deserved. -->
       <!-- raw mode only: wrap the selection in an ```age fence encrypted to the
-           vault recipient. Works while the vault is LOCKED (SPEC §6). -->
+           vault recipient. Works while the vault is LOCKED. -->
       <button class="iconbtn" id="encBtn" data-act="encrypt-selection" title="Encrypt selection (⌘⇧E)" hidden>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
       </button>
@@ -478,7 +478,7 @@
               Secrets
             </div>
 
-            <!-- ---------- vault key (SPEC §6, research §5.3) ----------
+            <!-- ---------- vault key (research §5.3) ----------
                  Status first, then the one key operation that is safe to offer:
                  CHANGE PASSPHRASE. It re-wraps the SAME age identity under a new
                  passphrase (scrypt logN=18) in the crypto worker and PUTs the
@@ -595,7 +595,7 @@
             </div>
           </section>
 
-          <!-- ================= TERMINAL (SPEC §13) =================
+          <!-- ================= TERMINAL =================
                A streaming command runner, not a terminal emulator: there is no PTY
                in bun, so full-screen programs cannot work and the banner says so
                rather than letting one hang. Locked behind its own password, which
@@ -769,7 +769,7 @@
         </span>
         Assistant
       </span>
-      <!-- a BUTTON since spec 0006: click → the effort menu (#effortPop) -->
+      <!-- a BUTTON, not a label: click → the effort menu (#effortPop) -->
       <button class="model-chip" id="modelChip" data-act="effort" aria-haspopup="dialog" aria-expanded="false" title="Reasoning effort"><span class="live"></span><b id="modelName">—</b> · <span id="modelEffort">—</span></button>
       <div class="spacer"></div>
       <button class="iconbtn" data-act="toggle-chat" title="Hide panel">
@@ -808,7 +808,7 @@
       </div>
     </div>
 
-    <!-- spec 0006: the model chip's effort menu. Options are built at runtime
+    <!-- the model chip's effort menu. Options are built at runtime
          from meta.efforts — ai.effort is an open field server-side and this
          menu is what makes it feel like an enum, so nothing is hardcoded. -->
     <div class="pop" id="effortPop" role="dialog" aria-label="Reasoning effort">
@@ -863,7 +863,7 @@
       </div>
     </div>
     <div class="modal-body">
-      <!-- text + CSS masking, never type=password (SPEC §9): the browser's
+      <!-- text + CSS masking, never type=password: the browser's
            password manager must stay out of the vault passphrase -->
       <div class="field" style="flex-direction:column;align-items:stretch;gap:7px">
         <div class="lab"><b>Passphrase</b></div>
@@ -887,7 +887,7 @@
   </div>
 </div>
 
-<!-- ================= CONFIRM (destructive ops are human-only, SPEC §5) ================= -->
+<!-- ================= CONFIRM (destructive ops are human-only) ================= -->
 <div class="veil" id="cfVeil">
   <div class="modal cf" id="cfModal" role="dialog" aria-modal="true" aria-labelledby="cfTitle">
     <div class="modal-head">
@@ -915,7 +915,7 @@
   </div>
 </div>
 
-<!-- ================= SAVE CONFLICT (SPEC §5: dirty buffer → banner with diff) ================= -->
+<!-- ================= SAVE CONFLICT (dirty buffer → banner with diff) ================= -->
 <div class="veil" id="cxVeil">
   <!-- tabindex: the orphan half of this veil can be raised by the AUTOSAVE, and
        a dialog that opens under a caret must be able to take focus itself
@@ -1009,7 +1009,7 @@
     </div>
     <div class="modal-body">
       <div class="sc-grid">
-        <!-- app.js binds BOTH (SPEC §9); ⌘P is the one VS Code muscle memory
+        <!-- app.js binds BOTH; ⌘P is the one VS Code muscle memory
              reaches for, and this overlay claims to list everything -->
         <div class="sc-row">Search vault<span class="k"><kbd>⌘K</kbd><kbd>⌘P</kbd></span></div>
         <!-- the same toggle the statusbar's mode word is; there is no longer a

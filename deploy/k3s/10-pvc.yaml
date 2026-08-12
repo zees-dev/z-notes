@@ -4,7 +4,7 @@
 # WHY A PVC AND NOT AN emptyDir (this is the important comment in this file):
 #
 #   1. emptyDir dies with the pod. The vault is not a cache — it is the notes.
-#      SPEC §1 makes files on disk the source of truth; the app is a view over
+#      Files on disk are the source of truth; the app is a view over
 #      them. A view whose backing store evaporates on a node reboot is not a
 #      notes app.
 #
@@ -20,12 +20,12 @@
 #   3. WAL is also the crash story. A SIGKILL or an OOMKill mid-write leaves a
 #      WAL that the next open replays — the index recovers itself. But that only
 #      helps if the WAL still EXISTS after the restart, which again means a PVC.
-#      (And even total loss is survivable: SPEC §5 makes the index rebuildable
+#      (And even total loss is survivable: the index is rebuildable
 #      from the markdown. The parts that are NOT rebuildable — the GitHub token,
 #      the AI key, AI chat history and proposal pre-images — live only in this
 #      sqlite file. Losing the volume loses those. Back it up.)
 #
-#   4. The vault is also a git working tree (SPEC §7), including .git/ and the
+#   4. The vault is also a git working tree, including .git/ and the
 #      0700 GIT_ASKPASS helper that git.ts writes to <vault>/.znotes/tmp and
 #      then EXECUTES. The volume therefore must not be mounted noexec. The
 #      local-path provisioner does not set noexec; a hand-rolled hostPath PV

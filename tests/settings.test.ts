@@ -624,8 +624,9 @@ describe("settings.toml — a change made on disk mid-session is seen, not clobb
        WHOLE file from the in-memory snapshot. So an unrelated one-field PUT
        silently REVERTED everything that had arrived since boot — and because
        settings.toml is in TRACKED_META, committed and pushed the revert. The
-       cross-machine case (SPEC §7: committed with the vault, pull on focus) is
-       exactly this: a setting changed on machine A never survived on B. */
+       cross-machine case (settings.toml is committed with the vault and
+       pulled on focus) is exactly this: a setting changed on machine A never
+       survived on B. */
     const vault = vaultWithToml(`theme = "modern"\n\n[editor]\nautosaveSeconds = 10\n`);
     const s = await newServer({ vault });
     expect(`boot theme: ${(await s.get("/api/settings")).body.settings.theme}`).toBe("boot theme: modern");
@@ -653,8 +654,8 @@ describe("settings.toml — a change made on disk mid-session is seen, not clobb
   }, 60000);
 
   test("a credential pasted into the file mid-session is still absorbed, not served raw", async () => {
-    /* the reload path runs the same heal+absorb `load()` does, so the SPEC §7
-       guarantee (plaintext never committed) has to survive it */
+    /* the reload path runs the same heal+absorb `load()` does, so the
+       guarantee that a plaintext credential is never committed has to survive it */
     const vault = vaultWithToml(`theme = "modern"\n`);
     const s = await newServer({ vault });
     writeFileSync(join(vault, ".znotes", "settings.toml"), `theme = "modern"\n\n[ai]\napiKey = ${JSON.stringify(KEY)}\n`, "utf8");

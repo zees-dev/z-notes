@@ -1,9 +1,8 @@
 /* ============================================================
    crypto-worker.js — the plaintext jail.
 
-   EVERY cryptographic operation in z-notes happens here and nowhere else
-   (SPEC §6; docs/specs/done/0004-secrets-client-side-crypto.md §5.2). Two reasons, both
-   load-bearing:
+   EVERY cryptographic operation in z-notes happens here and nowhere else.
+   Two reasons, both load-bearing:
 
      1. scrypt at logN=18 is ~0.4–1s of synchronous work. On the main thread
         that is a frozen UI on every unlock.

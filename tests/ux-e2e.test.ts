@@ -1580,7 +1580,7 @@ describe("ux — the sidebar context menu", () => {
    ============================================================ */
 
 /* ============================================================
-   THE TERMINAL CONSOLE (SPEC §13's UI half)
+   THE TERMINAL CONSOLE — the UI half of the command runner
 
    Two claims the panel makes to the user's face, both of which were false:
    that Ctrl+C cancels what is running, and that ANSI is stripped rather than
@@ -1693,7 +1693,7 @@ describe("ux — the terminal console", () => {
     /* stdout arrives as arbitrary pipe reads. `stripAnsi` ran per chunk, so an
        escape straddling a boundary was two halves that matched nothing: the
        lone ESC was eaten as a control byte and `[31m` was printed as text.
-       SPEC §13 says ANSI is stripped rather than half-rendered — this is the
+       ANSI is supposed to be stripped rather than half-rendered — this is the
        shape that made that false, with a real gap between the two writes. */
     await unlockConsole();
     await page.click("#termInput");

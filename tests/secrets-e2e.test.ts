@@ -1,5 +1,5 @@
 /* ============================================================
-   secrets-e2e.test.ts — PHASE 3 gate, real browser, real crypto (SPEC §6, §11).
+   secrets-e2e.test.ts — PHASE 3 gate, real browser, real crypto.
 
    The bun-side file proves the FORMAT. This one proves the PRODUCT: a real
    Chromium, the real backend, a temp vault seeded with a REAL age identity and
@@ -10,7 +10,7 @@
    The gates, in the order they run:
 
      · a locked block shows NEITHER plaintext nor ciphertext — the armor is in
-       the document model (Raw), never on the screen (SPEC §6)
+       the document model (Raw), never on the screen
      · wrong passphrase → visible failure, block stays locked
      · right passphrase → plaintext revealed, in an editor carrying every
        anti-exfiltration attribute the research leak table names
@@ -270,7 +270,7 @@ async function block() {
 }
 
 /**
- * MASKED, NEVER DROPPED. A locked block renders no ciphertext (SPEC §6), so
+ * MASKED, NEVER DROPPED. A locked block renders no ciphertext, so
  * "the armor is still there" can no longer be read off the block's DOM — the
  * document MODEL is where it has to be, and Raw is that model rendered
  * verbatim. Leaves the pane back in Preview.
@@ -534,7 +534,7 @@ describe("secrets e2e — a locked block", () => {
     const b = await block();
     expect(b).not.toBe(null);
     expect(b!.open).toBe(false);
-    /* SPEC §6: a locked block shows no ciphertext at all. The armor is not in
+    /* a locked block shows no ciphertext at all. The armor is not in
        this node's rendered text and not in its DOM either — it is in the
        document model, which is what Raw and the save path read. */
     expect(b!.text).not.toContain(ARMOR_HEAD);
@@ -561,7 +561,7 @@ describe("secrets e2e — a locked block", () => {
     expect(b!.buttons.some((x) => /unlock/i.test(x.label))).toBe(true);
   }, 40000);
 
-  test("the passphrase field is a masked TEXT input, never type=password (SPEC §9)", async () => {
+  test("the passphrase field is a masked TEXT input, never type=password", async () => {
     await clickBlockButton(/unlock/i);
     await page.waitForFunction(() => document.getElementById("ppVeil")!.classList.contains("show"), {
       timeout: 10000,
@@ -603,7 +603,7 @@ describe("secrets e2e — a locked block", () => {
     expect(b!.revealed).toBe(null);
     /* a refused unlock leaves the block exactly as it was: a masked chip that
        shows neither the plaintext it could not reach nor the ciphertext it
-       still holds (SPEC §6) */
+       still holds */
     expect(b!.text).not.toContain(ARMOR_HEAD);
     expect(await armorInModel()).toBe(true);
     const html = await page.evaluate(() => document.documentElement.outerHTML);
@@ -706,7 +706,7 @@ describe("secrets e2e — unlock and reveal", () => {
   }, 40000);
 });
 
-describe("secrets e2e — byte stability (research §4.2, SPEC §11)", () => {
+describe("secrets e2e — byte stability (research §4.2)", () => {
   test("a revealed but UNEDITED block: ⌘S leaves the file byte-identical", async () => {
     const before = readVaultBytes(vaultDir, KEYS_DOC);
     expect(new TextDecoder().decode(before)).toBe(keysDoc); // nothing has touched it yet
@@ -766,7 +766,7 @@ describe("secrets e2e — byte stability (research §4.2, SPEC §11)", () => {
     expect(b!.open).toBe(false);
     expect(b!.revealed).toBe(null);
     /* re-locking restores the LOCKED rendering, which shows no ciphertext
-       either (SPEC §6) — the armor went back to the model, not to the screen */
+       either — the armor went back to the model, not to the screen */
     expect(b!.text).not.toContain(ARMOR_HEAD);
     expect(await armorInModel()).toBe(true);
 
@@ -822,7 +822,7 @@ describe("secrets e2e — an EDITED reveal re-encrypts", () => {
     }
   }, 90000);
 
-  test("no request the browser has EVER sent contained plaintext (SPEC §11)", async () => {
+  test("no request the browser has EVER sent contained plaintext", async () => {
     expect(sent.length).toBeGreaterThan(0);
     const needles = [CANARY, "EDITEDBYTHEEETWOEGATE", PASSPHRASE, WRONG_PASSPHRASE, identity, "AGE-SECRET-KEY"];
     for (const r of sent) {
@@ -913,7 +913,7 @@ describe("secrets e2e — Encrypt selection works while LOCKED", () => {
 });
 
 /* ============================================================
-   UNLOCKING IS VAULT-WIDE — AND IT IS DISPLAY ONLY (SPEC §6, §11)
+   UNLOCKING IS VAULT-WIDE — AND IT IS DISPLAY ONLY
 
    Reveal used to be per block and opt-in. It is now vault-wide: one Unlock, one
    passphrase, and every age block decrypts — in this doc and in every doc
@@ -1057,7 +1057,7 @@ describe("secrets e2e — unlocking is vault-wide, and it is display only", () =
   }, 20000);
 });
 
-describe("secrets e2e — degradation without crypto.subtle (SPEC §6)", () => {
+describe("secrets e2e — degradation without crypto.subtle", () => {
   test("the block explains itself, the affordance is off, and the doc still works", async () => {
     const p = await browser.newPage();
     const errs: string[] = [];
@@ -1111,7 +1111,7 @@ describe("secrets e2e — degradation without crypto.subtle (SPEC §6)", () => {
       /* the badge has to SAY why — a silently dead button is the failure mode */
       expect(/unavailable|not available|unsupported|disabled|secure context|no crypto/i.test(s.text)).toBe(true);
       /* …and it still shows no ciphertext: "we cannot decrypt here" is not a
-         reason to paint the armor into the document (SPEC §6). The source is
+         reason to paint the armor into the document. The source is
          one ⌘E away, exactly as it is for every other locked block. */
       expect(s.text).not.toContain(ARMOR_HEAD);
       expect(s.docText).not.toContain(ARMOR_HEAD);

@@ -8,7 +8,7 @@
    Migrations are "rebuild": on schema_version mismatch every index table is
    dropped and rebuilt from disk (credentials are carried across best-effort).
 
-   Sharp edges obeyed (docs/specs/done/0005-bun-platform-foundation.md):
+   Sharp edges obeyed (bun:sqlite):
      - one PRAGMA per call (multi-statement pragma strings return nothing)
      - WAL + synchronous=NORMAL + busy_timeout=5000
      - strict:true statements (no $/:/@ sigils, throws on missing params)
@@ -85,7 +85,7 @@ function createSchema(db: Database) {
     role TEXT NOT NULL, kind TEXT, content TEXT NOT NULL, proposalId TEXT, at TEXT NOT NULL
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS ai_messages_session ON ai_messages(sessionId, seq)`);
-  /* AI proposals (SPEC §8, research §5 layer 1). `files` carries the pre- and
+  /* AI proposals (research §5 layer 1). `files` carries the pre- and
      post-images as JSON — the byte-exact undo that makes revert possible before
      any commit exists. `stackIndex` is the 1-based LIFO position while applied
      and NULL otherwise; the server, never the client, owns it. */
@@ -112,7 +112,7 @@ function createSchema(db: Database) {
     revertedAt TEXT
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS ai_proposals_stack ON ai_proposals(stackIndex)`);
-  /* Terminal commands the ASSISTANT asked for (SPEC §13). Only AI-originated
+  /* Terminal commands the ASSISTANT asked for. Only AI-originated
      commands are recorded: what the user types into their own shell is theirs,
      is not replayed into a model context, and stays in the browser's scrollback
      where they can see it and nothing else can. `output` is the truncated
@@ -455,7 +455,7 @@ export class Index {
     tx();
   }
 
-  /* ---------- backlink graph, for rename/move (SPEC §5, phase 5) ----------
+  /* ---------- backlink graph, for rename/move ----------
 
      A move rewrites `[[links]]` vault-wide, and "vault-wide" must not mean
      "read every file on disk on every rename". These two reads narrow it to the
@@ -631,7 +631,7 @@ export class Index {
     return this.db.query<ProposalRow, []>("SELECT * FROM ai_proposals ORDER BY seq").all();
   }
 
-  /** The change stack, oldest → newest (API.md § GET /api/ai/proposals). */
+  /** The change stack, oldest → newest, as GET /api/ai/proposals serves it. */
   stack(): ProposalRow[] {
     return this.db
       .query<ProposalRow, []>("SELECT * FROM ai_proposals WHERE stackIndex IS NOT NULL ORDER BY stackIndex")
@@ -676,7 +676,7 @@ export class Index {
     tx();
   }
 
-  /* ---------- terminal commands (SPEC §13) ---------- */
+  /* ---------- terminal commands ---------- */
 
   addCommand(c: {
     id: string;

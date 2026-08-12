@@ -6,7 +6,7 @@
      - first bytes carry `retry: 1000`
      - a `hello` event with clientId + serverTime on connect
      - a `heartbeat` every 20 s
-     - `doc-changed` per API.md: {path, rev, reason, bytes, mtime}
+     - `doc-changed` per the HTTP contract: {path, rev, reason, bytes, mtime}
      - Cache-Control: no-store
 
    NOTE: this file contains the suite's one deliberately slow test (~21 s): the
@@ -148,7 +148,7 @@ describe("/events", () => {
 
       for (const ev of [evA, evB]) {
         const d = ev.data;
-        /* the five documented fields (API.md § Events) … */
+        /* the five documented fields (the event contract) … */
         expect(Object.keys(d).sort()).toEqual(
           expect.arrayContaining(["bytes", "mtime", "path", "reason", "rev"])
         );

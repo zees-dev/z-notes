@@ -1,8 +1,8 @@
 /* ============================================================
-   server.ts — z-notes backend, phase 1 (SPEC §12.1).
+   server.ts — z-notes backend.
 
-   One bun process: Bun.serve hosts the v0 API (docs/specs/done/0002-http-api-v0.md), the
-   SSE event stream, and the static frontend in ./app. Zero runtime deps.
+   One bun process: Bun.serve hosts the v0 JSON API, the SSE event stream, and
+   the static frontend in ./app. Zero runtime deps.
 
      ZNOTES_VAULT      vault directory   (default ./vault; created if missing)
      ZNOTES_PORT       listen port       (default 4700)
@@ -44,8 +44,8 @@ const HEARTBEAT_MS = 20_000;
 /**
  * Cross-site write guard.
  *
- * SPEC §10 accepts "no app-level auth — cluster + tailnet are the perimeter",
- * but that perimeter is a NETWORK boundary and a CSRF originates inside it: any
+ * The app has no app-level auth — cluster + tailnet are the perimeter — but
+ * that perimeter is a NETWORK boundary and a CSRF originates inside it: any
  * page the user's browser visits can POST here. `readJsonBody` parses a body
  * regardless of content-type, so `POST /api/ai/messages` and
  * `POST /api/ai/proposals/{id}/accept` were reachable as CORS-*simple* requests
@@ -120,7 +120,7 @@ const logFor = (env: string) => (line: string) => {
 };
 
 /* ============================================================
-   Trash (SPEC §5) — a delete is recoverable.
+   Trash — a delete is recoverable.
 
    Constructed before GitSync only because the delete route needs both; the two
    are otherwise independent. Everything about the on-disk layout, the retention
@@ -208,7 +208,7 @@ function openStream(): Response {
 }
 
 /* ============================================================
-   AI relay (SPEC §8, phase 4) — everything upstream lives in ai.ts.
+   AI relay — everything upstream lives in ai.ts.
 
    The key never reaches the browser, context is assembled here from on-disk
    bytes, and no proposed edit is offered to the UI until it has been validated
@@ -216,7 +216,7 @@ function openStream(): Response {
    ============================================================ */
 
 /* ============================================================
-   Terminal (SPEC §13) — the password-locked command runner.
+   Terminal — the password-locked command runner.
 
    Constructed BEFORE the AI relay because the relay takes it as a dependency:
    `run_command` is only declared to the model when this says the terminal is
@@ -267,8 +267,8 @@ settings.wire({
 /* ============================================================
    /vendor/age.js — the age-encryption (typage) browser bundle.
 
-   SPEC §2 keeps the frontend build-free, and SPEC §6 needs exactly one library
-   in the browser. Squaring those: bundle `vendor/age-entry.js` with Bun.build
+   The frontend stays build-free, and client-side secrets need exactly one
+   crypto library in the browser. Squaring those: bundle `vendor/age-entry.js` with Bun.build
    ONCE at boot, hold the bytes in memory, serve them. No artifact is written,
    nothing is added to `dev`, and the crypto worker gets a plain ESM import.
 
@@ -322,7 +322,7 @@ async function buildVendor(): Promise<void> {
 function serveVendor(pathname: string, req: Request): Response {
   if (!vendor) {
     // the client feature-detects on worker init; a JSON body it can read beats
-    // an opaque 500, and secrets simply degrade to the badge (SPEC §6)
+    // an opaque 500, and secrets simply degrade to the badge
     return fail(503, "vendor-unavailable", {
       message: "The age bundle could not be built; secrets features are unavailable.",
       detail: vendorError,
@@ -519,7 +519,7 @@ const ROUTES: Route[] = [
     },
   },
 
-  /* ---------- trash (API.md § Trash) — a SEPARATE namespace from /api/docs:
+  /* ---------- trash — a SEPARATE namespace from /api/docs:
      a trashed doc is in no tree, no search result and no backlink, and is
      addressed by the opaque id the delete minted. ---------- */
   { pattern: "trash", methods: { GET: async () => json(await trash.view()) } },
@@ -550,7 +550,7 @@ const ROUTES: Route[] = [
     },
   },
 
-  /* ---------- secrets: retired (SPEC §3 delta 1) — the app decrypts in the
+  /* ---------- secrets: retired — the app decrypts in the
      browser; a stable slug lets the UI degrade to the badge instead of
      toasting a router internal. ANY method. ---------- */
   {
@@ -562,7 +562,7 @@ const ROUTES: Route[] = [
       }),
   },
 
-  /* ---------- vault keyring (SPEC §6) — ciphertext and a public key, stored
+  /* ---------- vault keyring — ciphertext and a public key, stored
      and served; shape validation and storage live on Vault. ---------- */
   {
     pattern: "vault/recipient",
@@ -589,7 +589,7 @@ const ROUTES: Route[] = [
       PUT: async (c) => {
         const out = await vault.storeIdentity(c.body);
         // `.znotes/` is invisible to the doc reconciler — this is what stages
-        // the keyring files for the next commit (SPEC §7)
+        // the keyring files for the next commit
         if (out.stored) gitSync.schedule();
         return json(out.body, out.status);
       },
@@ -645,7 +645,7 @@ const ROUTES: Route[] = [
     },
   },
 
-  /* ---------- terminal (SPEC §13) — every route is under /api, so the
+  /* ---------- terminal — every route is under /api, so the
      crossSiteWrite guard in fetch() already refused a cross-site POST before
      dispatch; the bearer token is the authorisation on top. status is the one
      route that answers without a token, with capability, never content. ---------- */
@@ -669,7 +669,7 @@ const ROUTES: Route[] = [
     },
   },
   /* Setting the FIRST password needs no proof (nothing to prove against, and
-     SPEC §10 puts the perimeter at the network); changing an existing one
+     the perimeter is the network); changing an existing one
      needs the current password or a live session — see Terminal.setPassword. */
   {
     pattern: "terminal/password",
@@ -747,10 +747,10 @@ const ROUTES: Route[] = [
       },
     },
   },
-  /* A new session drops the THREAD, never the change stack (API.md). */
+  /* A new session drops the THREAD, never the change stack. */
   { pattern: "ai/sessions", methods: { POST: () => json(ai.newSession(), 201) }, otherwise: "no-route" },
-  /* SPEC §3 delta 4: STREAMS — text/event-stream whose final `done` event
-     carries exactly the JSON the non-streaming contract returned. */
+  /* the turn STREAMS — text/event-stream whose final `done` event carries
+     exactly the JSON the non-streaming contract returned. */
   {
     pattern: "ai/messages",
     methods: {
@@ -897,7 +897,7 @@ const server = Bun.serve({
   maxRequestBodySize: MAX_BODY_BYTES + 1024 * 1024,
   async fetch(req, srv) {
     const url = new URL(req.url);
-    /* GET /healthz — kubelet probe target (SPEC §10 packaging).
+    /* GET /healthz — kubelet probe target.
 
        Deliberately the cheapest possible route: it touches no disk, does not
        scan the vault, does not query sqlite and does not shell out to git, so

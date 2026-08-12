@@ -169,7 +169,7 @@ function blipConn() {
 let connWatchT = null;
 /* One tick of grace, so the middle state can actually be SEEN. `paintConn` and
    `connect` in the same task are one frame: the chip went straight from
-   "connected" to "reconnecting…" and "no signal" — the word SPEC §9 promises an
+   "connected" to "reconnecting…" and "no signal" — the word promised for an
    open-but-silent stream — was written and never rendered. The cost is 5s of
    later recovery on a path that has already been silent for 50. */
 let connQuietSeen = false;
@@ -266,7 +266,7 @@ export function connect() {
     onAiStatus: paintAiStatus,
     /* Settings saved by ANOTHER client (or another tab of this one). Masked
        already — see the note on this event in api.js. A save that moved
-       ai.effort also repaints the model chip (spec 0006) — from a session
+       ai.effort also repaints the model chip — from a session
        refetch, because the chip shows the server's effortInUse, which the
        settings body alone cannot tell us. */
     onSettingsChanged: (payload) => {
@@ -311,7 +311,7 @@ export function connect() {
       if (!d) return;
       blipConn();
       /* A move arrives as a PAIR: the old path with removed+`to`, the new path
-         with `from` (API.md § Events). The old half carries everything needed
+         with `from` (the event contract). The old half carries everything needed
          to follow the doc, so the new half only has to refresh the tree — which
          is what makes a second client converge with no manual reload. */
       if (d.reason === "moved") {
@@ -444,7 +444,7 @@ async function resyncAfterGap() {
    pagehide it was.
 
    So `hidden` now runs exactly what `pagehide` runs. Deliberately NOT by
-   lowering editor.autosaveSeconds: SPEC §4 fixes it at 10, and a shorter timer
+   lowering editor.autosaveSeconds: autosave is fixed at 10s, and a shorter timer
    would be both a worse fix (it still cannot run while frozen) and pointless
    once the flush happens at the boundary itself.
 
@@ -539,8 +539,8 @@ const FOCUSABLE =
  * with opacity, never `display`/`visibility`) and which fires
  * `GET /api/search?q=…` on every keystroke. The masked field simply stopped
  * accepting characters, which is exactly the moment a user retypes the whole
- * passphrase — into a server-bound URL. SPEC §11: "plaintext never in any
- * server-bound request". The CSS now makes hidden veils untabbable as well;
+ * passphrase — into a server-bound URL. The rule: plaintext never in any
+ * server-bound request. The CSS now makes hidden veils untabbable as well;
  * this keeps focus off the DOCUMENT (`#rawArea` is a textarea that gets saved
  * to disk and pushed to git).
  */
@@ -598,7 +598,7 @@ export function dismissTop() {
     return true;
   }
   /**
-   * THE EDITOR LAYER — Esc leaves Raw (SPEC §4).
+   * THE EDITOR LAYER — Esc leaves Raw.
    *
    * It used to only BLUR the textarea, which is a state nothing else in this
    * app can see: the mode chip still read "Raw", the caret was simply gone, and
@@ -991,7 +991,7 @@ export function retireLayerMarker() {
  *   4. RAW mode on a phone — Back means "stop editing" one press before it
  *      means "leave this note", because a phone has no ⌘E and the statusbar
  *      chip is a 30px target;
- *   5. an unsaved Raw buffer at every other width — the SPEC §4 exit guard.
+ *   5. an unsaved Raw buffer at every other width — the unsaved-work exit guard.
  */
 let popHold = null;
 function holdPop(after, wasBack) {
@@ -1089,7 +1089,7 @@ export function onPop(e) {
    * every tap that is trying to scroll. Back is the one gesture a phone has
    * plenty of — so it stops editing first and leaves the note second.
    *
-   * `setMode` carries its own SPEC §4 guard, so a DIRTY buffer still raises the
+   * `setMode` carries its own unsaved-work guard, so a DIRTY buffer still raises the
    * staged-diff dialog here; Save and Discard both land in Preview instead of
    * on the previous page, which is what the press asked for.
    */
@@ -1098,7 +1098,7 @@ export function onPop(e) {
     return;
   }
   /**
-   * BROWSER BACK OUT OF A DIRTY RAW BUFFER (SPEC §4).
+   * BROWSER BACK OUT OF A DIRTY RAW BUFFER.
    *
    * Only BACK, and only when the traversal really leaves: a pop that lands on
    * the entry directly under a marker with nothing below it changes nothing on
@@ -1211,7 +1211,7 @@ export function revealInTree(path) {
 }
 
 /* ============================================================
-   HOME — the vault button (SPEC §9)
+   HOME — the vault button
 
    Which doc is `editor.homeDoc`, a real setting: Settings › Editing, the
    `[editor] homeDoc` key in settings.toml, and `meta.homeDocDefault` so the
@@ -1256,7 +1256,7 @@ export function openFirstDoc() {
  *
  * Falling back silently would hide the fact that the setting names nothing, and
  * refusing outright would leave the button inert — so it does what a broken
- * `[[link]]` already does in this app (SPEC §5): says what is wrong and offers
+ * `[[link]]` already does in this app: says what is wrong and offers
  * to create it. Cancel is not a dead end either; it opens the first doc, so the
  * button always lands somewhere.
  */
@@ -1452,7 +1452,7 @@ export function syncScrim() {
  *
  * `--kb` is applied to the SHARED `.doc` container and to the chat panel — and
  * never to #rawArea. A mobile-only inset on the raw textarea is precisely the
- * mode-parity break the SPEC §11 gate exists to catch, and the gate could not
+ * mode-parity break the acceptance gates exist to catch, and they could not
  * catch this one: headless there is no keyboard, so `--kb` is always 0 there.
  */
 export function wireVisualViewport(onChange) {

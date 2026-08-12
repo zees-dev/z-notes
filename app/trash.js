@@ -1,5 +1,5 @@
 /* ============================================================
-   trash.js — the sidebar trash drawer (SPEC §5).
+   trash.js — the sidebar trash drawer.
 
    Split from the original single-file app.js along its own section markers;
    behaviour is unchanged. See that file's history for each section's full

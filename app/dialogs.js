@@ -71,16 +71,16 @@ export function confirmOk() {
   if (c && c.onOk) c.onOk();
 }
 
-/* ---------- save conflict (SPEC §5: dirty buffer → banner with diff) ---------- */
+/* ---------- save conflict (dirty buffer → banner with diff) ---------- */
 
 /**
  * A 409 used to be answered by re-GETting the doc and assigning the disk text
  * straight over `doc.markdown` — silently destroying whatever the user had
  * typed, with no confirmation and no undo (`renderDoc` rebuilds the textarea,
- * so even the browser's own undo stack went with it). SPEC §5 asks for the
+ * so even the browser's own undo stack went with it). The rule is the
  * opposite: clean buffer → silent reload, dirty buffer → this banner, with the
  * diff and both ways out. The 409 body already carries the server's markdown
- * (SPEC §3 delta 3) precisely so it can be drawn without a second round trip.
+ * precisely so it can be drawn without a second round trip.
  */
 export function conflictDialog(path, diskText, mineText) {
   state.conflict = { path: path, disk: diskText, mine: mineText, mode: "conflict" };

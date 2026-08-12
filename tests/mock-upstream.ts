@@ -169,7 +169,7 @@ export const reply = {
   },
 };
 
-/* ---- propose_edits argument builders (research §4.4, ops per SPEC §8) ---- */
+/* ---- propose_edits argument builders (research §4.4) ---- */
 
 export type EditOp = "replace" | "insert_after" | "create" | "rewrite";
 

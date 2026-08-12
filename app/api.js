@@ -3,8 +3,8 @@
 
    THE ONLY FILE IN THIS APP THAT TOUCHES THE NETWORK.
    Nothing else may call fetch(), EventSource, WebSocket or XHR.
-   It implements exactly the contract in docs/specs/done/0002-http-api-v0.md (normative,
-   SPEC §3) and knows nothing about who serves it — today server/index.ts.
+   It implements exactly the app's normative HTTP/SSE contract and knows
+   nothing about who serves it — today server/index.ts.
    ============================================================ */
 "use strict";
 
@@ -144,8 +144,8 @@ export const createEntry = ({ path, type, markdown }) => post("api/docs", { path
    409 `exists` when the target is taken. */
 export const moveDoc = (path, to) => patch("api/docs/" + encPath(path), { to });
 
-/* Human-only, by construction: the assistant has no delete and no rename
-   (SPEC §8), so nothing in the AI vocabulary can reach this route. A folder
+/* Human-only, by construction: the assistant has no delete and no rename,
+   so nothing in the AI vocabulary can reach this route. A folder
    takes its subtree with it; backlinks to a deleted doc are left BROKEN rather
    than rewritten — that is the record that something used to be there.
 
@@ -155,7 +155,7 @@ export const moveDoc = (path, to) => patch("api/docs/" + encPath(path), { to });
    → 204 (this returns null). */
 export const deleteDoc = (path) => del("api/docs/" + encPath(path));
 
-/* ---------------- trash (SPEC §5) ----------------
+/* ---------------- trash ----------------
 
    Where a deleted doc waits. The store lives under `.znotes/`, which the vault
    scan excludes, so nothing in here is reachable by the tree, search or the
@@ -189,7 +189,7 @@ export const purgeTrashEntry = (id) => del("api/trash/" + encodeURIComponent(id)
    user-pressed "Empty trash": everything, expired or not. → { purged: n } */
 export const purgeTrash = ({ all = false } = {}) => post("api/trash/purge", { all: all === true });
 
-/* ---------------- vault keyring (SPEC §6) ----------------
+/* ---------------- vault keyring ----------------
 
    There is no unlock endpoint and there never will be: decryption happens in
    the browser's crypto worker, and no passphrase or plaintext is representable
@@ -255,7 +255,7 @@ export const checkAiStatus = () => post("api/ai/status", {});
 
 export const newSession = () => post("api/ai/sessions", {});
 
-/* `POST /api/ai/messages` STREAMS (SPEC §3 delta 4). `EventSource` cannot be
+/* `POST /api/ai/messages` STREAMS. `EventSource` cannot be
    used for it — it is GET-only and cannot carry a body — so this is the
    standard POST + fetch + ReadableStream manual SSE parse.
 
@@ -384,7 +384,7 @@ export const revertProposal = (id) => post("api/ai/proposals/" + encodeURICompon
 
 export const rejectProposal = (id) => post("api/ai/proposals/" + encodeURIComponent(id) + "/reject", {});
 
-/* ---------------- terminal (SPEC §13) ----------------
+/* ---------------- terminal ----------------
 
    THE TOKEN LIVES HERE AND NOWHERE ELSE.
 

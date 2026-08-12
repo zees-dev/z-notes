@@ -1,5 +1,5 @@
 /* ============================================================
-   ai-endpoint.ts — endpoint health under the AI relay (SPEC §8).
+   ai-endpoint.ts — endpoint health under the AI relay.
 
    Everything that answers "what is the configured endpoint, and what has it
    proven it can do?": the settings-derived config, the capability probe

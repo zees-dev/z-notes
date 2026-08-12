@@ -16,8 +16,8 @@
        trailing punctuation stays text, and a Wikipedia "(bar)" keeps the
        close-paren the URL owns.
      · CLICK — an external link is excluded from click-to-edit: clicking it
-       must NOT switch the pane to Raw (SPEC §4 lists links among the click
-       zones that act instead of editing).
+       must NOT switch the pane to Raw (a link is a click zone that acts
+       instead of editing).
      · SOURCE — none of it costs a byte on disk.
    ============================================================ */
 

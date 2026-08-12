@@ -1,10 +1,8 @@
 /* ============================================================
    fileops.test.ts — PHASE 5 acceptance gate.
 
-   SPEC §3 delta 2, §5, §8.
-
-   The contract this file holds the backend to — written against the SPEC, not
-   against the implementation:
+   The contract this file holds the backend to — written against the contract,
+   not against the implementation:
 
      PATCH /api/docs/{path}   {"to":"new/path.md"}
        → 200 {path, from, rev, bytes, mtime, backlinksUpdated, updated[]}
@@ -13,11 +11,11 @@
        409 {"error":"exists"} · 400 {"error":"bad-path"} · 404 {"error":"not-found"}
        A folder path moves the whole subtree under the same rules.
 
-     DELETE /api/docs/{path}  → 204. Human-only (SPEC §8 gives the AI no
-       delete/rename powers). A folder deletes its subtree. Backlinks to a
+     DELETE /api/docs/{path}  → 204. Human-only — the AI relay is given no
+       delete/rename powers. A folder deletes its subtree. Backlinks to a
        deleted doc are left BROKEN — never rewritten. One git commit.
 
-     Link semantics (SPEC §5): `[[slug]]` resolves by unique filename slug
+     Link semantics: `[[slug]]` resolves by unique filename slug
        vault-wide; `[[path/slug]]` only on collision. So the slug form is the
        CANONICAL form and a move must produce the *minimal* correct text:
          - rename that changes the slug → rewrite [[old-slug]] → [[new-slug]]
@@ -244,7 +242,7 @@ const SEED: SeedMap = {
   "fence/fence-target.md": MD_FENCE_TARGET,
   "fence/mixer.md": MD_MIXER,
 
-  /* 4 — folder rename. The `.png` is not decoration: API.md promises a folder
+  /* 4 — folder rename. The `.png` is not decoration: the contract promises a folder
      takes its whole subtree "including non-`.md` files", and those are the ones
      no git path in this app can see (`scanDocs`, `stage()` and the pending
      count are all `.md`-only), so they are exactly what a folder op can strand. */
@@ -292,7 +290,7 @@ afterAll(async () => {
    1 — rename: the doc moves and every backlink follows, in one commit
    ============================================================ */
 
-describe("PATCH /api/docs — rename rewrites backlinks (SPEC §3 delta 2, §5)", () => {
+describe("PATCH /api/docs — rename rewrites backlinks", () => {
   const FROM = "notes/alpha.md";
   const TO = "notes/omega.md";
   const REFERRERS = ["deep/nest/r3.md", "refs/r1.md", "refs/r2.md"]; // sorted
@@ -398,10 +396,10 @@ describe("PATCH /api/docs — rename rewrites backlinks (SPEC §3 delta 2, §5)"
 
 /* ============================================================
    2 — collision: a move that makes a slug ambiguous must disambiguate
-       BOTH sides (SPEC §5 — the subtle one)
+       BOTH sides — the subtle one
    ============================================================ */
 
-describe("PATCH /api/docs — a move that creates a slug collision (SPEC §5)", () => {
+describe("PATCH /api/docs — a move that creates a slug collision", () => {
   test("links to both colliding docs become [[path/slug]], byte-exactly", async () => {
     const before = await commitCount(vault);
 
@@ -487,7 +485,7 @@ describe("PATCH /api/docs — links inside fences and inline code are never rewr
    4 — folder rename: subtree moves, MINIMAL link rewriting
    ============================================================ */
 
-describe("PATCH /api/docs — folder rename moves the subtree (SPEC §5)", () => {
+describe("PATCH /api/docs — folder rename moves the subtree", () => {
   test("subtree moves, path-qualified links follow, slug-form links stay byte-identical, one commit", async () => {
     const before = await commitCount(vault);
 
@@ -495,7 +493,7 @@ describe("PATCH /api/docs — folder rename moves the subtree (SPEC §5)", () =>
     expect(`PATCH folder → ${r.status} ${r.text.slice(0, 200)}`).toBe(`PATCH folder → 200 ${r.text.slice(0, 200)}`);
     expect(r.body.path).toBe("newfolder");
     expect(r.body.from).toBe("oldfolder");
-    /* API.md (normative per SPEC §3): a folder move enumerates the subtree so a
+    /* normative in the HTTP contract: a folder move enumerates the subtree so a
        client can re-point open editors without diffing two trees */
     const movedPairs = [...(r.body.moved ?? [])]
       .map((m: any) => `${m?.from} → ${m?.to}`)
@@ -514,22 +512,22 @@ describe("PATCH /api/docs — folder rename moves the subtree (SPEC §5)", () =>
     );
     expectFileBytes(vault, "newfolder/fold-one.md", MD_FOLD_ONE, "fold-one moved intact");
     expectFileBytes(vault, "newfolder/fold-two.md", MD_FOLD_TWO, "fold-two moved intact");
-    /* API.md: the subtree comes along "including non-`.md` files" */
+    /* the contract: the subtree comes along "including non-`.md` files" */
     expectFileBytes(vault, "newfolder/diagram.png", "PNG-PLACEHOLDER-BYTES\n", "the attachment moved with the folder");
     expect(`oldfolder/diagram.png gone: ${!vaultHas(vault, "oldfolder/diagram.png")}`).toBe(
       "oldfolder/diagram.png gone: true"
     );
 
     /* `[[fold-one]]` still resolves — the slug is still unique — so rewriting
-       it would be gratuitous churn against SPEC §5's "path-qualified only on
+       it would be gratuitous churn against "path-qualified only on
        collision". `[[oldfolder/fold-two]]` names a path that no longer exists
        and MUST be rewritten. */
     expectFileBytes(vault, "fref/slugform.md", MD_SLUGFORM, "a still-resolving slug link is left alone");
     /* `[[oldfolder/fold-two]]` names a path that no longer exists, so it MUST
-       change. Two rewrites are equally correct and the SPEC does not choose
-       between them: follow the folder (`[[newfolder/fold-two]]`, minimal edit,
+       change. Two rewrites are equally correct and nothing chooses between
+       them: follow the folder (`[[newfolder/fold-two]]`, minimal edit,
        keeps the author's qualified form) or canonicalise to the now-unique slug
-       (`[[fold-two]]`, since §5 makes the bare slug the normal form). Anything
+       (`[[fold-two]]`, the bare slug being the normal form). Anything
        else — including leaving it — fails. */
     expectFileBytesOneOf(
       vault,
@@ -573,7 +571,7 @@ describe("PATCH /api/docs — folder rename moves the subtree (SPEC §5)", () =>
    5 — errors: nothing moves, nothing commits
    ============================================================ */
 
-describe("PATCH /api/docs — refusals (SPEC §3 delta 2)", () => {
+describe("PATCH /api/docs — refusals", () => {
   test("a target that already exists is 409 exists and changes nothing", async () => {
     const before = await commitCount(vault);
     const r = await patchDoc(srv, "err/src.md", { to: "err/dst.md" });
@@ -643,7 +641,7 @@ describe("PATCH /api/docs — refusals (SPEC §3 delta 2)", () => {
    6 — delete: human-only, subtree-aware, backlinks left BROKEN
    ============================================================ */
 
-describe("DELETE /api/docs — removes the doc and leaves its backlinks broken (SPEC §5)", () => {
+describe("DELETE /api/docs — removes the doc and leaves its backlinks broken", () => {
   test("204, file gone, referrer byte-unchanged, one commit, SSE removal", async () => {
     const before = await commitCount(vault);
     const sse = await srv.sse();
@@ -660,7 +658,7 @@ describe("DELETE /api/docs — removes the doc and leaves its backlinks broken (
       const gone = await srv.doc("del/doomed.md");
       expect(`GET the deleted doc → ${gone.status} ${gone.body?.error}`).toBe("GET the deleted doc → 404 not-found");
 
-      /* SPEC §5: a link to a deleted doc becomes a BROKEN link — the referrer
+      /* a link to a deleted doc becomes a BROKEN link — the referrer
          is not rewritten, not stripped, not touched at all */
       expectFileBytes(vault, "del/mourner.md", MD_MOURNER, "the referrer is byte-identical after a delete");
 
@@ -730,7 +728,7 @@ describe("DELETE /api/docs — removes the doc and leaves its backlinks broken (
    7 — round trip: a move is a move, not a normalization pass
    ============================================================ */
 
-describe("PATCH /api/docs — byte fidelity across a move (SPEC §11 round-trip)", () => {
+describe("PATCH /api/docs — byte fidelity across a move (round-trip)", () => {
   test("CRLF, tabs, trailing spaces and a missing final newline survive a rename", async () => {
     const r = await patchDoc(srv, "rt/weird.md", { to: "rt/weird-moved.md" });
     expect(`PATCH → ${r.status} ${r.text.slice(0, 200)}`).toBe(`PATCH → 200 ${r.text.slice(0, 200)}`);
@@ -836,13 +834,13 @@ describe("PATCH /api/docs — a failed rewrite rolls everything back", () => {
 });
 
 /* ============================================================
-   9 — AI isolation (SPEC §8: "no delete/rename", §1 out of scope)
+   9 — AI isolation — the assistant gets no delete and no rename
 
    Two independent gates: the tool SURFACE the model is given, and the
    BEHAVIOUR when a model invents a delete/rename anyway.
    ============================================================ */
 
-describe("the AI cannot rename or delete (SPEC §8)", () => {
+describe("the AI cannot rename or delete", () => {
   const KEY = "sk-mock-FILEOPSCANARY-2f81";
   const P = "ai/victim.md";
   const VICTIM = "# Victim\n\nthe assistant may edit this and nothing more\n";
@@ -968,8 +966,8 @@ describe("the AI cannot rename or delete (SPEC §8)", () => {
       }
     }
 
-    /* the op set is a closed literal of exactly the four SPEC §8 ops —
-       declared in ai-edits.ts, the pure edit engine under ai.ts */
+    /* the op set is a closed literal of exactly the four ops the assistant may
+       propose — declared in ai-edits.ts, the pure edit engine under ai.ts */
     const editsSrc = stripComments(readFileSync(join(REPO_ROOT, "server", "ai-edits.ts"), "utf8"));
     const opsLine = /new Set\(\[([^\]]*)\]\)/.exec(editsSrc.slice(editsSrc.indexOf("OPS")));
     expect(`ai-edits.ts declares an OPS set: ${!!opsLine}`).toBe("ai-edits.ts declares an OPS set: true");
@@ -989,11 +987,11 @@ describe("the AI cannot rename or delete (SPEC §8)", () => {
    breaks out of `[[…]]`, a case-only rename git silently refused, a folder op
    that stranded its attachments, a blockquoted fence the rewriter and the
    renderer disagreed about, the `to === from` split between docs and folders,
-   the SSE pair order API.md fixes, a commit skipped without a word, and the
+   the SSE pair order the contract fixes, a commit skipped without a word, and the
    AI change stack under a human rename or delete.
    ============================================================ */
 
-describe("PATCH /api/docs — a name that cannot survive a [[link]] is refused (SPEC §5)", () => {
+describe("PATCH /api/docs — a name that cannot survive a [[link]] is refused", () => {
   test("`]]` and a newline in the target are 400 bad-path, and every referrer is byte-identical", async () => {
     const V = makeVault({
       "a.md": "# A\n\nthe target\n",
@@ -1097,7 +1095,7 @@ describe("PATCH /api/docs — a case-only rename really reaches git", () => {
   }, 60000);
 });
 
-describe("file ops report a commit they could not make (SPEC §5 'one commit')", () => {
+describe("file ops report a commit they could not make (the 'one commit' rule)", () => {
   test("mid-merge: the move still lands on disk, and the response says the commit was skipped", async () => {
     const V = makeVault({
       "m.md": "# M\n\nbase\n",
@@ -1196,7 +1194,7 @@ describe("PATCH /api/docs — a no-op is a no-op for both entity kinds", () => {
       expect(`doc no-op type/path: ${doc.body.type} ${doc.body.path}`).toBe("doc no-op type/path: file same/a.md");
 
       /* the self-containment guard used to fire first, so the same request
-         answered 400 for a folder — a split API.md never documented */
+         answered 400 for a folder — a split the contract never documented */
       const dir = await patchDoc(s, "same", { to: "same" });
       expect(`folder no-op → ${dir.status} ${dir.body?.error ?? ""}`.trim()).toBe("folder no-op → 200");
       expect(`folder no-op type/path: ${dir.body.type} ${dir.body.path}`).toBe("folder no-op type/path: folder same");
@@ -1208,7 +1206,7 @@ describe("PATCH /api/docs — a no-op is a no-op for both entity kinds", () => {
 
       expectFileBytes(V, "same/a.md", "# A\n\nbody\n", "nothing moved");
 
-      /* API.md's table: DELETE of an existing NON-.md file is 404, not 204 */
+      /* the contract's table: DELETE of an existing NON-.md file is 404, not 204 */
       writeFileSync(join(V, "same", "notes.txt"), "not a doc\n");
       const d = await deleteDoc(s, "same/notes.txt");
       expect(`DELETE a non-.md file → ${d.status} ${d.body?.error}`).toBe("DELETE a non-.md file → 404 not-found");
@@ -1219,7 +1217,7 @@ describe("PATCH /api/docs — a no-op is a no-op for both entity kinds", () => {
   }, 60000);
 });
 
-describe("SSE — the `moved` pair arrives in the order API.md documents", () => {
+describe("SSE — the `moved` pair arrives in the order the contract documents", () => {
   test("old path (removed + to) first, then the new path (from)", async () => {
     const V = makeVault({ "ev/mover.md": "# Mover\n\nbody\n" });
     orphanVaults.push(V);
@@ -1251,7 +1249,7 @@ describe("SSE — the `moved` pair arrives in the order API.md documents", () =>
   }, 60000);
 });
 
-describe("PATCH /api/docs — a doc that CARRIES an age fence moves untouched (SPEC §6)", () => {
+describe("PATCH /api/docs — a doc that CARRIES an age fence moves untouched", () => {
   test("bytes identical, hasSecrets still true, no armor in search", async () => {
     const SECRET_DOC =
       "# Keys\n\nsome prose with [[plain]] in it\n\n```age\n" +
@@ -1288,7 +1286,7 @@ describe("PATCH /api/docs — a doc that CARRIES an age fence moves untouched (S
 /* ============================================================
    11 — the AI change stack meets the phase-5 file ops.
 
-   SPEC §8 gives the assistant no delete and no rename. Two ways that boundary
+   The assistant is given no delete and no rename. Two ways that boundary
    used to leak: `op:create` decided "the path is free" by asking readDoc(),
    which answers null for a file it merely cannot DECODE — so the assistant
    could overwrite a latin-1 note the human create path refuses, and revert then
@@ -1443,7 +1441,7 @@ describe("the AI change stack under a human rename or delete", () => {
 });
 
 /* ============================================================
-   POST /api/docs — creation (SPEC §5, API.md § POST /api/docs)
+   POST /api/docs — creation
 
    The client grammar (`a/b/c.md`, `abc/`, a bare name) resolves entirely in the
    browser and arrives here as ONE path. What the backend owes that grammar is

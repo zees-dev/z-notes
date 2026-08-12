@@ -1,5 +1,6 @@
 /* ============================================================
-   lifecycle-e2e.test.ts — the SILENT-LOSS paths (SPEC §4 "Saving", §5).
+   lifecycle-e2e.test.ts — the SILENT-LOSS paths: saving, and a deletion
+   arriving under an unsaved buffer.
 
    Both subjects here failed the same way: the app kept going, said nothing,
    and the user's text was gone. They get their own file because both need the
@@ -213,7 +214,7 @@ const encode = (p: string) => p.split("/").map(encodeURIComponent).join("/");
    1 — the lifecycle flush
    ------------------------------------------------------------------ */
 
-describe("visibilitychange flushes the buffer (SPEC §4)", () => {
+describe("visibilitychange flushes the buffer", () => {
   test("hiding the tab writes unsaved text to disk; the debounce never runs", async () => {
     await openDoc(FLUSH_DOC);
     await toRaw();
@@ -315,7 +316,7 @@ describe("visibilitychange flushes the buffer (SPEC §4)", () => {
    2 — the orphaned buffer
    ------------------------------------------------------------------ */
 
-describe("a deletion elsewhere never takes an unsaved buffer with it (SPEC §5)", () => {
+describe("a deletion elsewhere never takes an unsaved buffer with it", () => {
   test("dirty buffer survives, the notice is sticky, and ⌘S offers Recreate", async () => {
     await openDoc(ORPHAN_DOC);
     await toRaw();

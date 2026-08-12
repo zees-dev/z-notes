@@ -52,7 +52,7 @@ export function updateSessionUI() {
 }
 
 /* ============================================================
-   EFFORT MENU (spec 0006) — the model chip is a button; picking an effort
+   EFFORT MENU — the model chip is a button; picking an effort
    PUTs ai.effort and repaints the chip from a session refetch, because the
    chip's contract is the server's effortInUse, not the configured value.
    The PUT is NEVER skipped when the pick equals the shown value: a patch
@@ -383,7 +383,7 @@ export async function startNewSession() {
 
 /* ---------------- streaming turn ----------------
 
-   POST /api/ai/messages streams (SPEC §3 delta 4). Deltas paint into the live
+   POST /api/ai/messages streams. Deltas paint into the live
    bubble; the terminal `done` event carries exactly the JSON the non-streaming
    contract returned, and it goes through `absorbTurn` — the same code the blob
    reply used — so the proposal card, the stack and the session stats have one

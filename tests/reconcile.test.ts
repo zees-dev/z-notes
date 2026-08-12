@@ -1,10 +1,10 @@
 /* ============================================================
-   SPEC §11 — RECONCILE GATE
+   RECONCILE GATE
 
-   "atomic-save simulation (temp+rename), identical-bytes suppression,
-    burst debounce"
+   Atomic-save simulation (temp+rename), identical-bytes suppression, burst
+   debounce.
 
-   The watcher is a contentless doorbell (SPEC §2): on macOS `fs.watch` reports
+   The watcher is a contentless doorbell: on macOS `fs.watch` reports
    `rename` for everything and an atomic save names only the temp file. So the
    only thing worth asserting is what comes out the far end of
    watch → debounce → reconcile → SSE:
@@ -67,7 +67,7 @@ afterAll(async () => {
 const docEvents = (from: number, path: string) =>
   sse.since(from, "doc-changed").filter((e) => e.data && e.data.path === path);
 
-describe("reconcile gate (SPEC §11)", () => {
+describe("reconcile gate", () => {
   test("(a) atomic save — temp file inside the vault, renamed over a doc — emits one external doc-changed naming the real doc", async () => {
     const target = "atomic.md";
     const tmpRel = ".atomic.md.tmp-9182";
@@ -177,7 +177,7 @@ describe("reconcile gate (SPEC §11)", () => {
       match: (d) => d && d.path === target,
       timeout: 2500,
     });
-    /* API.md reason vocabulary; a discovered-on-disk file is created|external */
+    /* the contract reason vocabulary; a discovered-on-disk file is created|external */
     expect(["created", "external"]).toContain(ev.data.reason);
     expect(ev.data.bytes).toBe(Buffer.byteLength(content, "utf8"));
 
@@ -251,7 +251,7 @@ describe("reconcile gate (SPEC §11)", () => {
     const put = await srv.putDoc(target, "# Racy\n\nBROWSER BUFFER\n", revTheClientHolds);
     expect(put.status).toBe(409);
     expect(put.body.error).toBe("rev-conflict");
-    expect(put.body.markdown).toBe(external); // SPEC §3 delta 3: 409 carries disk
+    expect(put.body.markdown).toBe(external); // a 409 carries the on-disk markdown
     expect(readVaultText(vault, target)).toBe(external);
   }, 20000);
 

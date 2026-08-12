@@ -1,5 +1,5 @@
 /* ============================================================
-   editor.js — raw/preview modes, save pipeline, exit guard (SPEC §4).
+   editor.js — raw/preview modes, save pipeline, exit guard.
 
    Split from the original single-file app.js along its own section markers;
    behaviour is unchanged. See that file's history for each section's full
@@ -20,7 +20,7 @@ import { closeNav, isDrawer, isSheet, markerForLayer, overlayOpen, retireLayerMa
 import { recordHistory } from "./history.js";
 
 /* ============================================================
-   EXIT GUARD (SPEC §4) — leaving Raw with text that is not on disk
+   EXIT GUARD — leaving Raw with text that is not on disk
 
    The third dialog on the SAME veil chrome as the two above, and for the same
    reason they share one: every one of them asks the single question this app
@@ -49,7 +49,7 @@ import { recordHistory } from "./history.js";
    run, `diskText` and the textarea agree and there is genuinely nothing left to
    confirm, so leaving is silent. That makes this dialog INTERMITTENT by nature:
    it appears when you leave quickly after typing and not otherwise. That is the
-   honest behaviour and the debounce is a SPEC §4 decision, not this guard's to
+   honest behaviour and the debounce is a product-level decision, not this guard's to
    change.
    ============================================================ */
 
@@ -866,7 +866,7 @@ export function navGate() {
 
 export async function openDoc(path, opts) {
   if (!path) return;
-  /* NAVIGATING AWAY FROM A DIRTY RAW BUFFER asks first (SPEC §4) — a tree click,
+  /* NAVIGATING AWAY FROM A DIRTY RAW BUFFER asks first — a tree click,
      a ⌘K pick, a [[link]], the home button. `replace` is what the programmatic
      re-homes carry (a popstate we are catching up with, the SSE `moved` echo, an
      accepted proposal, an openDoc that is repairing the address bar), and none
@@ -960,7 +960,7 @@ export function syncModeUI() {
   }
   /* encrypt-selection only means anything over a selection in the source — and
      only when secrets work at all. A live button whose only possible outcome is
-     an error toast is the dead affordance SPEC §6's degradation rules out. */
+     an error toast is the dead affordance secrets degradation rules out. */
   const enc = $("#encBtn");
   if (enc) enc.hidden = state.mode !== "raw" || vault.state === "disabled";
   syncWrapUI();
@@ -1005,7 +1005,7 @@ export function setMode(m, opts) {
     if (m === "raw" && opts.caret != null) focusRaw(opts);
     return;
   }
-  /* THE ONE DOOR out of Raw (SPEC §4). ⌘E, the statusbar mode chip, a click on
+  /* THE ONE DOOR out of Raw. ⌘E, the statusbar mode chip, a click on
      the pane whitespace and Esc all leave through this call, so the unsaved-work
      guard is here rather than repeated at four call sites — `force` is what the
      dialog's own Save/Discard come back through. */
@@ -1351,7 +1351,7 @@ async function doSaveDoc(path, opts) {
   const doc = state.docs.get(path);
   if (!doc) return false;
   if (path === state.active) syncRaw();
-  /* THE leak gate (SPEC §11, research §6 "Autosave"): the payload is built
+  /* THE leak gate (research §6 "Autosave"): the payload is built
      from doc.markdown, which holds armor only. A block that was revealed but
      not edited contributes its original bytes; a block that WAS edited is
      turned back into ciphertext here, before a single byte is serialized.

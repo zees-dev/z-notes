@@ -1,5 +1,5 @@
 # =============================================================================
-# z-notes — production image (SPEC §10)
+# z-notes — production image
 #
 # Build context is the REPO ROOT, not deploy/:
 #     docker build -f deploy/Dockerfile -t z-notes:0.1.0 .
@@ -80,7 +80,7 @@ FROM oven/bun:1.3.14-slim AS runtime
 LABEL org.opencontainers.image.source="https://github.com/zees-dev/z-notes"
 
 # Three packages, each earning its place:
-#   git             — hard runtime dependency: SPEC §7 sync shells out to `git`
+#   git             — hard runtime dependency: git sync shells out to `git`
 #                     via Bun.spawn.
 #   ca-certificates — what lets that git push to GitHub over HTTPS.
 #   procps          — `ps`, which terminal.ts's killTree() walks to signal a

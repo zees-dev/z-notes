@@ -52,9 +52,9 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   new durable decisions get promoted here by `/implement`.
 - [docs/specs/](docs/specs/) — work specs. `open/` = transient, awaiting
   implementation (written by `/spec`); `done/` = the archive. The five founding
-  specs live there: 0001 product ("SPEC §N" in code = its section N), 0002 the
-  normative HTTP/SSE contract, 0003 theming, 0004 secrets crypto, 0005 the Bun
-  platform research. Their durable rules are ADRs 0002–0004 — amended later by
+  specs live there: 0001 product, 0002 the normative HTTP/SSE contract, 0003
+  theming, 0004 secrets crypto, 0005 the Bun platform research. Their durable
+  rules are ADRs 0002–0004 — amended later by
   0006 (0004's passphrase floor is advice, not a gate), 0007 (the app is
   installable) and 0008 (on a phone, Back unwinds layers before it leaves).
   0010 (mermaid is a committed bundle, and a fence is untrusted input) and
@@ -84,9 +84,9 @@ durable decision to an ADR in the same change.
 
 - The API contract is `docs/specs/done/0002-http-api-v0.md` — behavior-preserving unless a spec says
   otherwise. Error bodies are `{error, message, ...extra}`, key order included.
-- The server never sees a passphrase or plaintext secret (SPEC §6). Nothing in
+- The server never sees a passphrase or plaintext secret. Nothing in
   `server/` may import `age-encryption` — `tests/secrets.test.ts` enforces it.
-- The AI relay has no route to rename/delete (SPEC §8) — `tests/fileops.test.ts`
+- The AI relay has no route to rename/delete — `tests/fileops.test.ts`
   greps the source of all three `ai*.ts` modules to prove it.
 - One deploy replica, ever (sqlite + fs.watch + git working tree; see
   `deploy/k3s/20-deployment.yaml`).

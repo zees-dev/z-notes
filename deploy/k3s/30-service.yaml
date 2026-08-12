@@ -8,7 +8,7 @@ metadata:
 spec:
   # ClusterIP, not LoadBalancer/NodePort. The only way in is through Traefik,
   # which is where TLS terminates — and TLS is not cosmetic here: without a
-  # secure context the browser has no window.crypto.subtle, and SPEC §6
+  # secure context the browser has no window.crypto.subtle, and the app
   # degrades every secrets feature off (blocks stay armored, badge explains
   # why). Exposing this Service directly would hand out a plaintext HTTP origin
   # that quietly disables half the app.

@@ -37,7 +37,7 @@ function tableEl(rows) {
   return w;
 }
 
-/* Code wraps rather than scrolls (SPEC §4), and a wrapped line has to stay
+/* Code wraps rather than scrolls, and a wrapped line has to stay
    distinguishable from a real one — so each SOURCE line is its own block box
    carrying a hanging indent (`.cline` in base.css), and the continuations of a
    long line sit one step in from the lines around them.

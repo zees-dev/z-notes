@@ -1,8 +1,8 @@
 /* ============================================================
-   SPEC §11 — ROUND-TRIP GATE
+   ROUND-TRIP GATE
 
-   "golden corpus — open/save cycles byte-identical for externally-written
-    files (frontmatter, setext, `1)` lists, tabs, trailing spaces)"
+   A golden corpus: open/save cycles stay byte-identical for externally-written
+   files (frontmatter, setext, `1)` lists, tabs, trailing spaces).
 
    Every case is written to disk as raw bytes *before* the server starts, so
    the server has no idea the app authored it. Then: GET → PUT the exact
@@ -85,12 +85,12 @@ export const CORPUS: Golden[] = [
   g("corpus/crlf.md", "a Windows CRLF file must stay CRLF end to end", CRLF_TEXT),
   g(
     "corpus/blank-runs.md",
-    "3+ consecutive blank lines must not be collapsed (SPEC §4 blank-line multiplicity)",
+    "3+ consecutive blank lines must not be collapsed — blank-line multiplicity is preserved",
     "# Blank runs\n\nOne blank line above.\n\n\n\nThree blank lines above this paragraph.\n\n\n\n\n\nFive blank lines above this one.\n\n> quote after two blanks\n\n\nlast\n"
   ),
   g(
     "corpus/age-block.md",
-    "an armored ```age fence must round-trip untouched (SPEC §6 leak rule)",
+    "an armored ```age fence must round-trip untouched — ciphertext is never re-encoded",
     "# Secrets\n\nEverything below is encrypted at rest.\n\n```age\n-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBxSzl4...\nZt2wPmVFJk3XN8LQvR5tYcAeD7hHnUuBsWgO1iM4E6f9rTKp\n-----END AGE ENCRYPTED FILE-----\n```\n\ntrailing prose\n"
   ),
   g(
@@ -134,7 +134,7 @@ afterAll(async () => {
   if (vault) dropVault(vault);
 });
 
-describe("round-trip gate (SPEC §11)", () => {
+describe("round-trip gate", () => {
   test("every corpus file is indexed and readable", async () => {
     const r = await srv.get("/api/docs");
     expect(r.status).toBe(200);

@@ -3,7 +3,7 @@
    black-box from the HTTP surface, and that custody depends on:
 
      - `sanitizeRemote`, the ONLY thing standing between a remote URL's
-       userinfo and `SyncStatus.remote` (API.md § Sync: "no credentials").
+       userinfo and `SyncStatus.remote` (the sync contract: "no credentials").
      - `gitMessage`, which decides whether `state:"error"` names something the
        user can act on or just repeats git's progress chatter.
      - the GIT_ASKPASS helper, which lives under `.znotes/tmp/` — an ignored

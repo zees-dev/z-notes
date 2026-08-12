@@ -1,6 +1,7 @@
 /* ============================================================
-   vaultkey-e2e.test.ts — changing the vault passphrase, end to end
-   (SPEC §6; docs/specs/done/0004-secrets-client-side-crypto.md §5.3).
+   vaultkey-e2e.test.ts — changing the vault passphrase, end to end. The rule
+   under test: the re-wrap happens in the browser and the server never sees a
+   passphrase or a plaintext.
 
    The user's question this answers: "I should be able to update this secret in
    the settings — I believe this should be stored in the backend though." The
@@ -56,7 +57,7 @@ beforeAll(async () => {
 
   const e = new age.Encrypter();
   e.setPassphrase(OLD_PASS);
-  e.setScryptWorkFactor(18); // exactly what the app writes (SPEC §6)
+  e.setScryptWorkFactor(18); // exactly what the app writes
   const wrapped = age.armor.encode(await e.encrypt(identity));
 
   const be = new age.Encrypter();
@@ -188,7 +189,7 @@ async function unwrapOnDisk(pass: string): Promise<string> {
 
 /* ============================================================ */
 
-describe("vault key — what Settings › Secrets SAYS about storage (SPEC §6)", () => {
+describe("vault key — what Settings › Secrets SAYS about storage", () => {
   test("the status line names the two keyring files and the lock state", async () => {
     const txt = await statusLine();
     expect(`names identity.age: ${txt.includes(".znotes/identity.age")}`).toBe("names identity.age: true");
@@ -226,7 +227,7 @@ describe("vault key — what Settings › Secrets SAYS about storage (SPEC §6)"
   }, 60000);
 });
 
-describe("vault key — the refusals write nothing (SPEC §6)", () => {
+describe("vault key — the refusals write nothing", () => {
   test("a wrong current passphrase fails and leaves identity.age byte-identical", async () => {
     await fill("this is not the vault passphrase", NEW_PASS, NEW_PASS);
     await submit();
@@ -296,7 +297,7 @@ describe("vault key — the refusals write nothing (SPEC §6)", () => {
     });
     /* the whole finding: this said "Write it down NOW — nothing here can show
        it to you again" over a field rendering discs, with no reveal control
-       anywhere in the panel and no recovery path for the vault (SPEC §6) */
+       anywhere in the panel and no recovery path for the vault */
     expect(`#keyNew is legible: ${(await masking("keyNew")) !== "disc"}`).toBe("#keyNew is legible: true");
     expect(await hint()).toMatch(/shown above/i);
 
@@ -482,7 +483,7 @@ describe("vault key — the change itself, proved out of band", () => {
   }, 60000);
 
   test("neither passphrase was ever in a request body — or in the server's log", async () => {
-    /* SPEC §11: "plaintext never in any server-bound request". The passphrase
+    /* plaintext never travels in any server-bound request. The passphrase
        is typed into a field, handed to the crypto worker, spent on scrypt and
        dropped; what the network is allowed to carry is the WRAPPED armor and
        nothing else. Asserted over every request this page made from before its

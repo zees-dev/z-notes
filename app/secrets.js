@@ -1,5 +1,5 @@
 /* ============================================================
-   secrets.js — the client half of SPEC §6: reveal/lock, vault keyring.
+   secrets.js — the client half of secrets: reveal/lock, vault keyring.
 
    Split from the original single-file app.js along its own section markers;
    behaviour is unchanged. See that file's history for each section's full
@@ -18,7 +18,7 @@ import { autoGrow, markDirty, saveDoc, syncModeUI, syncRawFromModel, updateMeta,
 import { settingAt } from "./settings.js";
 
 /* ============================================================
-   SECRETS — the client half of SPEC §6
+   SECRETS — the client half; the server never sees a passphrase or plaintext
 
    Everything cryptographic happens in ./crypto-worker.js. This file owns the
    UI and the document model and holds NO key material: it can ask the worker
@@ -27,8 +27,8 @@ import { settingAt } from "./settings.js";
    `vault.state`:
      unknown  — not probed yet
      disabled — no secure context / no WebCrypto / worker or bundle failed;
-                blocks render armored with a badge that explains why (SPEC §6
-                degradation), and the rest of the app is untouched
+                blocks render armored with a badge that explains why, and the
+                rest of the app is untouched
      none     — supported, but this vault has no identity yet
      repair   — .znotes/identity.age exists but .znotes/vault.pub does not.
                 Unlocking derives the recipient and rewrites the missing file;
@@ -81,7 +81,7 @@ function disableSecrets(reason) {
   console.warn("[z-notes] secrets disabled:", reason);
   /* the toolbar's encrypt affordance is part of "disabled" too — a live button
      that can only produce an error toast is the dead-button failure mode the
-     block rendering was carefully built to avoid (SPEC §6) */
+     block rendering was carefully built to avoid */
   syncModeUI();
   return vault;
 }
@@ -247,7 +247,7 @@ async function onVaultLocked(reason) {
      flow there is, and cancelling the clear left the plaintext on the system
      clipboard forever (research §6, "Clipboard"). */
   clearClipboardNow();
-  /* THE WIPE COMES FIRST (SPEC §84). Re-encrypting an edit is a round trip to
+  /* THE WIPE COMES FIRST. Re-encrypting an edit is a round trip to
      the worker and then a PUT with no deadline of its own, and locking used to
      await both BEFORE clearing the screen: a wedged or suspended server left
      the decrypted plaintext sitting in an open editor indefinitely — measured
@@ -328,7 +328,7 @@ export function paintVaultChip() {
 }
 
 /* ============================================================
-   VAULT KEY — Settings › Secrets (SPEC §6, research §5.3)
+   VAULT KEY — Settings › Secrets (research §5.3)
 
    Two things live here and nothing else: the truth about this vault's keyring,
    and the ONE key operation that is safe to run from a settings panel.
@@ -669,8 +669,7 @@ async function repairRecipient(identityArmor, recipient) {
  * same rule the rest of this app follows about destructive-but-deliberate acts.
  * `entropy.js` keeps the estimator and its unit tests either way.
  *
- * (ADR 0006 records this; spec 0004 §5.4 and its decision table describe the
- * floor as it shipped and are an archive, not the live contract.)
+ * (ADR 0006 records this: the passphrase floor is advice, not a gate.)
  */
 async function createIdentity(pass, confirm) {
   if (!pass) {
@@ -757,7 +756,7 @@ function rekeyReveals(path) {
  * armor goes out byte for byte (research §4.2).
  *
  * `entries` is the lock path's snapshot: locking wipes `state.reveal` FIRST
- * (the screen must go blank before the network, SPEC §84) and hands the dirty
+ * (the screen must go blank before the network) and hands the dirty
  * entries here afterwards. Entries that are no longer in the map are flushed
  * into the document and into the live nodes, but never put back into it — a
  * locked vault holds no plaintext.
@@ -837,10 +836,10 @@ export async function flushSecretEdits(doc, entries) {
  * Re-read `.znotes/vault.pub` and refuse to encrypt to a recipient that has
  * moved under us.
  *
- * Encrypting is the one secrets operation that works while LOCKED (SPEC §6 —
- * the recipient is public), which also means it is the one operation that
+ * Encrypting is the one secrets operation that works while LOCKED (the
+ * recipient is public), which also means it is the one operation that
  * never touches the unlock-time check that the recipient pairs with
- * `.znotes/identity.age`. Both keyring files are tracked and pushed (SPEC §7),
+ * `.znotes/identity.age`. Both keyring files are tracked and pushed,
  * so an ordinary `pull --rebase`, a hand-edit, or anyone with write access to
  * the remote can swap `vault.pub` for a foreign key — after which every new
  * secret is encrypted to a key this vault cannot decrypt and the attacker can.
@@ -915,7 +914,7 @@ export async function encryptSelection() {
   }
 }
 
-/* ---------- secret block (SPEC §6) ----------
+/* ---------- secret block ----------
 
    The block's source of truth is the ARMOR in doc.markdown. Revealing adds an
    entry to state.reveal and rewrites this one node; it never touches the

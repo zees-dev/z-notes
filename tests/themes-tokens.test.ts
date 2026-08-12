@@ -5,12 +5,12 @@
    Both are DOCUMENTED invariants with no enforcement, which is the shape of
    thing that is true on the day it is written and quietly false a theme later:
 
-     1. THE DENSITY FLOORS (base.css §2, SPEC §9). base.css names the minimum a
+     1. THE DENSITY FLOORS (base.css §2). base.css names the minimum a
         control, a tree row and body copy may shrink to, and every theme is
         explicitly allowed to override the tokens they are stated about — so
         the floors are a claim about all four files, not about base.css. The
         numbers in that comment had drifted to base's OWN rungs, which made it
-        contradict both SPEC §9 and terminal.css shipped beside it.
+        contradict terminal.css shipped beside it.
 
      2. THE DARK-TOKEN CONTRACT (THEMES.md, base.css §1b). `:root[data-scheme=
         "dark"]` (0,2,0) outranks a theme's plain `:root` (0,1,0) regardless of

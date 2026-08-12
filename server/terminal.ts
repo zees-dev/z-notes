@@ -1,5 +1,5 @@
 /* ============================================================
-   terminal.ts — the password-locked command runner (SPEC §13).
+   terminal.ts — the password-locked command runner.
 
    WHAT THIS IS, PRECISELY. Bun 1.3.14 has no PTY: `Bun.spawn(…, {pty:true})`
    is ignored and the child reports "not a tty", and node-pty is a native addon,
@@ -411,7 +411,7 @@ export class Terminal {
    *
    * The trade is honest: an XSS in this page could read the variable, where it
    * could not read an httpOnly cookie. But this app has no app-level auth at
-   * all (SPEC §10), so script running in the page can already read and rewrite
+   * all, so script running in the page can already read and rewrite
    * every note and drive the AI relay; the cross-site vector is the one that
    * this choice actually closes.
    */
@@ -852,7 +852,7 @@ export class Terminal {
   }
 
   /* ============================================================
-     AI access (SPEC §8 / §13)
+     AI access
 
      THE GATE. Note content and AI context are attacker-influenceable: a note
      can be written by anyone the user pastes from, a fetched doc can carry
@@ -936,11 +936,11 @@ export class Terminal {
   /**
    * A command's transcript, as it is allowed to become DURABLE.
    *
-   * `cat keys/cloud-keys.md`, `git show`, `grep -r` — the things §13 advertises
-   * the terminal for — put whatever is in the vault on stdout, age armor
+   * `cat keys/cloud-keys.md`, `git show`, `grep -r` — the things the terminal
+   * is advertised for — put whatever is in the vault on stdout, age armor
    * included. This record is written to sqlite and replayed into EVERY later AI
-   * context, so armor reaching it breaks two rules at once: SPEC §11's "armor
-   * never in the search index", and — because the relay's canary then refuses
+   * context, so armor reaching it breaks two rules at once: armor must never
+   * reach the search index, and — because the relay's canary then refuses
    * every assembled context that carries it — the assistant stops working
    * entirely, in every session, until index.db is deleted.
    *

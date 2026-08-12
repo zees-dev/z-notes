@@ -14,7 +14,7 @@
 #                    the bare hostname lands on a dead port and looks like the
 #                    app is down. It also means nobody can accidentally use the
 #                    app over an insecure origin and wonder why the secrets
-#                    features are switched off (SPEC §6 degradation).
+#                    features degrade off outside a secure context.
 #
 # >>> The three `znotes.home.arpa` occurrences must match 40-certificates.yaml
 # and what you type in the browser. Add a second `rules[]` host block (and a

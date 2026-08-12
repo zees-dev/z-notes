@@ -1,10 +1,9 @@
 /* ============================================================
    E2E GATE — a real browser against the real backend serving the real app.
 
-   SPEC §11 "Parity: computed-style/rect equality between modes across
-   densities … (port the prototype's headless checks)" plus the phase-1
-   acceptance checklist: boot, tree, navigation, ⌘E, ⌘S → disk, external edit
-   → SSE → UI, ⌘K palette, connection dot.
+   Parity: computed-style/rect equality between Preview and Raw across
+   densities, plus the phase-1 acceptance checklist: boot, tree, navigation,
+   ⌘E, ⌘S → disk, external edit → SSE → UI, ⌘K palette, connection dot.
 
    Driver: puppeteer-core over the Chromium headless shell that Playwright
    already cached (~/Library/Caches/ms-playwright/chromium_headless_shell-*).
@@ -98,9 +97,9 @@ const PARITY_PROPS = [
 /**
  * The container AND where the text inside it starts.
  *
- * SPEC §4's claim is two clauses — "both modes share the identical container …
- * ONLY THE TEXT CHANGES" — and measuring `#doc` alone proves the first while
- * being blind to the second. Mutation-tested: `.doc.raw-mode .raw { padding-left:
+ * The claim under test is two clauses — both modes share the identical
+ * container, and ONLY THE TEXT CHANGES — and measuring `#doc` alone proves the
+ * first while being blind to the second. Mutation-tested: `.doc.raw-mode .raw { padding-left:
  * 24px; margin-top: 18px }` moved the first line of the document 24px right and
  * 4px down on every ⌘E, in every breakpoint and both densities, and the gate
  * stayed green because `#doc` itself had not moved. So the text origin is
@@ -265,8 +264,8 @@ describe("e2e — ⌘E and container parity", () => {
     expect(await page.$eval("#doc h1", (h) => h.textContent)).toBe("Event pipeline");
   }, 25000);
 
-  /* SPEC §11 asks for parity across densities AND breakpoints. base.css
-     overrides .doc padding at <=1150px and again at <=767px, so a rule that
+  /* parity is owed across densities AND breakpoints. base.css overrides
+     .doc padding at <=1150px and again at <=767px, so a rule that
      forgets one mode (or a mobile-only inset on the raw textarea) breaks parity
      on every phone while a desktop-only measurement stays green.
 
@@ -314,8 +313,8 @@ describe("e2e — ⌘E and container parity", () => {
           expect(raw.rect.width).toBeCloseTo(preview.rect.width, 1);
           expect(raw.rect.top).toBeCloseTo(preview.rect.top, 1);
           /* …and the text does not JUMP inside it: switching mode must not
-             move the first line of the document (SPEC §4, "only the text
-             changes" — the second clause) */
+             move the first line of the document — "only the text changes",
+             the second clause */
           expect(`${at} preview text origin: ${JSON.stringify(preview.text)}`).not.toBe(
             `${at} preview text origin: null`
           );
@@ -389,7 +388,7 @@ describe("e2e — ⌘E and container parity", () => {
   }, 180000);
 
   /**
-   * THE MEASURE FLOOR (SPEC §11).
+   * THE MEASURE FLOOR.
    *
    * Parity above proves the two modes agree; it says nothing about whether what
    * they agree on is READABLE. It was not: measured, the old shell put every

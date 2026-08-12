@@ -332,7 +332,7 @@
    a step denser by default), and Compact is a new, genuinely tighter rung
    below it. Both rungs are floored so the app stays operable rather than
    merely small — these are the floors for EVERY theme, which is what makes
-   them worth stating here (SPEC §9, asserted in tests/theming-e2e.test.ts):
+   them worth stating here (asserted in tests/theming-e2e.test.ts):
 
      --d-ctl-h  ≥ 22px   the shortest a real click target may get
      --d-row-h  ≥ 17px   tree rows stay separately clickable
@@ -341,8 +341,8 @@
    The values below are base's own rungs and sit well above those floors; a
    mono theme legitimately goes lower (terminal.css compacts to 17px rows and
    10.9px text). Quoting base's own numbers here as if they were the floors
-   made this comment contradict both SPEC §9 and a theme shipped in the same
-   directory.
+   made this comment contradict both the floors above and a theme shipped in
+   the same directory.
 
    Every metric moves together — type, leading, block gaps, row heights, pane
    padding, chrome heights, doc gutter, chat, tables and code — so a surface
@@ -919,7 +919,7 @@ kbd {
 .raw:focus, .raw:focus-visible { background: transparent; border: 0; box-shadow: none; outline: none; }
 
 /* ---------- rendered markdown ---------- */
-/* THE DOCUMENT NEVER SCROLLS SIDEWAYS EITHER (SPEC §4).
+/* THE DOCUMENT NEVER SCROLLS SIDEWAYS EITHER.
    The `.code pre` rule below has said so for code since the start; the prose
    around it had no wrap rule at all, and `.scroll` computes `overflow-x: auto`,
    so an ordinary note containing a URL made the whole document pane pannable.
@@ -996,7 +996,7 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
 .wl:hover { background: var(--wl-bg-hover); color: var(--accent-h); }
 .wl svg { opacity: var(--wl-icon-opacity); }
 /* A link that resolves to nothing — or, just as bad, to two docs at once — is
-   flagged rather than rendered as if it worked (SPEC §5). Clicking a missing
+   flagged rather than rendered as if it worked. Clicking a missing
    one creates the doc at the implied path. */
 .wl.broken {
   color: var(--warn); background: var(--warn-soft);
@@ -1054,7 +1054,7 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .code-bar { display: flex; align-items: center; gap: 8px; padding: var(--d-code-bar-pad); border-bottom: var(--bd-2); background: var(--code-bar-bg); }
 .code-bar .lang { font-family: var(--mono); font-size: var(--d-code-bar-fs); font-weight: var(--w-semi); color: var(--muted); letter-spacing: .02em; }
 .code-bar .btn.sm { height: var(--d-code-btn-h); padding: 0 7px; font-size: var(--d-code-bar-fs); gap: 4px; }
-/* Code WRAPS (SPEC §4): a long line is content, not a reason to hide the rest
+/* Code WRAPS: a long line is content, not a reason to hide the rest
    of the block behind a horizontal scrollbar. `pre-wrap` keeps every space and
    tab the source had; `overflow-wrap: anywhere` with `word-break: normal`
    breaks inside a token only when that token alone cannot fit the column, so
@@ -1082,7 +1082,7 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
    underneath keeps the code well, because there it really is code.
 
    `.mmd-body` is centred and scrolls SIDEWAYS if it has to, which is the one
-   place this app allows that (SPEC §4 forbids it for code, where a long line
+   place this app allows that (it is forbidden for code, where a long line
    is text to be read — a diagram is one indivisible object and shrinking it to
    the column would make it unreadable rather than wrapped). */
 .mmd .mmd-body { padding: var(--d-pre-pad); background: var(--panel); overflow-x: auto; text-align: center; }
@@ -1119,7 +1119,7 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .secret.open .secret-body pre { color: var(--text); }
 .secret-body .kv b, .secret-body b { color: var(--text); font-weight: var(--w-semi); }
 
-/* ---- the locked block's MASKED body (SPEC §6) ----
+/* ---- the locked block's MASKED body ----
    A locked block shows no ciphertext at all: not the armor, not its header
    line, not a byte or line count. Several hundred bytes of base64 in the
    middle of a document read as an EXPOSED secret whatever the badge above them
@@ -1148,7 +1148,7 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
 
 /* revealed plaintext: a real editor, because an edited secret must be
-   re-encryptable in place (SPEC §6). Every anti-exfiltration attribute lives
+   re-encryptable in place. Every anti-exfiltration attribute lives
    on the element itself (app.js) — this is only its shape. */
 .secret-edit {
   display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden;
@@ -1195,7 +1195,7 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
      768px viewport with all three panes open the bar was 172px wide while
      every `max-width: 1019px` rule was still dormant, the content needed
      222px, and `overflow: hidden` AMPUTATED the right-hand end — taking
-     #stConn, which SPEC §9 requires to be present. Asking the bar about
+     #stConn, which must always be present. Asking the bar about
      itself is the only formulation that cannot drift from the shell's
      layout again, at any width and in any combination of open panels. */
   container-type: inline-size;
@@ -1280,11 +1280,11 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 
    One ladder rather than three: a container query's condition cannot read a
    custom property, so a per-theme threshold has nowhere to live but a theme
-   sheet — and SPEC §9 keeps all layout in base.css. The cost is that Minimal
+   sheet — and all layout lives in base.css. The cost is that Minimal
    and Modern shed one rung slightly earlier than they strictly need to (at a
    1440px window Minimal's bar is 834px and its `-sb-mid` state wants 844, so
    it would have fitted by ellipsising the doc path ~10px). That is the trade
-   this ladder exists to make: SPEC §9 says the bar sheds hints — every one of
+   this ladder exists to make: the bar sheds hints — every one of
    which is also in the `?` overlay — BEFORE it squeezes the path, which is the
    only thing here you cannot read anywhere else. */
 @container statusbar (max-width: 1219px) { .statusbar .sb-wide { display: none !important; } }
@@ -1316,8 +1316,8 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
    to be undone the way #stVault does it. */
 /* `min-width: 0` so the button is allowed to shrink at all: without it the
    label's intrinsic width is a floor, the bar overflows, and `overflow: hidden`
-   AMPUTATES the items to its right — #stSync and #stConn, both of which SPEC §9
-   requires. The label is capped and ellipsised for the same reason: `ai.model`
+   AMPUTATES the items to its right — #stSync and #stConn, both of which are
+   required. The label is capped and ellipsised for the same reason: `ai.model`
    is free text ("Model id, as the endpoint names it"), and a proxy/OpenRouter
    style id blew the bar out at the app's own default window size. */
 /* `flex-shrink: 100` + a floor of exactly one dot: above the shed tier the chip
@@ -1355,7 +1355,7 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .model-chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: var(--r-pill); background: var(--card-bg); border: var(--bd); box-shadow: var(--sh-1); font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
 .model-chip .live { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(18, 161, 80, .14); }
 .model-chip b { color: var(--text-2); font-weight: var(--w-semi); }
-/* spec 0006: the chip is a BUTTON — the effort menu (#effortPop) hangs off it */
+/* the chip is a BUTTON — the effort menu (#effortPop) hangs off it */
 button.model-chip { cursor: pointer; }
 button.model-chip:hover { background: var(--row-hover-bg); }
 button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
@@ -1507,7 +1507,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 /* `visibility` is not decoration here: an overlay hidden with opacity alone
    keeps every control inside it in the TAB ORDER, which is how Tab out of the
    passphrase modal reached the hidden ⌘K search box and typed the vault
-   passphrase into `GET /api/search?q=…` (SPEC §11). The 0s delay on the way out
+   passphrase into `GET /api/search?q=…`. The 0s delay on the way out
    preserves the fade; on the way in it applies immediately. */
 .veil {
   position: fixed; inset: 0; z-index: 200; background: var(--veil-bg);
@@ -2048,7 +2048,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .masked { -webkit-text-security: disc; }
 
 /* ============================================================
-   TERMINAL (SPEC §13)
+   TERMINAL
 
    Deliberately no new visual language: every colour, radius, border, shadow
    and font here is an existing token, the rows are the same `.field`/`.btn`
@@ -2063,7 +2063,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 /* the keyring line ends in a 62-character `age1…` recipient, which is one
    unbreakable token: without `min-width: 0` a flex child cannot go below it, so
    on a phone the recipient was clipped rather than wrapped — and the recipient
-   is the part you are there to read (SPEC §6, "which key is this vault on") */
+   is the part you are there to read — which key is this vault on */
 .term-state .tx, .key-state .tx { min-width: 0; overflow-wrap: anywhere; }
 .term-state .spacer, .key-state .spacer { flex: 1 1 auto; }
 .term-state.locked, .key-state.locked { color: var(--text-2); }
@@ -2153,7 +2153,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    text field", not a list of the ones someone happened to hit. Three ordering
    traps, all of them live in this sheet, are why:
 
-     a) `.term-in` declares its 12px in the TERMINAL block (SPEC §13), which
+     a) `.term-in` declares its 12px in the TERMINAL block, which
         sits BELOW the phone band of §11. A `font-size` for it inside that band
         is dead text — same selector weight, earlier in the file. Sitting after
         every one of them is the only placement that cannot silently lose.

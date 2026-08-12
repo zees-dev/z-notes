@@ -1,6 +1,6 @@
 /* ============================================================
    index-recovery.test.ts — a corrupt index is PARKED, never deleted, and the
-   app still boots (SPEC §7).
+   app still boots.
 
    Four things live in index.db and NOWHERE else by design: the git token, the
    AI key, the terminal password hash and the whole ai_proposals undo stack.

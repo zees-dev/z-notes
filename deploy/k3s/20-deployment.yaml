@@ -14,8 +14,8 @@ spec:
   #      every replica. WAL permits multiple *processes*, but only via POSIX
   #      advisory locks on one machine — and each replica would additionally
   #      maintain its own in-memory reconcile state, its own AI session table
-  #      writes and its own proposal pre-image stack. SPEC §8's LIFO revert is
-  #      enforced server-side against that stack; a second writer turns
+  #      writes and its own proposal pre-image stack. AI-edit revert is strictly
+  #      LIFO, enforced server-side against that stack; a second writer turns
   #      "revert strictly LIFO" into a race. On a ReadWriteMany volume it is
   #      worse: sqlite over a network filesystem corrupts.
   #
@@ -27,11 +27,11 @@ spec:
   #      produce interleaved index writes and duplicate/missing `doc-changed`
   #      SSE events.
   #
-  #   3. (and git) SPEC §7 sync does add/commit/push against one working tree.
+  #   3. (and git) git sync does add/commit/push against one working tree.
   #      Two pods each taking .git/index.lock is a coin flip, not a merge.
   #
   # Multi-DEVICE is already supported and is a different thing: any number of
-  # browsers on the tailnet talk to this one process, and SPEC §5's doc-rev +
+  # browsers on the tailnet talk to this one process, and the doc-rev +
   # SSE reconciliation is what makes concurrent viewers safe.
   # ===========================================================================
   replicas: 1
@@ -131,7 +131,7 @@ spec:
             - name: GIT_CONFIG_VALUE_0
               value: /vault
             # NOTE ON SECRETS: there is deliberately no GitHub token and no AI
-            # key here. SPEC §7/§9 put both in sqlite inside the vault, entered
+            # key here. Both live in sqlite inside the vault, entered
             # through the settings UI. Nothing in this manifest is a credential,
             # so nothing in this manifest needs to be sealed, and `kubectl get
             # deploy -o yaml` leaks nothing.
@@ -213,7 +213,7 @@ spec:
           # reconcile evicts other workloads on a single-node k3s box. With it,
           # the worst case is an OOMKill — which WAL makes survivable (the next
           # open replays the log) and which the markdown-is-truth model makes
-          # non-destructive (SPEC §5: deleting the index never loses notes).
+          # non-destructive (deleting the index never loses notes).
           resources:
             requests:
               cpu: 50m

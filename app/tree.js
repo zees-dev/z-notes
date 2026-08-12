@@ -211,7 +211,7 @@ export function renderTree() {
 }
 
 /* ============================================================
-   CREATION — context, path grammar, refusal (SPEC §5)
+   CREATION — context, path grammar, refusal
 
    THE CONTEXT. ⌥N (doc) and ⌥⇧N (folder) create RELATIVE to whatever the user
    is looking at, because "new" without a place is a guess the user then has to
@@ -234,7 +234,7 @@ export function renderTree() {
      a/b/           → folders a and a/b
      /a/b.md        → from the VAULT ROOT rather than the context
 
-   Why a bare name gets `.md`: a doc IS a `.md` file here (SPEC §5) — the server
+   Why a bare name gets `.md`: a doc IS a `.md` file here — the server
    refuses any other extension on a move, and `[[links]]` resolve on the `.md`
    slug — so `notes` can only mean `notes.md`, and making the user type an
    extension the app cannot vary is ceremony. The TRAILING SLASH is what
@@ -542,7 +542,7 @@ async function commitCreate(plan) {
 }
 
 /**
- * The broken-link create affordance (SPEC §5). A `[[link]]` that resolves to
+ * The broken-link create affordance. A `[[link]]` that resolves to
  * nothing renders flagged; clicking it makes the doc AT THE IMPLIED PATH and
  * opens it.
  *
@@ -574,7 +574,7 @@ export async function createFromLink(name) {
 }
 
 /* ============================================================
-   RENAME / MOVE / DELETE — IDE parity from the sidebar (SPEC §5)
+   RENAME / MOVE / DELETE — IDE parity from the sidebar
 
    ONE inline control does rename AND move, deliberately: the row turns into a
    text input carrying the doc's full vault-relative path, with the basename
@@ -759,7 +759,7 @@ export async function commitRename(node, value) {
  *     for N days" and "recoverable only from git history" are the two honest
  *     answers and this line is the last one a user reads before Delete.
  *
- * The broken-link behaviour is unchanged and still SPEC §5: a rename rewrites
+ * The broken-link behaviour is unchanged: a rename rewrites
  * every `[[link]]` that resolved to the doc, a delete rewrites none, because
  * the broken link is the record that something used to be there. It is simply
  * no longer restated in front of every delete — the preview flags each one

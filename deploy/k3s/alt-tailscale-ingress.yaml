@@ -5,8 +5,8 @@
 # step disappear: the operator runs a proxy pod that joins your tailnet as a
 # device, and Tailscale issues it a REAL, publicly-trusted certificate for
 # <name>.<tailnet>.ts.net. Every browser on the tailnet gets a secure context
-# with nothing to install, which is exactly what SPEC §6's WebCrypto
-# requirement wants.
+# with nothing to install, which is exactly what the secrets half of the app —
+# WebCrypto, hence a secure context — wants.
 #
 # Trade-off vs. 50-ingress.yaml + 40-certificates.yaml: this is reachable ONLY
 # from the tailnet — there is no LAN hostname and no path in when Tailscale is

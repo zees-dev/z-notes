@@ -1,5 +1,5 @@
 /* ============================================================
-   git.ts — vault git sync (SPEC §7, phase 2).
+   git.ts — vault git sync.
 
    THE VAULT IS ITS OWN REPOSITORY. It is not this source tree, and every
    command here is issued with cwd = vault AND verified against
@@ -15,7 +15,7 @@
    Everything runs through Bun.spawn with an ARGV ARRAY: no shell string, no
    Bun.$, so a note called `x; rm -rf ~`.md is one argument and nothing else.
 
-   CREDENTIAL RULE (SPEC §7, ticket 4): the GitHub token lives only in sqlite.
+   CREDENTIAL RULE: the GitHub token lives only in sqlite.
    It reaches git through the environment of the spawned child and nowhere else
    — never in argv (visible in `ps`), never in a remote URL (which would land in
    .git/config and in every error message), never in a log line, never in an SSE
@@ -41,7 +41,7 @@ import { CREDENTIAL_FILE_KEYS, validBranchName } from "./settings.ts";
 import { trashGitPaths } from "./trash.ts";
 import type { Vault } from "./vault.ts";
 
-/* ---------- contract (docs/specs/done/0002-http-api-v0.md § Sync) ---------- */
+/* ---------- the sync contract the API answers with ---------- */
 
 type SyncState = "synced" | "syncing" | "offline" | "error";
 
@@ -78,7 +78,7 @@ const CREDENTIAL_KEY_RE = new RegExp(
   "m"
 );
 
-/** Committed alongside the notes (SPEC §7). `.znotes/index.db` is NOT here. */
+/** Committed alongside the notes. `.znotes/index.db` is NOT here. */
 const TRACKED_META = [
   ".znotes/settings.toml",
   ".znotes/vault.pub",
@@ -118,11 +118,11 @@ const GIT_TIMEOUT_MS = (() => {
 const DEFAULT_AUTOSYNC_SECONDS = 60;
 
 /* The sqlite index is a rebuildable cache AND the credential store, so it must
-   never be committed (SPEC §5/§7). The rules go in `.git/info/exclude`, not in
+   never be committed. The rules go in `.git/info/exclude`, not in
    a working-tree `.gitignore`: info/exclude is per-clone, so it applies whatever
    the user's own `.gitignore` says, it is never staged, and it can never collide
    with a `.gitignore` that arrives from another device on a pull. */
-const EXCLUDE_HEADER = "# z-notes (managed) — never commit the sqlite index (SPEC §5/§7).";
+const EXCLUDE_HEADER = "# z-notes (managed) — never commit the sqlite index.";
 const EXCLUDE_RULES = [
   ".znotes/index.db",
   ".znotes/index.db-wal",
@@ -186,7 +186,7 @@ const MESSAGE_MAX = 300;
 /* Progress chatter git writes to stderr on the way to the real failure. The
    first stderr line of a failed `pull --rebase` is `From <remote>` and the first
    line of a rejected `add` is a bare header — neither names anything the user
-   can act on, which is the whole job of `message` (SPEC §7, API.md § Sync). */
+   can act on, which is the whole job of `message`. */
 const NOISE = /^(From\b|remote:|hint:|warning:|Warning:|Everything up-to-date|To\b)/;
 const ANCHOR = /^(fatal|error):/i;
 
@@ -343,7 +343,7 @@ interface GitSyncDeps {
     value<T>(path: string, fallback: T): T;
     credential(key: "git.token" | "ai.apiKey"): string | null;
     /** settings.toml is committed AND hand-editable: a credential pasted into
-        it must move to sqlite before the file is ever staged (SPEC §7). */
+        it must move to sqlite before the file is ever staged. */
     absorbFileCredentials?(): Promise<boolean>;
   };
   index: { getMeta(key: string): string | null; setMeta(key: string, value: string): void };
@@ -1013,7 +1013,7 @@ export class GitSync {
     // on; an explicit "Sync now" always pushes.
     const mayPush = !!obs.originUrl && (kind === "manual" || this.autoSyncOn());
     if (mayPush && !obs.unborn) {
-      /* SPEC §7 / API.md: "push to the configured branch". The checked-out
+      /* the contract is "push to the configured branch". The checked-out
          branch is what actually gets pushed, so if the two disagree the push
          would send a DIFFERENT branch's commits under a "synced" banner. The
          work is committed locally either way; only the push waits. */
@@ -1051,8 +1051,8 @@ export class GitSync {
    *
    * Why each: staging over a conflicted index marks every conflicted path
    * RESOLVED with its `<<<<<<<` marker text as the content, and the commit
-   * would finish the user's merge and push the corruption (SPEC §7: the app
-   * never auto-resolves and never destroys either side). A detached HEAD is
+   * would finish the user's merge and push the corruption — the app never
+   * auto-resolves and never destroys either side. A detached HEAD is
    * refused too — commits made there are pushed nowhere and vanish on the next
    * checkout. Then the three canaries: a tracked index.db (the credential
    * store), a credential in settings.toml, and a half-replaced keyring.
@@ -1131,7 +1131,7 @@ export class GitSync {
   }
 
   /**
-   * The sqlite index holds the GitHub token and the AI key (SPEC §7), so it may
+   * The sqlite index holds the GitHub token and the AI key, so it may
    * never be committed. Untrack it if some earlier `git add -A` caught it, and
    * stop the pipeline outright if git still does not consider it ignored —
    * pushing that file is not a failure worth recovering from afterwards.
@@ -1289,8 +1289,7 @@ export class GitSync {
   }
 
   /* ============================================================
-     targeted commit — one commit per accepted AI proposal (SPEC §8, phase 4)
-     and per file op (SPEC §3 delta 2, phase 5)
+     targeted commit — one commit per accepted AI proposal, one per file op
      ============================================================ */
 
   /**
@@ -1301,12 +1300,12 @@ export class GitSync {
    * pasted into settings.toml — each of those stops this too, because an AI
    * commit is not more important than not corrupting the vault.
    *
-   * A vault that is not a git repository is NOT a failure: SPEC §8 says accept
+   * A vault that is not a git repository is NOT a failure: accept
    * still applies the edit, the commit is simply skipped and the reason is
    * recorded on the proposal. So the return value is advisory, never fatal.
    *
-   * Phase 5 reuses this verbatim for `move: a → b` and `delete: p`, which is
-   * why a rename plus every backlink it rewrote lands as ONE commit (SPEC §5).
+   * File ops reuse this verbatim for `move: a → b` and `delete: p`, which is
+   * why a rename plus every backlink it rewrote lands as ONE commit.
    * `paths` there names the old path as well as the new one: since git 2.0 a
    * bare `git add <path>` stages a REMOVAL too, so a vanished path belongs in
    * the list — leaving it out would commit the copy and never the delete, and
@@ -1587,7 +1586,7 @@ export class GitSync {
 
   /**
    * Connect the vault directory to a remote repository — the operation behind
-   * `POST /api/sync/remote` and `ZNOTES_VAULT_REPO` (spec 0007, ADR 0017), and
+   * `POST /api/sync/remote` and `ZNOTES_VAULT_REPO` (ADR 0017), and
    * THE ONE PLACE IN THIS SERVER THAT MAY `git init`.
    *
    * Non-destructive and atomic. It never writes over a working-tree file: a
@@ -1704,7 +1703,7 @@ export class GitSync {
     if (!add.ok) return undo(add, `git remote add failed (exit ${add.code})`);
 
     // the exclude rules exist BEFORE anything can be staged: the sqlite index is
-    // the credential store and must never be committable (SPEC §5/§7)
+    // the credential store and must never be committable
     await this.ensureExcludes();
 
     const fetched = await this.git([...this.transportOpts(), "fetch", "origin"], { token });

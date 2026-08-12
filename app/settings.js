@@ -403,8 +403,8 @@ export async function checkAiEndpoint() {
  */
 export function openSettings(section) {
   /* Settings is a NAVIGATION, so it leaves the document behind exactly as a
-     tree click does — and an unsaved Raw buffer gets the same question (SPEC
-     §4). `showSettings` is deliberately NOT guarded: boot and popstate paint the
+     tree click does — and an unsaved Raw buffer gets the same question.
+     `showSettings` is deliberately NOT guarded: boot and popstate paint the
      page from an entry that already exists, and a dialog in front of either
      would be arguing with the address bar. */
   if (!guardRawExit(() => showSettings(section, {}))) return;
@@ -1115,7 +1115,7 @@ export const draftedLook = () => LOOK_PATHS.filter((p) => p in settingsDraft);
  * THE APPEARANCE AXES THIS PAGE LOAD WAS PINNED TO BY THE URL.
  *
  * `?theme=` / `?scheme=` are a look-at-it override for ONE page load that is
- * deliberately not a setting at all (SPEC §9). The moved-paths diff in
+ * deliberately not a setting at all. The moved-paths diff in
  * `adoptSettings` protects an axis a remote save left alone; it cannot protect
  * the pinned axis when the remote save moves THAT one. MEASURED: a page opened
  * at `/?theme=terminal` over a stored `modern` booted pinned as intended and

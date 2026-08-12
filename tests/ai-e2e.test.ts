@@ -5,7 +5,7 @@
    the things only a browser can show:
 
      - the assistant's answer is rendered PROGRESSIVELY (partial text visible
-       before `done`) — the whole point of SPEC §3 delta 4;
+       before `done`) — the whole point of streaming the relay at all;
      - a plain answer shows NO diff card (the binding user preference: not
        every reply proposes an edit);
      - a tool-call turn renders a real diff, Accept writes the doc in BOTH
@@ -517,8 +517,8 @@ describe("ai e2e — the endpoint status item in the statusbar", () => {
        all-or-nothing collapse at ≤1349px, and `#stPath` was the only item in
        the bar with any shrink budget. So between the tiers the bar OVERFLOWED —
        and `.statusbar` is `overflow: hidden`, so there is no scroll and no
-       ellipsis: #stSync and #stConn, both required by SPEC §9, were simply
-       gone. A realistic proxy model id did it at the app's own default 1440.
+       ellipsis: #stSync and #stConn, both permanent fixtures of the bar,
+       were simply gone. A realistic proxy model id did it at the app's own default 1440.
        Measured here on the geometry, not on the class list. */
     const measure = () =>
       page.evaluate(() => {

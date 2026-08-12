@@ -43,7 +43,7 @@ export const state = {
   /* Revealed secret blocks: key → { path, armor, indent, plain, dirty }.
      The DOCUMENT MODEL never holds plaintext — doc.markdown keeps the armor as
      the source of truth and this map is the only place a decrypted block lives
-     outside its own DOM node (SPEC §6, research §6). Keyed by armor, not by
+     outside its own DOM node (research §6). Keyed by armor, not by
      line number, so it survives re-renders and external edits. */
   reveal: new Map(),
   sync: null,
@@ -68,9 +68,9 @@ export const state = {
     rowErr: new Map(), // entry id → the refusal that row is showing (409 exists)
   },
   confirming: null, // { onOk } — the open confirm dialog
-  conflict: null, // { path, disk, mine } — the open save-conflict banner (SPEC §5)
-  /* { path, proceed } — the open exit guard and the way out it is holding back
-     (SPEC §4). Non-null is what stops a second trigger stacking a second copy. */
+  conflict: null, // { path, disk, mine } — the open save-conflict banner
+  /* { path, proceed } — the open exit guard and the way out it is holding back.
+     Non-null is what stops a second trigger stacking a second copy. */
   exitGuard: null,
   /* …and the settings page's twin of it: true while the "leave with unsaved
      changes?" confirm is up. Same job — a second trigger (a tree click behind
@@ -86,7 +86,7 @@ export const state = {
      re-checks it against the current tree, because a rename or a delete can
      retire the row underneath it. */
   pick: null,
-  /* Terminal (SPEC §13). `status` is the SERVER's verdict, never inferred here;
+  /* Terminal. `status` is the SERVER's verdict, never inferred here;
      `commands` are the assistant's command records. The unlock token is not in
      this object and never will be — it lives in api.js alone. */
   term: { status: null, running: null, busy: false, history: [], hist: -1, draft: "", printed: new Set() },

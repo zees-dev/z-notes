@@ -1,4 +1,4 @@
-# Deploying z-notes (SPEC §10, phase 6)
+# Deploying z-notes
 
 ```
 browser (laptop / phone, on the tailnet)
@@ -16,13 +16,13 @@ Deployment znotes — ONE replica, bun server/index.ts, :4700
              └── index.db{,-wal,-shm}                     (sqlite WAL, untracked)
 ```
 
-**No app-level auth, by design** (SPEC §10, ticket 13): the cluster and the
+**No app-level auth, by design**: the cluster and the
 tailnet are the perimeter. The only credential in the product is the vault
 passphrase, and that guards the age identity, not the app. Consequence: do not
 expose the Ingress to the public internet, and do not give the Service a
 NodePort or LoadBalancer.
 
-**TLS is not decoration.** SPEC §6 encrypts secrets in the browser with
+**TLS is not decoration.** The app encrypts secrets in the browser with
 WebCrypto, which only exists in a secure context. Over plain HTTP the app still
 runs — degradation is required, not optional — but every secret block stays
 armored and unlock is replaced by an explanatory badge.
@@ -239,8 +239,8 @@ ZNOTES_VAULT="$HOME/notes-vault" bun server/index.ts     # http://localhost:4700
 `http://localhost` is a *trustworthy origin*, so WebCrypto works and secrets are
 fully functional with no certificate anywhere. That stops being true the moment
 you reach the same process at `http://<lan-ip>:4700` — then it is an insecure
-context and SPEC §6 degradation kicks in. That gap is the entire reason for the
-TLS machinery above.
+context, so secrets degrade to armored-only. That gap is the entire reason for
+the TLS machinery above.
 
 **The image, without k8s** — useful for checking the container before deploying:
 
@@ -280,7 +280,7 @@ kubectl -n znotes exec deploy/znotes -- sh -c 'rm -f /vault/.git/index.lock'
 
 **Backups.** The PVC is the only durable state, and one part of it is *not*
 rebuildable: the sqlite index also stores the GitHub token, the AI key, chat
-history and proposal pre-images (SPEC §5). Notes themselves are additionally
+history and proposal pre-images. Notes themselves are additionally
 protected by git sync. local-path puts the volume under
 `/var/lib/rancher/k3s/storage/<pvc-…>/` on the node.
 
@@ -292,7 +292,7 @@ settings afterwards.
 `replicas:` in `20-deployment.yaml`: one sqlite writer, one `fs.watch`
 reconciler whose lock is a process-local JS mutex, one git working tree.
 Multi-*device* is already supported and is a different thing — every browser on
-the tailnet talks to this one process, and the doc-rev + SSE model (SPEC §5)
+the tailnet talks to this one process, and the doc-rev + SSE model
 makes concurrent viewers safe.
 
 **Traefik and SSE.** `/events` is a long-lived stream (`idleTimeout: 0` plus a
