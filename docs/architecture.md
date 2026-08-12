@@ -14,7 +14,16 @@ markdown files (source of truth), `.znotes/settings.toml` (committed),
 `.znotes/index.db` (sqlite cache + credentials, never committed),
 `.znotes/identity.age` + `vault.pub` (committed keyring). Production is one k3s
 replica at https://znotes.home.arpa (`deploy/`); the replica count is a
-correctness constraint, not a cost choice — see `deploy/k3s/20-deployment.yaml`. Platform behavior the design leans on
+correctness constraint, not a cost choice — see `deploy/k3s/20-deployment.yaml`.
+
+The vault is **not** part of this repo (ADR 0017) — four env vars place it and,
+optionally, seed it: `ZNOTES_VAULT` (default `./vault`, gitignored, created at
+boot if missing), `ZNOTES_PORT` (default 4700), and the two first-boot
+bootstraps — `ZNOTES_VAULT_REPO` attaches the vault to that remote when it is
+not already its own repo (a vault that is one is left alone; a failure is logged
+and boot continues into an offline vault), and `ZNOTES_GIT_TOKEN` is absorbed
+into the sqlite credential store as `git.token` only when none is stored, so a
+stale env var can never clobber a rotated one. Platform behavior the design leans on
 (fs.watch semantics, `bun --hot`, sqlite/FTS5, Bun.build) is documented in
 [the platform research](specs/done/0005-bun-platform-foundation.md) — reference, not contract.
 
@@ -35,7 +44,7 @@ new module must be added there (and here) to compile through CI.
 | 1 | `ai-edits.ts` | the pure edit engine: anchors, `propose_edits` parse/validate/apply, diffs | `parseEdits`, `applyEditToText`, `buildDiff`, `findAnchor` |
 | 2 | `trash.ts` | retained-delete storage + retention policy | `Trash`, `TrashError`, `isTrashId`, `trashGitPaths` |
 | 2 | `ai-endpoint.ts` | capability probe, degradation ladder, endpoint status/announce | `AiEndpoint` |
-| 3 | `git.ts` | add→commit→push sync, GIT_ASKPASS auth, tracked-set discipline | `GitSync`, `gitMessage`, `sanitizeRemote` |
+| 3 | `git.ts` | add→commit→push sync, GIT_ASKPASS auth, tracked-set discipline, attach (the one place `git init` may run — ADR 0017) | `GitSync`, `gitMessage`, `sanitizeRemote`, `validRemoteUrl` |
 | 3 | `terminal.ts` | password-gated command runner, sessions, AI-command approval | `Terminal`, `TerminalError`, `bearerOf` |
 | 4 | `ai.ts` | turn orchestration, context assembly + leak guard, the two wire dialects, proposal stack | `AI` (single export) |
 | 4 | `docs.ts` | every doc/folder/trash transaction: create, CAS-write, move + backlink rewrite + rollback, delete/restore/purge/sweep, commit | `DocStore`, `isMd` |

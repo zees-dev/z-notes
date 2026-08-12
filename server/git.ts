@@ -6,8 +6,11 @@
    `git rev-parse --show-toplevel`: if the toplevel is not the vault itself the
    vault is treated as "not a git repository", which is exactly what stops a
    vault nested inside another checkout (./vault inside the z-notes source repo,
-   the default!) from ever having commits pushed into the wrong repo. We never
-   `git init` — an un-initialised vault is a fully working, offline vault.
+   the default!) from ever having commits pushed into the wrong repo. THE
+   PIPELINE never `git init`s — an un-initialised vault is a fully working,
+   offline vault. `attachRemote` (ADR 0017), the user-initiated operation that
+   connects a vault to a remote, is the one place that may: it is atomic, and
+   any failure leaves the vault byte-identical to what it found.
 
    Everything runs through Bun.spawn with an ARGV ARRAY: no shell string, no
    Bun.$, so a note called `x; rm -rf ~`.md is one argument and nothing else.
@@ -32,9 +35,9 @@
    ============================================================ */
 
 import { chmodSync, existsSync, realpathSync, renameSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rename, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import { CREDENTIAL_FILE_KEYS } from "./settings.ts";
+import { CREDENTIAL_FILE_KEYS, validBranchName } from "./settings.ts";
 import { trashGitPaths } from "./trash.ts";
 import type { Vault } from "./vault.ts";
 
@@ -52,6 +55,15 @@ interface SyncStatus {
   behind: number;
   message: string;
 }
+
+/**
+ * `POST /api/sync/remote`. The failure half carries the response verbatim —
+ * status and a `{error, message, ...extra}` body in that key order — so the
+ * route is a delegation and no HTTP shaping leaks into git.ts.
+ */
+export type AttachResult =
+  | { ok: true; branch: string; created: "repo" | "origin" | "none" }
+  | { ok: false; status: number; body: { error: string; message: string; paths?: string[] } };
 
 /**
  * A credential key in the committed settings.toml — see `settingsCanary`.
@@ -233,6 +245,72 @@ export function sanitizeRemote(url: string): string | null {
   return u || null;
 }
 
+/** Longest remote URL attach will look at. A URL is not a document. */
+const REMOTE_URL_MAX = 2048;
+
+/**
+ * The URL `attachRemote` may hand to git, or null.
+ *
+ * `https://`, `http://`, `file://` and an absolute path — the last two are what
+ * a local remote (and every test fixture) looks like. Everything else is
+ * refused, `ssh://` and scp-style `git@host:path` included: those need a key
+ * and an agent this server has no story for, and the escape hatch for them is
+ * ordinary `git remote add` in the vault, which the pipeline already honours.
+ *
+ * A URL carrying userinfo is refused however well-formed it is: `git remote
+ * add` would write it into `.git/config`, and the credential rule above says a
+ * token lives in sqlite and reaches git through the askpass env ONLY. A leading
+ * `-` is refused for the same reason `git.branch` is — this string becomes an
+ * argv element, and git would read it as an option.
+ */
+export function validRemoteUrl(url: string): string | null {
+  const u = String(url ?? "").trim();
+  if (!u || u.length > REMOTE_URL_MAX) return null;
+  /* `\` included: WHATWG's parser reads it as a path separator in special
+     schemes while git/curl's may read `host\` as userinfo — a parser
+     differential with no legitimate URL on the safe side of it. */
+  if (/[\s\\\x00-\x1f\x7f]/.test(u)) return null;
+  if (u.startsWith("-")) return null;
+  if (u.startsWith("/")) return u; // a local remote: a path, not a URL
+  if (!/^(https?|file):\/\//i.test(u)) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(u);
+  } catch {
+    return null;
+  }
+  if (parsed.username || parsed.password) return null;
+  return u;
+}
+
+/**
+ * The paths git named under "The following untracked working tree files would
+ * be overwritten by checkout:" — the indented block beneath that header.
+ *
+ * Best-effort by construction: the wording is not a contract. But attach
+ * REFUSES rather than overwrite a local file, and a refusal that cannot name
+ * the files is not actionable, so the parse is worth its fragility — and when
+ * it finds nothing the caller still fails, just as `attach-failed`.
+ */
+function overwrittenPaths(stderr: string): string[] {
+  const lines = String(stderr || "").split("\n");
+  const start = lines.findIndex((l) => /would be overwritten by checkout:/i.test(l));
+  if (start < 0) return [];
+  const out: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (!/^[ \t]+\S/.test(lines[i])) break;
+    out.push(lines[i].trim());
+  }
+  return out;
+}
+
+/** The refusal half of `attachRemote`, in the contract's key order. */
+const attachError = (status: number, error: string, message: string, paths?: string[]): AttachResult => ({
+  ok: false,
+  status,
+  body: paths ? { error, message, paths } : { error, message },
+});
+
 function relTime(iso: string | null): string {
   if (!iso) return "";
   const ms = Date.now() - Date.parse(iso);
@@ -309,6 +387,10 @@ export class GitSync {
   private readonly children = new Set<Bun.Subprocess>();
   /** last observed origin URL, so `fail()` can keep it out of `message` */
   private lastOriginUrl: string | null = null;
+  /** why the last attach was refused, if it was. An attach at BOOT
+      (ZNOTES_VAULT_REPO) reports itself on stderr, which nobody looking at the
+      app can see — so the offline status carries the reason too. */
+  private lastAttachFailure: string | null = null;
 
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inflight: Promise<void> | null = null;
@@ -984,6 +1066,7 @@ export class GitSync {
 
   /** The `offline` status shape, spelled once. */
   private offlineStatus(obs: { branch: string; reason: string }): SyncStatus {
+    const failed = this.lastAttachFailure;
     return {
       state: "offline",
       branch: obs.branch,
@@ -991,7 +1074,7 @@ export class GitSync {
       lastSyncAt: this.deps.index.getMeta("git.lastSyncAt"),
       ahead: 0,
       behind: 0,
-      message: obs.reason,
+      message: (failed ? `${obs.reason} — attach failed: ${failed}` : obs.reason).slice(0, MESSAGE_MAX),
     };
   }
 
@@ -1483,5 +1566,250 @@ export class GitSync {
       ok: false,
       message: gitMessage(second.stderr, second.stdout, `git push failed after rebase (exit ${second.code})`),
     };
+  }
+
+  /* ============================================================
+     attach — connect the vault to a remote repository (ADR 0017)
+     ============================================================ */
+
+  /**
+   * Is the vault its own repository, and — sanitized, never the raw URL — what
+   * does its origin point at? The minimal observation boot provisioning needs
+   * to decide whether `ZNOTES_VAULT_REPO` has anything to do. Read-only, and
+   * outside the writer lock like every other observation.
+   */
+  async attachment(): Promise<{ repo: boolean; remote: string | null }> {
+    if (!(await this.detectRepo()).ok) return { repo: false, remote: null };
+    const origin = await this.git(["remote", "get-url", "origin"], { optionalLocks: false });
+    const url = origin.ok ? origin.stdout.trim() : "";
+    return { repo: true, remote: url ? sanitizeRemote(url) : null };
+  }
+
+  /**
+   * Connect the vault directory to a remote repository — the operation behind
+   * `POST /api/sync/remote` and `ZNOTES_VAULT_REPO` (spec 0007, ADR 0017), and
+   * THE ONE PLACE IN THIS SERVER THAT MAY `git init`.
+   *
+   * Non-destructive and atomic. It never writes over a working-tree file: a
+   * checkout that would is refused, naming the paths. And every failure leaves
+   * the vault exactly as it was found — the `.git` this call created is deleted
+   * again, or the origin it replaced is put back — so a bad URL, an unreachable
+   * host or a wrong token costs the user nothing but the message.
+   *
+   * Under the writer lock like `commitPaths`: this moves refs, the index and
+   * (case B) HEAD, and a debounced sync landing in the middle of it is the same
+   * two-writers-one-index race the lock was introduced for.
+   */
+  async attachRemote(url: string): Promise<AttachResult> {
+    const r = await this.withIndexLock(() => this.attachLocked(url));
+    this.lastAttachFailure = r.ok ? null : r.body.message;
+    return r;
+  }
+
+  private async attachLocked(url: string): Promise<AttachResult> {
+    const target = validRemoteUrl(url);
+    if (!target) {
+      return attachError(
+        400,
+        "bad-url",
+        "A remote must be an https://, http:// or file:// URL, or an absolute path, and must not carry a username or password."
+      );
+    }
+    if (this.stopped) return attachError(409, "vault-busy", "the server is shutting down");
+
+    const token = this.deps.settings.credential("git.token");
+    let obs: Observation;
+    try {
+      obs = await this.observe();
+    } catch (err) {
+      return attachError(
+        502,
+        "attach-failed",
+        this.cleanMessage(`could not read the vault repo: ${String((err as Error)?.message || err)}`)
+      );
+    }
+    this.observedAt = Date.now();
+    return obs.repo ? this.attachToRepo(obs, target, token) : this.attachByInit(target, token);
+  }
+
+  /**
+   * Case A — the vault is already its own repo, so attach is only ever "set
+   * origin, and prove it". The working tree is never touched and nothing is
+   * ever checked out: the user's repo is theirs, and the branch they have out
+   * is the one we adopt.
+   */
+  private async attachToRepo(obs: Observation, target: string, token: string | null): Promise<AttachResult> {
+    const blocked = this.blockedReason(obs);
+    if (blocked) return attachError(409, "vault-busy", blocked);
+
+    const previous = obs.originUrl;
+    if (previous !== target) {
+      const set = await this.git(["remote", previous ? "set-url" : "add", "origin", target]);
+      if (!set.ok) {
+        return attachError(502, "attach-failed", this.attachMessage(set, `git remote failed (exit ${set.code})`, target));
+      }
+    }
+
+    const fetched = await this.git([...this.transportOpts(), "fetch", "origin"], { token });
+    if (!fetched.ok) {
+      // the origin we replaced goes back: a failed attach changes nothing
+      if (previous !== target) {
+        await this.git(previous ? ["remote", "set-url", "origin", previous] : ["remote", "remove", "origin"]);
+      }
+      return attachError(502, "attach-failed", this.attachMessage(fetched, `git fetch failed (exit ${fetched.code})`, target));
+    }
+
+    /* The checked-out branch becomes `git.branch` (the route persists it). The
+       pipeline refuses to push while the two disagree ("committed locally, not
+       pushed"), so a brought `master`-headed repo would otherwise meet that
+       refusal on its very first sync. A detached HEAD never reaches here —
+       blockedReason refused it above — and an unborn HEAD still reports the
+       name it will be born under, which is the name a push would use. */
+    const branch = validBranchName(obs.branch) ? obs.branch : this.branchSetting();
+    return { ok: true, branch, created: previous === target ? "none" : "origin" };
+  }
+
+  /**
+   * Case B — the vault is not a repository (including a vault nested inside
+   * someone else's checkout, which `detectRepo` reports as exactly that). Init,
+   * point it at the remote, fetch, check out the remote's default branch.
+   *
+   * From the init on, EVERY failure rolls back by deleting the `<vault>/.git`
+   * this call created and nothing else: the notes, `.znotes/` and the sqlite
+   * credential store are never touched, so a failed attach is invisible apart
+   * from its message.
+   */
+  private async attachByInit(target: string, token: string | null): Promise<AttachResult> {
+    const dotGit = resolve(this.vault, ".git");
+    /* Rollback deletes `<vault>/.git`, so this call has to be what created it.
+       A `.git` already sitting there while `detectRepo` says "not a repository"
+       is broken or foreign, and destroying it is not attach's call to make. */
+    if (existsSync(dotGit)) {
+      return attachError(
+        409,
+        "vault-busy",
+        "the vault holds a .git that git cannot read as its own repository — repair or remove it in the vault, then attach again"
+      );
+    }
+    const rollback = () => rm(dotGit, { recursive: true, force: true }).catch(() => {});
+    const undo = async (r: GitResult, fallback: string): Promise<AttachResult> => {
+      await rollback();
+      return attachError(502, "attach-failed", this.attachMessage(r, fallback, target));
+    };
+
+    const init = await this.git(["init", `--initial-branch=${this.branchSetting()}`]);
+    if (!init.ok) return undo(init, `git init failed (exit ${init.code})`);
+
+    const add = await this.git(["remote", "add", "origin", target]);
+    if (!add.ok) return undo(add, `git remote add failed (exit ${add.code})`);
+
+    // the exclude rules exist BEFORE anything can be staged: the sqlite index is
+    // the credential store and must never be committable (SPEC §5/§7)
+    await this.ensureExcludes();
+
+    const fetched = await this.git([...this.transportOpts(), "fetch", "origin"], { token });
+    if (!fetched.ok) return undo(fetched, `git fetch failed (exit ${fetched.code})`);
+
+    /* The remote's default branch rather than ours, for the reason case A
+       adopts the checked-out one: the pipeline will not push while the branch
+       and `git.branch` disagree. A name arriving over the network reaches an
+       argv, so it is held to exactly the rule `git.branch` is held to. */
+    const ls = await this.git([...this.transportOpts(), "ls-remote", "--symref", "origin", "HEAD"], { token });
+    if (!ls.ok) return undo(ls, `git ls-remote failed (exit ${ls.code})`);
+    const named = /^ref:\s+refs\/heads\/(\S+)\s+HEAD$/m.exec(ls.stdout)?.[1] ?? "";
+    const branch = named || this.branchSetting();
+    if (!validBranchName(branch)) {
+      await rollback();
+      return attachError(502, "attach-failed", `the remote's default branch is not a usable branch name: ${branch.slice(0, 80)}`);
+    }
+
+    /* An EMPTY remote has nothing to check out (and no symref to read): the
+       local branch stays unborn, and the first sync commits it and pushes with
+       --set-upstream — all ordinary pipeline behavior. */
+    const known = await this.git(["rev-parse", "--verify", "-q", `refs/remotes/origin/${branch}`], {
+      optionalLocks: false,
+    });
+    if (!known.ok) return { ok: true, branch, created: "repo" };
+
+    const co = await this.checkout(branch);
+    if (!co.ok) {
+      /* The one refusal that is not a failure: git would have overwritten local
+         files with the remote's copies. Attach never destroys a byte, so it
+         rolls back and hands the paths to the user instead. Local files that do
+         NOT collide simply stay untracked, for the next sync to stage. */
+      await rollback();
+      if (co.paths.length) {
+        return attachError(
+          409,
+          "checkout-conflict",
+          `the remote's copy of ${listPaths(co.paths)} would overwrite ${co.paths.length > 1 ? "files" : "a file"} in the vault — move, remove or merge ${co.paths.length > 1 ? "them" : "it"} by hand, then attach again`,
+          co.paths
+        );
+      }
+      return attachError(502, "attach-failed", this.attachMessage(co.result, `git checkout failed (exit ${co.result.code})`, target));
+    }
+    return { ok: true, branch, created: "repo" };
+  }
+
+  /**
+   * The checkout that brings the remote's docs into the vault, with ONE
+   * exception carved out of "attach never writes over a local file": the
+   * `settings.toml` THIS SERVER manufactured seconds ago.
+   *
+   * `Settings.load()` writes that file at boot whether or not anyone asked for
+   * it, and it is in TRACKED_META — so a real vault repo, which commits its
+   * own, collides with it EVERY time and the headline case (empty PVC +
+   * ZNOTES_VAULT_REPO) could never succeed. The bytes are still not destroyed:
+   * the local copy is parked under `.znotes/tmp/` (git-excluded, this app's
+   * scratch) and put back if the retry fails, so the vault is byte-identical
+   * whichever way it ends.
+   *
+   * The keyring is deliberately NOT in the exception. A local `identity.age`
+   * losing to a remote one is a lost vault key, and that must be refused.
+   */
+  private async checkout(branch: string): Promise<{ ok: true } | { ok: false; paths: string[]; result: GitResult }> {
+    const args = ["checkout", "-b", branch, `origin/${branch}`];
+    let co = await this.git(args);
+    if (co.ok) return { ok: true };
+
+    const restore = await this.parkLocalSettings(overwrittenPaths(co.stderr));
+    if (restore) {
+      co = await this.git(args);
+      if (co.ok) {
+        this.log(`attach: ${TRACKED_META[0]} replaced by the remote's copy; the local one is parked in .znotes/tmp/`);
+        return { ok: true };
+      }
+      await restore();
+    }
+    /* settings.toml is never in the reported set: it is not something the user
+       can act on, and once the paths beside it are gone the retry above deals
+       with it. What is left is exactly the list of files to move or merge. */
+    const paths = overwrittenPaths(co.stderr).filter((p) => p !== TRACKED_META[0]);
+    return { ok: false, paths, result: co };
+  }
+
+  /** Park a boot-generated settings.toml, if it is the only thing in the way. */
+  private async parkLocalSettings(paths: string[]): Promise<(() => Promise<void>) | null> {
+    if (!paths.includes(TRACKED_META[0]) || paths.some((p) => p !== TRACKED_META[0])) return null;
+    const from = resolve(this.vault, TRACKED_META[0]);
+    const to = resolve(this.vaultHandle.znotesDir, "tmp", "settings.toml.pre-attach");
+    try {
+      await mkdir(resolve(this.vaultHandle.znotesDir, "tmp"), { recursive: true });
+      await rename(from, to);
+    } catch {
+      return null;
+    }
+    return () => rename(to, from).catch(() => {});
+  }
+
+  /**
+   * What git said about a remote operation, reduced the way every published
+   * `message` is — plus the URL WE were handed, which `cleanMessage` cannot
+   * know about: it is not `lastOriginUrl` yet (case B), or has just been rolled
+   * back out of it (case A), and git quotes it in full in most of these errors.
+   */
+  private attachMessage(r: GitResult, fallback: string, url: string): string {
+    const said = gitMessage(r.stderr, r.stdout, fallback);
+    return this.cleanMessage(said.split(url).join(sanitizeRemote(url) ?? "origin"));
   }
 }

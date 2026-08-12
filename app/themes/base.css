@@ -2079,8 +2079,8 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 /* Both password rows are `.wide`: even the two-field terminal one is a control
    column's worth of input on its own, and the vault one is three inputs plus
    two buttons. Left in the column they collapse the label they are named by. */
-.field .ctl.term-pw, .field .ctl.key-pw { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.field .ctl.term-pw .inp, .field .ctl.key-pw .inp { flex: 1 1 150px; min-width: 150px; }
+.field .ctl.term-pw, .field .ctl.key-pw, .field .ctl.git-remote { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.field .ctl.term-pw .inp, .field .ctl.key-pw .inp, .field .ctl.git-remote .inp { flex: 1 1 150px; min-width: 150px; }
 
 .term { border: var(--bd); border-radius: var(--r-lg); background: var(--card-bg); box-shadow: var(--sh-2); overflow: hidden; margin: 8px 0 4px; }
 .term-bar { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: var(--bd-2); background: var(--panel-2); }
@@ -2136,7 +2136,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   /* `.wide` already gives these the full row; on a phone the inputs also need
      to be allowed below their 150px desktop floor or two of them cannot share
      a line */
-  .field .ctl.term-pw .inp, .field .ctl.key-pw .inp { flex: 1 1 130px; min-width: 130px; }
+  .field .ctl.term-pw .inp, .field .ctl.key-pw .inp, .field .ctl.git-remote .inp { flex: 1 1 130px; min-width: 130px; }
   .term-out { max-height: 38vh; }
 }
 

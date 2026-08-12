@@ -3,7 +3,7 @@
 ## Status
 
 Accepted, 2026-08-12. Decided with
-[spec 0007](../specs/open/0007-bring-your-own-vault.md), which carries the
+[spec 0007](../specs/done/0007-bring-your-own-vault.md), which carries the
 implementation plan. **Amends the operational stance in
 [the product spec](../specs/done/0001-z-notes-v1.md) §7's sync design** ("we
 never `git init`"): the *pipeline* still never creates a repository — but one
@@ -49,12 +49,21 @@ qualifies.**
   or `ZNOTES_VAULT_REPO` on first boot) — user-initiated, non-destructive and
   atomic: it refuses (naming paths) rather than overwrite a local file, and
   on any failure rolls back everything it created, leaving the vault
-  byte-identical.
+  byte-identical. One narrow exemption from the refusal: the `settings.toml`
+  the server itself manufactures at boot. When it is the sole colliding path,
+  attach parks the local copy under `.znotes/tmp/` and adopts the remote's —
+  every vault has a boot-written `settings.toml`, so without the carve-out no
+  populated remote could ever be attached. The keyring is never exempt: a
+  local `identity.age` losing to a remote one is a lost key.
 - **The secrets contract is unchanged and travels with the vault.** The
   keyring lives in `<vault>/.znotes/` and moves with the vault repo through
   attach, pull and push; the crypto *code* stays in the app repo; the server
   still never sees a passphrase and `server/` still never imports
-  `age-encryption`.
+  `age-encryption`. Extending [ADR 0006](0006-passphrase-strength-is-advice.md):
+  a committed keyring means a vault repo's secrecy rests on the passphrase's
+  strength and the repo's visibility — both the user's choice, neither enforced
+  nor warned about by the app beyond the existing entropy advice at passphrase
+  creation.
 - The credential rule is unchanged and applies to attach verbatim: the token
   lives only in sqlite, reaches git only through the askpass environment, and
   a URL carrying userinfo is refused so a credential can never land in

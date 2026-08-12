@@ -42,6 +42,10 @@ entry lists banned synonyms where drift has happened or is likely.
   `git.token` credential.
 - **tracked set** — docs + committed `.znotes` meta (`TRACKED_META` in
   `git.ts`); the sqlite index is never committed.
+- **attach** — connecting the vault directory to a remote repo
+  (`POST /api/sync/remote`, or `ZNOTES_VAULT_REPO` at boot): init if needed,
+  set `origin`, fetch, checkout. *Banned:* "clone" (the app never
+  clones-into-place — that would refuse a non-empty vault), "link".
 
 ## AI relay (SPEC §8)
 

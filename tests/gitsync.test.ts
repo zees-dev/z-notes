@@ -7,7 +7,15 @@
 
      - the VAULT is its own git repository, unrelated to this source repo.
        No repo → sync state "offline" / "not a git repository", and the rest
-       of the app is entirely unaffected. The server never runs `git init`.
+       of the app is entirely unaffected. The PIPELINE never runs `git init`
+       (ADR 0017 narrowed the old blanket "the server never runs git init"):
+       attach — POST /api/sync/remote, or ZNOTES_VAULT_REPO on first boot — is
+       the one user-initiated operation that may, and sections 15–16 own that
+       exception. Everything above section 15 is the pipeline, and none of it
+       may ever create a repository.
+     - attach is non-destructive and atomic: it refuses, naming the paths,
+       rather than overwrite a local file, and on any failure it rolls back
+       everything it made — leaving the vault byte-identical.
      - tracked set: EXACTLY *.md + .znotes/settings.toml (+ vault.pub /
        identity.age) — attachments, dotfiles and non-markdown never enter it;
        .znotes/index.db (the credential store) is ignored through the repo's
@@ -98,6 +106,12 @@ async function isIgnored(repo: string, path: string): Promise<boolean> {
   return r.code === 0;
 }
 
+/** the origin URL verbatim, or null when there is no origin (or no repo) */
+async function originUrl(repo: string): Promise<string | null> {
+  const r = await git(repo, "remote", "get-url", "origin");
+  return r.code === 0 ? r.stdout.trim() : null;
+}
+
 /* ------------------------------------------------------------------
    fixtures
    ------------------------------------------------------------------ */
@@ -158,6 +172,38 @@ async function gitVault(opts: { seed?: SeedMap; origin?: true | string } = {}): 
     await gitOk(vault, "remote", "add", "origin", opts.origin);
   }
   return { vault, bare: null };
+}
+
+/** a bare repo with no commits at all, HEAD pointing at `branch` */
+async function emptyBare(branch = "main"): Promise<string> {
+  const bare = tempDir("znotes-origin-");
+  await gitOk(bare, "init", "--bare", "-b", branch);
+  return bare;
+}
+
+/**
+ * A bare repo already carrying `seed` on `branch` — "the vault repo the user
+ * brings". Built through a throwaway working copy because a bare repo has no
+ * working tree to write files into.
+ */
+async function seededBare(seed: SeedMap, branch = "main"): Promise<string> {
+  const bare = await emptyBare(branch);
+  const work = tempVault(seed);
+  await initRepo(work);
+  await gitOk(work, "add", ".");
+  await gitOk(work, "commit", "-m", "vault: initial");
+  if (branch !== "main") await gitOk(work, "branch", "-M", branch);
+  await gitOk(work, "push", bare, `${branch}:${branch}`);
+  return bare;
+}
+
+/**
+ * A URL that parses fine and can never be reached. A DNS name would work too,
+ * but resolution can sit for the whole 30 s git timeout on a machine with a
+ * slow resolver; a file:// path that does not exist fails in milliseconds.
+ */
+function unreachableUrl(): string {
+  return `file://${join(tempDir("znotes-gone-"), "not-a-repo.git")}`;
 }
 
 /** a second working copy of the bare, standing in for "the other device" */
@@ -237,6 +283,33 @@ const STATES = ["synced", "syncing", "offline", "error"];
 
 const status = (srv: TestServer) => srv.get("/api/sync/status");
 const syncNow = (srv: TestServer) => srv.api("POST", "/api/sync/now");
+const attach = (srv: TestServer, url: string) => srv.api("POST", "/api/sync/remote", { url });
+
+/** every doc path the tree currently carries */
+async function docPaths(srv: TestServer): Promise<string[]> {
+  const tree = await srv.get("/api/docs");
+  expect(tree.status).toBe(200);
+  const out: string[] = [];
+  const walk = (list: any[]) => {
+    for (const n of list ?? []) {
+      if (n.type === "folder") walk(n.children ?? []);
+      else out.push(n.path);
+    }
+  };
+  walk(tree.body?.tree ?? []);
+  return out.sort();
+}
+
+/**
+ * Error bodies are `{error, message, ...extra}` — key ORDER included (ADR
+ * 0002 / docs/style.md: "tests compare serialized bytes"). Asserting on the
+ * parsed object cannot see that, so this reads the wire text.
+ */
+function expectErrorShape(text: string, ...keys: string[]) {
+  const at = keys.map((k) => text.indexOf(`"${k}":`));
+  for (let i = 0; i < keys.length; i++) expect(`${keys[i]} present: ${at[i] >= 0}`).toBe(`${keys[i]} present: true`);
+  expect(at).toEqual([...at].sort((a, b) => a - b));
+}
 
 /**
  * Put the repo in a known-quiet state before a timing measurement: flush
@@ -1387,5 +1460,473 @@ describe("hung git", () => {
       expect((await srv.get("/api/docs")).status).toBe(200);
     },
     60000
+  );
+});
+
+/* ==================================================================
+   15. attach — POST /api/sync/remote (spec 0007, ADR 0017)
+
+   The one operation allowed to create a repository, and the only one that has
+   to be trusted with a vault full of the user's only copy of something. Every
+   test here is really the same assertion from a different side: attach either
+   succeeds completely or leaves the vault byte-identical to what it found.
+   ================================================================== */
+
+describe("attach: an empty remote", () => {
+  test(
+    "a vault that is not a repo becomes one, pushes its docs, and adopts the branch",
+    async () => {
+      const vault = tempVault();
+      const bare = await emptyBare();
+      const srv = await serverOn(vault, 2);
+
+      /* precondition, not decoration: without it a passing test could be
+         measuring the fixture rather than attach */
+      expect(existsSync(join(vault, ".git"))).toBe(false);
+
+      const now = await attach(srv, bare);
+      expect(now.status).toBe(200);
+      expectStatusShape(now.body);
+
+      expect(await originUrl(vault)).toBe(bare);
+      expect(await isIgnored(vault, ".znotes/index.db")).toBe(true);
+
+      /* the response is post-push (the route ends with a manual sync), so the
+         bare already carries the seed — nothing to wait for */
+      expect(await commitCount(bare)).toBeGreaterThanOrEqual(1);
+      expect(await showFile(bare, "main", "notes/alpha.md")).toBe(SEED["notes/alpha.md"]);
+      expect(await showFile(bare, "main", "inbox.md")).toBe(SEED["inbox.md"]);
+
+      const settings = await srv.get("/api/settings");
+      expect(settings.status).toBe(200);
+      expect(settings.body.settings.git.branch).toBe("main");
+
+      const st = await status(srv);
+      expect(st.body.state).toBe("synced");
+      expect(typeof st.body.remote).toBe("string");
+    },
+    60000
+  );
+});
+
+describe("attach: a populated remote", () => {
+  /* The brought repo is checked out INTO the vault — so its settings.toml is
+     adopted (putRoute's reloadIfChanged) and its default branch becomes
+     git.branch, which is what keeps a `trunk`-headed repo off the pipeline's
+     "committed locally, not pushed" refusal on its very first sync.
+
+     Note the vault ALWAYS has a `.znotes/settings.toml` of its own by the time
+     attach runs — Settings.load() writes one at boot. It is the app's own
+     file, and the remote's copy wins; if attach treats it as an ordinary
+     untracked file it will collide with itself on every real attach. */
+  test(
+    "the remote's docs, settings and default branch land, and local-only docs survive and are pushed",
+    async () => {
+      const bare = await seededBare(
+        {
+          "remote/one.md": "# One\n\nfrom the brought repo\n",
+          "remote/two.md": "# Two\n\nalso from the brought repo\n",
+          /* scalars first: a bare key after a table header belongs to the table */
+          ".znotes/settings.toml": 'theme = "modern"\n\n[git]\nautoSyncSeconds = 2\n',
+        },
+        "trunk"
+      );
+      const vault = tempVault({ "local-only.md": "# Local only\n\nwritten before the repo was attached\n" });
+      const srv = await serverOn(vault);
+
+      const now = await attach(srv, bare);
+      expect(now.status).toBe(200);
+      expectStatusShape(now.body);
+
+      /* the pulled docs are indexed before the response, not eventually */
+      const paths = await docPaths(srv);
+      expect(paths).toContain("remote/one.md");
+      expect(paths).toContain("remote/two.md");
+      expect((await srv.doc("remote/one.md")).body.markdown).toBe("# One\n\nfrom the brought repo\n");
+
+      const settings = await srv.get("/api/settings");
+      expect(settings.status).toBe(200);
+      expect(settings.body.settings.theme).toBe("modern");
+      expect(settings.body.settings.git.branch).toBe("trunk");
+
+      /* the local doc was never in the way of the checkout, and the sync the
+         route triggers is what carries it to the remote */
+      expect(paths).toContain("local-only.md");
+      expect(readFileSync(join(vault, "local-only.md"), "utf8")).toBe(
+        "# Local only\n\nwritten before the repo was attached\n"
+      );
+      await waitUntil(
+        async () => (await showFile(bare, "trunk", "local-only.md")).length > 0,
+        { timeout: 8000, interval: 150, label: "the local-only doc to reach the bare" }
+      );
+    },
+    60000
+  );
+
+  /* settings.toml HEALS rather than refuses (its own preamble says so), and a
+     brought repo can carry an unparseable one — so the heal will rewrite the
+     file from defaults and the triggered sync will push that. The bytes it
+     healed over must survive somewhere local, or attach quietly destroyed the
+     only copy this machine had. */
+  test(
+    "a remote settings.toml that is not TOML heals to defaults, with the original bytes parked",
+    async () => {
+      const GARBAGE = "this is not [[[ valid toml\n";
+      const bare = await seededBare({
+        "remote/doc.md": "# Doc\n\nfrom the brought repo\n",
+        ".znotes/settings.toml": GARBAGE,
+      });
+      const vault = tempVault({});
+      const srv = await serverOn(vault);
+
+      const now = await attach(srv, bare);
+      expect(now.status).toBe(200);
+      expectStatusShape(now.body);
+
+      /* the unparseable copy is parked as app scratch, never synced */
+      expect(readFileSync(join(vault, ".znotes/tmp/settings.toml.unparseable"), "utf8")).toBe(GARBAGE);
+
+      /* and the server is on usable defaults, not wedged on the garbage */
+      const settings = await srv.get("/api/settings");
+      expect(settings.status).toBe(200);
+      expect(settings.body.settings.theme).toBe("minimal");
+      expect(await docPaths(srv)).toContain("remote/doc.md");
+    },
+    60000
+  );
+});
+
+describe("attach: a remote that would overwrite a local file", () => {
+  test(
+    "is refused, naming the paths, and leaves no .git and not one changed byte",
+    async () => {
+      const LOCAL = "# Foo\n\nthe local copy, which is the only copy\n";
+      const bare = await seededBare({ "foo.md": "# Foo\n\nthe remote copy\n" });
+      const vault = tempVault({ ...SEED, "foo.md": LOCAL });
+      const srv = await serverOn(vault, 2);
+      const before = readFileSync(join(vault, "foo.md"));
+
+      const now = await attach(srv, bare);
+      expect(now.status).toBe(409);
+      expect(now.body.error).toBe("checkout-conflict");
+      expect(Array.isArray(now.body.paths)).toBe(true);
+      expect(now.body.paths).toContain("foo.md");
+      /* the message is the whole recovery affordance — it has to name the file */
+      expect(String(now.body.message)).toContain("foo.md");
+      expect(String(now.body.message)).not.toContain(vault);
+      expectErrorShape(now.text, "error", "message", "paths");
+      expect(now.text.startsWith('{"error":"checkout-conflict","message":')).toBe(true);
+
+      /* rollback: the repo attach made is gone, and so is any trace of it */
+      expect(existsSync(join(vault, ".git"))).toBe(false);
+      expect(readFileSync(join(vault, "foo.md")).equals(before)).toBe(true);
+      expect((await srv.doc("foo.md")).body.markdown).toBe(LOCAL);
+      expect((await status(srv)).body.state).toBe("offline");
+    },
+    60000
+  );
+
+  /* The remote carrying BOTH a clashing doc and a settings.toml: the refusal
+     names only the doc — settings.toml is the app's own file, filtered from
+     `paths` because the retry handles it once the real conflicts are gone —
+     and nothing is parked or replaced on the refusal path. */
+  test(
+    "a mixed collision names only the user's file, and the local settings.toml stays put",
+    async () => {
+      const LOCAL = "# Foo\n\nthe local copy\n";
+      const bare = await seededBare({
+        "foo.md": "# Foo\n\nthe remote copy\n",
+        ".znotes/settings.toml": 'theme = "modern"\n',
+      });
+      const vault = tempVault({ "foo.md": LOCAL });
+      const srv = await serverOn(vault);
+      const settingsBefore = readFileSync(join(vault, ".znotes/settings.toml"));
+
+      const now = await attach(srv, bare);
+      expect(now.status).toBe(409);
+      expect(now.body.error).toBe("checkout-conflict");
+      expect(now.body.paths).toEqual(["foo.md"]);
+
+      expect(existsSync(join(vault, ".git"))).toBe(false);
+      expect(readFileSync(join(vault, "foo.md"), "utf8")).toBe(LOCAL);
+      expect(readFileSync(join(vault, ".znotes/settings.toml")).equals(settingsBefore)).toBe(true);
+      expect(existsSync(join(vault, ".znotes/tmp/settings.toml.pre-attach"))).toBe(false);
+    },
+    60000
+  );
+});
+
+describe("attach: a vault that is already a repo", () => {
+  test(
+    "origin is replaced only when the fetch proves it, and the working tree is never touched",
+    async () => {
+      const { vault, bare } = await gitVault({ origin: true });
+      const srv = await serverOn(vault, 2);
+      const alpha = readFileSync(join(vault, "notes/alpha.md"));
+      const headBefore = (await gitOk(vault, "rev-parse", "HEAD")).trim();
+
+      const dead = await attach(srv, unreachableUrl());
+      expect(dead.status).toBe(502);
+      expect(dead.body.error).toBe("attach-failed");
+      expect(typeof dead.body.message).toBe("string");
+      expectErrorShape(dead.text, "error", "message");
+
+      /* a failed attach is a no-op: the origin that worked still works */
+      expect(await originUrl(vault)).toBe(bare!);
+      expect((await gitOk(vault, "rev-parse", "HEAD")).trim()).toBe(headBefore);
+      expect(readFileSync(join(vault, "notes/alpha.md")).equals(alpha)).toBe(true);
+
+      const other = await emptyBare();
+      const ok = await attach(srv, other);
+      expect(ok.status).toBe(200);
+      expectStatusShape(ok.body);
+      expect(await originUrl(vault)).toBe(other);
+
+      /* case A never checks out — the user's files are exactly where they were */
+      expect(readFileSync(join(vault, "notes/alpha.md")).equals(alpha)).toBe(true);
+      expect(lines(await gitOk(vault, "status", "--porcelain")).filter((l) => /^(UU|AA|DD)/.test(l))).toEqual([]);
+    },
+    60000
+  );
+});
+
+describe("attach: refusals", () => {
+  test(
+    "a URL that could carry a credential or an argv option is rejected before git ever runs",
+    async () => {
+      const vault = tempVault();
+      const srv = await serverOn(vault, 2);
+
+      const refused = [
+        /* a credential in the URL would land in .git/config verbatim */
+        "https://carol:s3cr3t@example.invalid/z/vault.git",
+        /* scp-style is ssh, which is out of scope — and it is also the shape
+           that slips past a naive `new URL()` check */
+        "git@github.com:you/vault.git",
+        /* argv option injection: `git remote add origin --upload-pack=…` */
+        "--upload-pack=/bin/sh",
+      ];
+      for (const url of refused) {
+        const r = await attach(srv, url);
+        expect(`${url} → ${r.status} ${r.body?.error}`).toBe(`${url} → 400 bad-url`);
+        expectErrorShape(r.text, "error", "message");
+        expect(existsSync(join(vault, ".git"))).toBe(false);
+        expect(r.text).not.toContain("s3cr3t");
+      }
+    },
+    40000
+  );
+
+  test(
+    "a vault the user is in the middle of is refused with the pipeline's own message",
+    async () => {
+      const { vault, bare } = await gitVault({ origin: true });
+
+      const other = await otherClone(bare!);
+      await Bun.write(join(other, "notes/alpha.md"), "# Alpha\n\nREMOTE VERSION\n");
+      await gitOk(other, "add", "notes/alpha.md");
+      await gitOk(other, "commit", "-m", "other: alpha");
+      await gitOk(other, "push", "origin", "main");
+
+      writeVaultFile(vault, "notes/alpha.md", "# Alpha\n\nLOCAL VERSION\n");
+      await gitOk(vault, "add", "notes/alpha.md");
+      await gitOk(vault, "commit", "-m", "local: alpha");
+      const pull = await git(vault, "pull", "--no-rebase", "origin", "main");
+      expect(pull.code).not.toBe(0);
+      expect(existsSync(join(vault, ".git", "MERGE_HEAD"))).toBe(true);
+
+      const srv = await serverOn(vault, 2);
+      const r = await attach(srv, await emptyBare());
+      expect(r.status).toBe(409);
+      expect(r.body.error).toBe("vault-busy");
+      expect(String(r.body.message)).toContain("merge");
+      expect(String(r.body.message)).not.toContain(vault);
+      expectErrorShape(r.text, "error", "message");
+
+      /* the merge is still the user's, and so is the origin */
+      expect(existsSync(join(vault, ".git", "MERGE_HEAD"))).toBe(true);
+      expect(await originUrl(vault)).toBe(bare!);
+    },
+    60000
+  );
+});
+
+describe("attach: token custody", () => {
+  test(
+    "the stored token reaches git only through the askpass env — never argv, .git/config or a response",
+    async () => {
+      const TOKEN = "ghp_zn0tesFAKEt0kenATTACH4m1pQ7z";
+      const vault = tempVault();
+      const bare = await emptyBare();
+      const shim = gitShim();
+      const srv = await serverOn(vault, 2, { PATH: `${shim.dir}:${process.env.PATH ?? ""}` });
+
+      const put = await srv.api("PUT", "/api/settings", { git: { token: TOKEN } });
+      expect(put.status).toBe(200);
+      expect(put.text).not.toContain(TOKEN);
+
+      const now = await attach(srv, bare);
+      expect(now.status).toBe(200);
+      expect(now.text).not.toContain(TOKEN);
+
+      const gitConfig = readFileSync(join(vault, ".git", "config"), "utf8");
+      expect(gitConfig).not.toContain(TOKEN);
+      expect(gitConfig).toContain(bare); // the URL is stored verbatim, unrewritten
+
+      /* argv of every git attach ran — a token there is world-readable in `ps` */
+      const argv = shim.read();
+      expect(argv.some((l) => /(^| )fetch( |$)/.test(l))).toBe(true);
+      expect(argv.filter((l) => l.includes(TOKEN))).toEqual([]);
+
+      await sleep(300);
+      expect((await status(srv)).text).not.toContain(TOKEN);
+      expect((await srv.get("/api/settings")).text).not.toContain(TOKEN);
+      expect(srv.stdoutLines.join("\n")).not.toContain(TOKEN);
+      expect(srv.stderrLines.join("\n")).not.toContain(TOKEN);
+      expect(
+        vaultFilesExceptDb(vault).filter((rel) => readFileSync(join(vault, rel)).toString("latin1").includes(TOKEN))
+      ).toEqual([]);
+    },
+    60000
+  );
+});
+
+/* ==================================================================
+   16. boot provisioning — ZNOTES_VAULT_REPO / ZNOTES_GIT_TOKEN
+
+   A fresh PVC plus two env vars must be a self-seeding deployment, and a
+   restart of that same pod must be a no-op. Env vars are a BOOTSTRAP, never an
+   enforcer: an unreachable remote yields a working offline vault, not a crash
+   loop.
+   ================================================================== */
+
+describe("boot provisioning", () => {
+  test(
+    "an empty vault is seeded from ZNOTES_VAULT_REPO, and restarting does no work twice",
+    async () => {
+      const bare = await seededBare({
+        "boot/one.md": "# One\n\nseeded at boot\n",
+        "boot/two.md": "# Two\n\nalso seeded at boot\n",
+      });
+      const vault = tempDir("znotes-bootvault-");
+      const first = await startServer({ vault, env: { ZNOTES_VAULT_REPO: bare } });
+      running.push(first);
+
+      const paths = await docPaths(first);
+      expect(paths).toContain("boot/one.md");
+      expect(paths).toContain("boot/two.md");
+      expect(await originUrl(vault)).toBe(bare);
+
+      const settled = await syncNow(first);
+      expect(settled.status).toBe(200);
+      expect(settled.body.state).toBe("synced");
+      const head = (await gitOk(vault, "rev-parse", "HEAD")).trim();
+      const commits = await commitCount(vault);
+      await first.stop();
+
+      /* second boot, same vault, same env: the vault is already its own repo,
+         so provisioning must skip entirely. A re-init would show up here as a
+         fresh history; a second attach as an extra commit. */
+      const second = await startServer({ vault, env: { ZNOTES_VAULT_REPO: bare } });
+      running.push(second);
+      expect(second.readyLine.length).toBeGreaterThan(0);
+      expect((await gitOk(vault, "rev-parse", "HEAD")).trim()).toBe(head);
+      expect(await commitCount(vault)).toBe(commits);
+      expect(await originUrl(vault)).toBe(bare);
+      expect(await docPaths(second)).toEqual(paths);
+
+      const again = await syncNow(second);
+      expect(again.status).toBe(200);
+      expect(again.body.state).toBe("synced");
+    },
+    90000
+  );
+
+  test(
+    "an unreachable ZNOTES_VAULT_REPO boots a working offline vault instead of crash-looping",
+    async () => {
+      const vault = tempDir("znotes-bootvault-");
+      const srv = await startServer({ vault, env: { ZNOTES_VAULT_REPO: unreachableUrl() } });
+      running.push(srv);
+
+      expect(srv.readyLine.length).toBeGreaterThan(0);
+
+      const st = await status(srv);
+      expect(st.status).toBe(200);
+      expectStatusShape(st.body);
+      expect(["offline", "error"]).toContain(st.body.state);
+      /* rolled back: a half-made repo would make every later sync lie */
+      expect(existsSync(join(vault, ".git"))).toBe(false);
+
+      /* and it is a working notes app, which is the whole point of not crashing */
+      const created = await srv.api("POST", "/api/docs", {
+        path: "notes/offline.md",
+        markdown: "# Offline\n\nstill writable\n",
+      });
+      expect(created.status).toBe(201);
+    },
+    60000
+  );
+
+  test(
+    "ZNOTES_GIT_TOKEN seeds an empty credential store and never clobbers a stored one",
+    async () => {
+      const ENV_TOKEN = "znotes_env_TOKEN_00000000000_ENVX";
+      const STORED_TOKEN = "stored_ui_TOKEN_11111111111_UIXX";
+
+      /* first run, nothing stored: the env var is what arms the credential */
+      const fresh = tempVault();
+      const seeded = await startServer({ vault: fresh, env: { ZNOTES_GIT_TOKEN: ENV_TOKEN } });
+      running.push(seeded);
+      const fromEnv = await seeded.get("/api/settings");
+      expect(fromEnv.status).toBe(200);
+      expect(fromEnv.text).not.toContain(ENV_TOKEN);
+      const envMask = String(fromEnv.body.settings.git.tokenMasked);
+      expect(envMask.length).toBeGreaterThan(0);
+
+      /* a token stored through the UI is the live one, and a stale env var on
+         the next boot must not roll it back — rotation happens in the UI */
+      const vault = tempVault();
+      const before = await startServer({ vault });
+      running.push(before);
+      expect((await before.api("PUT", "/api/settings", { git: { token: STORED_TOKEN } })).status).toBe(200);
+      const storedMask = String((await before.get("/api/settings")).body.settings.git.tokenMasked);
+      expect(storedMask.length).toBeGreaterThan(0);
+      expect(storedMask).not.toBe(envMask); // else the assertion below proves nothing
+      await before.stop();
+
+      const after = await startServer({ vault, env: { ZNOTES_GIT_TOKEN: ENV_TOKEN } });
+      running.push(after);
+      const settings = await after.get("/api/settings");
+      expect(settings.status).toBe(200);
+      expect(String(settings.body.settings.git.tokenMasked)).toBe(storedMask);
+      expect(settings.text).not.toContain(ENV_TOKEN);
+      expect(settings.text).not.toContain(STORED_TOKEN);
+    },
+    90000
+  );
+
+  test(
+    "a vault directory that does not exist yet is created, and the app works in it",
+    async () => {
+      const vault = join(tempDir("znotes-novault-"), "nope");
+      expect(existsSync(vault)).toBe(false);
+
+      const srv = await startServer({ vault });
+      running.push(srv);
+      expect(srv.readyLine.length).toBeGreaterThan(0);
+      expect(await docPaths(srv)).toEqual([]);
+
+      const created = await srv.api("POST", "/api/docs", {
+        path: "first.md",
+        markdown: "# First\n\ninto a vault that had to be made\n",
+      });
+      expect(created.status).toBe(201);
+      const markdown = "# First\n\nand written again\n";
+      expect((await srv.putDoc("first.md", markdown)).status).toBe(200);
+      expect((await srv.doc("first.md")).body.markdown).toBe(markdown);
+      expect(readFileSync(join(vault, "first.md"), "utf8")).toBe(markdown);
+    },
+    40000
   );
 });

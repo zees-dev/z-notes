@@ -16,7 +16,7 @@ import { adoptTrash, refreshTrash } from "./trash.js";
 import { closeExitGuard, guardRawExit, navGate, openDoc, rawExitDiff, renderDoc, saveDoc, setBaseline, setMode, syncRaw, viewedPath } from "./editor.js";
 import { closePP } from "./secrets.js";
 import { closeEffort, closePal, renderChat, updateSessionUI } from "./chat.js";
-import { adoptSettings, cacheLook, commitFocusedNumber, exitSettings, guardSettingsExit, paintAiStatus, settingAt, settingsDirty, showSettings } from "./settings.js";
+import { adoptSettings, cacheLook, commitFocusedNumber, exitSettings, guardSettingsExit, paintAiStatus, paintGitRemote, settingAt, settingsDirty, showSettings } from "./settings.js";
 import { loadCommands } from "./terminal.js";
 import { findDoc } from "./app.js";
 
@@ -33,6 +33,9 @@ export function paintSync(s) {
   $("#stBranch").lastElementChild.textContent = s.branch;
   const line = $("#syncLineTxt");
   if (line) line.textContent = s.message;
+  // the Settings Repository line reads the same state.sync — a frame that
+  // changes `remote` while that page is open must repaint it too
+  paintGitRemote();
 }
 
 /* Statusbar chip → POST /api/sync/now. The status arrives twice: once as the

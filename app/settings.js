@@ -15,7 +15,7 @@ import { refreshTrash } from "./trash.js";
 import { autoGrow, guardRawExit, openDoc, syncRaw } from "./editor.js";
 import { applyLockPolicy, clearKeyFields, clearTerminalSecretFields, initSecrets, paintVaultKey } from "./secrets.js";
 import { updateSessionUI } from "./chat.js";
-import { SETTINGS_SECTIONS, app, canPopBack, closeNav, homeTarget, isDrawer, isTriPane, paintHome, routeSettings, toggleChat } from "./shell.js";
+import { SETTINGS_SECTIONS, app, canPopBack, closeNav, homeTarget, isDrawer, isTriPane, paintHome, paintSync, routeSettings, toggleChat } from "./shell.js";
 import { paintTerminal, refreshTerminalStatus } from "./terminal.js";
 
 /* ============================================================
@@ -230,10 +230,93 @@ export function paintSettings() {
      server's mask, because the server's mask is all there is to paint */
   $("#gitToken").value = s.git.tokenMasked;
   $("#aiKey").value = s.ai.apiKeyMasked;
+  wireGitRemote();
+  paintGitRemote();
   paintSaveState();
   /* one call: paintAiStatus owns the chip AND (via paintEndpoint) the Settings
      note, so the two surfaces are painted from a single signal and cannot drift */
   paintAiStatus((m.ai && m.ai.status) || null);
+}
+
+/* ============================================================
+   ATTACH — connecting the vault to a remote repository (ADR 0017)
+
+   An ACTION, not a setting: like "Sync now" it has no "before" to revert to, so
+   it writes no draft and cannot dirty the Save button — see the line drawn
+   above `settingsDraft`. Nothing here ever touches a credential: the token is
+   the server's to read from its own store, and this call carries only a URL.
+   ============================================================ */
+
+/** The remote this vault is attached to, read from `state.sync` — the same
+    object the statusbar chip is painted from, so the two cannot disagree. */
+export function paintGitRemote() {
+  const txt = $("#gitRemoteTxt");
+  if (!txt) return;
+  const s = state.sync;
+  /* "local only" is a statement ABOUT the vault (a working, unsynced one), not
+     a stand-in for "no status has landed yet" — which is what the dash is */
+  txt.textContent = !s ? "—" : s.remote || "local only";
+}
+
+/**
+ * Arm the Connect row. Idempotent and called from `paintSettings`, because the
+ * markup is static and that painter is the one thing guaranteed to run before
+ * anybody can reach this section (boot, and again on every save/discard/adopt).
+ * Exported so the composition root can claim the wiring instead.
+ */
+let gitRemoteWired = false;
+export function wireGitRemote() {
+  if (gitRemoteWired) return;
+  const btn = $("#gitConnect"),
+    inp = $("#gitRemoteUrl");
+  if (!btn || !inp) return;
+  gitRemoteWired = true;
+  btn.addEventListener("click", connectRemote);
+  /* a lone input in no form — without this, Enter in it does nothing at all */
+  inp.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    connectRemote();
+  });
+}
+
+/**
+ * POST /api/sync/remote. The answer IS a sync status, so it is painted by the
+ * one painter that owns every sync surface (`paintSync`: the statusbar chip,
+ * the branch, and this section's own sync line) rather than by anything local
+ * to this page. The `sync-status` frame the attach also broadcasts arrives
+ * moments later through that same painter, so a client that never saw this
+ * response still ends up painted correctly.
+ */
+export async function connectRemote() {
+  const btn = $("#gitConnect"),
+    inp = $("#gitRemoteUrl");
+  if (!btn || !inp || btn.disabled) return;
+  const remote = inp.value.trim();
+  if (!remote) {
+    inp.focus();
+    return;
+  }
+  clearSettingsError();
+  btn.classList.add("busy");
+  btn.disabled = true;
+  try {
+    const s = await api.attachRemote(remote);
+    /* the field has done its job: what the vault is attached to is the line
+       above it now, and a URL left in the box invites a second attach */
+    inp.value = "";
+    paintSync(s);
+    paintGitRemote();
+    toast(s.state === "error" ? "Connected, but the first sync failed — " + s.message : "Connected · " + s.message);
+  } catch (err) {
+    /* every refusal already names the problem in `message` — `checkout-conflict`
+       names the conflicting paths — so there is nothing to compose here, and
+       all four codes are mapped to this field in SETTINGS_ERROR_FIELDS */
+    showSettingsError(err);
+  } finally {
+    btn.classList.remove("busy");
+    btn.disabled = false;
+  }
 }
 
 /* ============================================================
@@ -357,6 +440,9 @@ export function showSettings(section, opts) {
     applyLook(draftedLook(), { preview: true });
   }
   paintSaveState();
+  /* the Repository line is live state too — `state.sync`, which moves without
+     anything on this page being drafted or saved, so arriving repaints it */
+  paintGitRemote();
   /* The keyring line is the one row in this panel that is not a stored setting
      — it is live state (is there an identity, is it unlocked, which recipient),
      so it is repainted from the worker every time the page is shown rather than
@@ -768,6 +854,13 @@ const SETTINGS_ERROR_FIELDS = {
   "bad-shell": "#termShell",
   "bad-startupcwd": "#termCwd",
   "bad-terminal": "#termShell",
+  /* attach (POST /api/sync/remote) is not a save, but every one of its
+     refusals is about the URL that was just typed — including `vault-busy`,
+     which is "fix the vault repo, then retry THIS" */
+  "bad-url": "#gitRemoteUrl",
+  "vault-busy": "#gitRemoteUrl",
+  "checkout-conflict": "#gitRemoteUrl",
+  "attach-failed": "#gitRemoteUrl",
   "bad-auto-sync": "[data-sw='git.autoSync']",
   "bad-auto-sync-seconds": "[data-num='git.autoSyncSeconds']",
   "bad-retention-days": "[data-num='trash.retentionDays']",

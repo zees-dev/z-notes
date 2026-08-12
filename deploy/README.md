@@ -143,6 +143,38 @@ kubectl -n znotes get certificate         # both should read READY=True
 first. If `znotes-tls` is stuck, `kubectl -n znotes describe certificate
 znotes-tls` names the reason.
 
+### Seeding a fresh PVC from your vault repo (optional)
+
+The PVC starts empty and the image carries no notes (ADR 0005/0017), so a new
+deployment serves an empty offline vault until you give it one. Two env vars on
+the Deployment turn first boot into the seeding step — no `kubectl exec`, no
+hand-run `git init`, which is how this PVC used to be filled:
+
+```yaml
+- name: ZNOTES_VAULT_REPO
+  value: https://github.com/you/vault.git
+- name: ZNOTES_GIT_TOKEN            # only for a private repo
+  valueFrom:
+    secretKeyRef: { name: znotes-git, key: token }
+```
+
+On boot the pod **attaches** the vault to that remote — init, `origin`, fetch,
+checkout — and then syncs on its own from there. It is deliberately soft: a
+vault that is already its own repo is left alone (so restarts are idempotent,
+and the env vars are a bootstrap, not an enforcer), and an unreachable remote or
+a rejected token logs the failure and boots anyway, into a working offline vault
+whose sync status carries the error. It never overwrites a file, so pointing it
+at a repo whose files clash with what is already on the PVC is a refusal naming
+the paths, not a loss.
+
+**`ZNOTES_GIT_TOKEN` is first-run only.** It is absorbed into the sqlite
+credential store on the boot that finds none stored and is ignored ever after —
+rotation happens in the settings UI, where it cannot be clobbered by a stale
+manifest. Once the first boot has happened you can drop the env var (and the
+Secret) entirely; the token lives in the vault's `.znotes/index.db` from then
+on. That is the only reason a credential appears in this manifest at all — the
+note on secrets in `20-deployment.yaml` otherwise still holds.
+
 ## 6. Trust the CA
 
 Export the **public** half only — the private key stays in the cluster:

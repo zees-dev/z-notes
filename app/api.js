@@ -230,6 +230,17 @@ export const getSyncStatus = () => get("api/sync/status");
 
 export const syncNow = () => post("api/sync/now", {});
 
+/* ATTACH — connect the vault directory to a remote repository (ADR 0017): the
+   one user-initiated operation that may create a repo in the vault. Answers
+   with the same sync-status object `syncNow` does; refuses with `bad-url`
+   (400), `vault-busy` or `checkout-conflict` (409 — the latter carrying the
+   conflicting `paths`) or `attach-failed` (502), having left the vault exactly
+   as it was. The credential is never in this call: the server reads the stored
+   token itself, and a URL carrying userinfo is refused.
+
+   `remote`, not `url`, because `url` is this module's request-URL builder. */
+export const attachRemote = (remote) => post("api/sync/remote", { url: remote });
+
 /* ---------------- ai ---------------- */
 
 export const getSession = () => get("api/ai/sessions/current");

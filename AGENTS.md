@@ -27,6 +27,8 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
   `mermaid-e2e` — a fence is untrusted input (ADR 0010) and its hardening is
   the one thing here that must not regress quietly.
 - `deploy/` — Dockerfile + k3s manifests. Live at https://znotes.home.arpa.
+- `vault/` — NOT part of this repo. The vault is external and bring-your-own
+  (ADR 0017): `ZNOTES_VAULT`, default `./vault`, gitignored local scratch.
 
 ## Commands
 
@@ -68,6 +70,8 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   rules), and every rendered line carries its own `[data-line]`. 0016 renders
   external URLs (`[text](url)`, `<url>`, bare) as real new-tab anchors —
   http(s)/mailto only; `javascript:` and everything else stays literal text.
+  0017 makes the vault bring-your-own — external to this repo, any directory
+  qualifies, and attach is the one place `git init` may run.
 
 ## Workflow
 

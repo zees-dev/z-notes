@@ -686,6 +686,45 @@ aborted (working tree restored, both sides intact) and the call returns
 `state: "error"` with the conflicted paths in `message`. Editing and saving keep working in
 that state; resolve in the vault repo and call this again.
 
+#### `POST /api/sync/remote`
+
+```json
+{ "url": "https://github.com/z/vault.git" }
+```
+
+**Attach** the vault directory to a remote repository (ADR 0017). Initialises a repo if the
+vault is not one, sets `origin`, fetches, checks out the remote's default branch — adopting
+it as `git.branch` — and hands over to the ordinary pipeline. A vault that is already its
+own repo is attached without any checkout: `origin` is set (validated with a fetch, restored
+on failure) and the **locally checked-out** branch is the one adopted, which may differ from
+the remote's default. This is the one operation in the product that may run `git init`; the
+sync pipeline still never does. Also runs at boot from `ZNOTES_VAULT_REPO` when the vault is
+not already its own repo.
+
+→ `200` with exactly the `GET /api/sync/status` object, as `POST /api/sync/now` answers it:
+attach ends with a manual sync, so the response already reflects the first push (an empty
+remote gets the local docs as its first commit).
+
+**Non-destructive and atomic.** It never overwrites or deletes a local file — a remote file
+that would land on a differing local one is a refusal, naming the paths — and on any failure
+it rolls back everything it created (the `.git` it just made, or the previous `origin` URL),
+leaving the vault byte-identical to before the call. Local files the remote does not carry
+simply stay, untracked, for the triggered sync to commit. One file is exempt from the
+refusal: `.znotes/settings.toml`, which the server itself manufactures at boot — when it is
+the only path in the way, attach parks the local copy at `.znotes/tmp/settings.toml.pre-attach`
+and adopts the remote's (without this no populated vault repo could ever be attached). The
+keyring is never exempt: a local `identity.age` losing to a remote one would lose the vault key.
+
+| Status | When |
+|---|---|
+| `400 bad-url` | `url` is empty, over 2048 chars, carries whitespace/control characters or `\`, starts with `-`, carries userinfo (`https://user:pw@…`), or is not `https://`, `http://`, `file://` or an absolute path — `ssh://` and scp-style remotes are configured with ordinary git in the vault instead |
+| `409 vault-busy` | the vault repo is mid-merge, mid-rebase, has a conflicted index or a detached HEAD — the same refusal the sync pipeline gives; finish or abort it in the vault repo |
+| `409 checkout-conflict` | checking out the remote branch would overwrite local files; body is `{error, message, paths}` — `paths` lists them and `message` names them too |
+| `502 attach-failed` | the remote is unreachable, refused the credential, or answered with an unusable default branch |
+
+The token rule is unchanged and applies verbatim: it reaches git only through the askpass
+environment, so it appears in no argv, no `.git/config`, no log and no response body.
+
 ---
 
 ### AI

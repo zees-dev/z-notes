@@ -428,6 +428,23 @@
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M18 9v6M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><path d="M18 9a6 6 0 0 1-6 6"/></svg>
               Git sync
             </div>
+            <!-- ATTACH (ADR 0017) — the one user-initiated operation that may
+                 create a repository in the vault. The remote shown is the sync
+                 status's own `remote`, the same object the statusbar chip reads,
+                 so the two surfaces cannot disagree about what this vault is
+                 attached to. `.stacked`: a whole-row control (input + button),
+                 which an unshrinkable `.ctl` would otherwise take out of the
+                 label — see base.css. -->
+            <div class="field stacked">
+              <div class="lab">
+                <b>Repository</b>
+                <span>Currently <code id="gitRemoteTxt">—</code>. Connect fetches the remote and checks it out here; it never overwrites a local file, and leaves the vault untouched if it fails.</span>
+              </div>
+              <div class="ctl git-remote">
+                <input class="inp mono" id="gitRemoteUrl" placeholder="https://github.com/you/vault.git" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Repository URL">
+                <button class="btn" id="gitConnect">Connect</button>
+              </div>
+            </div>
             <div class="field">
               <div class="lab"><b>GitHub token</b><span>Stored in the system keychain; the server only ever sends it masked.</span></div>
               <div class="ctl"><input class="inp mono masked" type="text" id="gitToken" autocomplete="off" data-1p-ignore data-lpignore="true" aria-label="GitHub token"></div>

@@ -4,16 +4,19 @@
    One bun process: Bun.serve hosts the v0 API (docs/specs/done/0002-http-api-v0.md), the
    SSE event stream, and the static frontend in ./app. Zero runtime deps.
 
-     ZNOTES_VAULT   vault directory      (default ./vault)
-     ZNOTES_PORT    listen port          (default 4700)
+     ZNOTES_VAULT      vault directory   (default ./vault; created if missing)
+     ZNOTES_PORT       listen port       (default 4700)
+     ZNOTES_VAULT_REPO vault repo to attach on first boot (ADR 0017)
+     ZNOTES_GIT_TOKEN  git credential, absorbed into sqlite on first boot
 
    sqlite always lives at <vault>/.znotes/index.db.
    ============================================================ */
 
+import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { AI } from "./ai.ts";
 import { Index } from "./db.ts";
-import { GitSync } from "./git.ts";
+import { GitSync, sanitizeRemote } from "./git.ts";
 import { META, Settings } from "./settings.ts";
 import { Terminal, TerminalError, bearerOf } from "./terminal.ts";
 import { Trash, isTrashId } from "./trash.ts";
@@ -24,6 +27,12 @@ import { DocStore, isMd } from "./docs.ts";
 import { safePath, Vault } from "./vault.ts";
 
 const VAULT = resolve(process.env.ZNOTES_VAULT || "./vault");
+/* The vault is BROUGHT, not shipped (ADR 0017), so a path that does not exist
+   yet is the ordinary first-run shape — a fresh clone, an empty PVC. Create it
+   here, explicitly and before anything reads it: db.ts happened to do it as a
+   side effect of `mkdirSync(dirname(dbPath))`, which made "the app boots into a
+   working empty vault" an accident of an unrelated module. */
+mkdirSync(VAULT, { recursive: true });
 const vault = new Vault(VAULT);
 const PORT = Number(process.env.ZNOTES_PORT || 4700);
 const APP_DIR = resolve(import.meta.dir, "..", "app");
@@ -608,6 +617,33 @@ const ROUTES: Route[] = [
   /* Manual "Sync now": the same add → commit → push pipeline the debounce
      runs, started immediately and awaited so the caller gets the outcome. */
   { pattern: "sync/now", methods: { POST: async () => json(await gitSync.trigger("manual")) } },
+  /* Attach (ADR 0017): connect the vault directory to a remote repository. The
+     one route in this server that may `git init`; git.ts owns the atomicity and
+     hands back the response body verbatim on refusal. */
+  {
+    pattern: "sync/remote",
+    methods: {
+      POST: async (c) => {
+        const r = await gitSync.attachRemote(String(c.body?.url ?? ""));
+        if (!r.ok) return json(r.body, r.status);
+        /* putRoute rather than a bare write: it opens with reloadIfChanged(),
+           which is exactly what adopts a settings.toml that just arrived in the
+           checkout, and it fans the adopted branch out to the git timer and to
+           every client the same way a Settings save does. It reports failure as
+           a status, not a throw — swallowing it would leave git.branch stale
+           and the NEXT push dying with "committed locally, not pushed". */
+        const saved = await settings.putRoute({ git: { branch: r.branch } });
+        if (saved.status !== 200)
+          process.stderr.write(`[z-notes] attach: git.branch=${r.branch} was not persisted (${(saved.body as any)?.error ?? saved.status})\n`);
+        // index and announce the pulled docs BEFORE answering, so the tree is
+        // queryable the moment the caller sees the response
+        await recon.reconcile();
+        // exactly the sync-status object, like POST /api/sync/now: this push is
+        // what sends local-only docs (or the first commit) to a fresh remote
+        return json(await gitSync.trigger("manual"));
+      },
+    },
+  },
 
   /* ---------- terminal (SPEC §13) — every route is under /api, so the
      crossSiteWrite guard in fetch() already refused a cross-site POST before
@@ -769,6 +805,49 @@ async function api(req: Request, url: URL, caller: string | null): Promise<Respo
 /* ============================================================
    Server
    ============================================================ */
+
+/* ============================================================
+   Boot provisioning — ZNOTES_VAULT_REPO (ADR 0017).
+
+   A fresh PVC plus this env var is a self-seeding deployment: attach is init +
+   fetch + checkout, which is what lets a non-empty vault and the live
+   credential store survive it. BOOTSTRAP ONLY — a vault that is already its own
+   repo is left alone, so restarting the pod is a no-op and the env var never
+   becomes an enforcer.
+
+   Failure is logged and survived. An unreachable remote or a wrong token must
+   leave a working offline vault whose sync status carries the error, never a
+   process that dies on boot and takes the notes offline with it.
+
+   Runs BEFORE the reconcile below so the first index pass sees the checked-out
+   docs, and after `settings.load()` so the token it fetches with is in sqlite.
+   ============================================================ */
+
+const VAULT_REPO = (process.env.ZNOTES_VAULT_REPO || "").trim();
+if (VAULT_REPO) {
+  try {
+    const { repo, remote } = await gitSync.attachment();
+    const wanted = sanitizeRemote(VAULT_REPO);
+    if (repo) {
+      if (remote !== wanted)
+        process.stderr.write(
+          `[z-notes] the vault is already a git repository (origin ${remote ?? "unset"}); ZNOTES_VAULT_REPO (${wanted}) not applied.\n`
+        );
+    } else {
+      const r = await gitSync.attachRemote(VAULT_REPO);
+      if (r.ok) {
+        const saved = await settings.putRoute({ git: { branch: r.branch } });
+        if (saved.status !== 200)
+          process.stderr.write(`[z-notes] attach: git.branch=${r.branch} was not persisted (${(saved.body as any)?.error ?? saved.status})\n`);
+        process.stderr.write(`[z-notes] vault attached to ${wanted} on branch ${r.branch}.\n`);
+      } else {
+        process.stderr.write(`[z-notes] ZNOTES_VAULT_REPO: ${r.body.error} — ${r.body.message}\n`);
+      }
+    }
+  } catch (err) {
+    process.stderr.write(`[z-notes] ZNOTES_VAULT_REPO: attach failed — ${String((err as Error)?.message || err)}\n`);
+  }
+}
 
 // full index pass before the first request, then the doorbell goes live
 await recon.reconcile();

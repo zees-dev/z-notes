@@ -14,7 +14,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { Index } from "./db.ts";
 import type { Vault } from "./vault.ts";
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 /* ---------- numeric settings: bounds are SERVER-DECLARED ----------
    Same principle as `meta.themes`: the client builds the control and validates
@@ -471,6 +471,9 @@ export class Settings {
 
   /** Read settings.toml, absorbing any raw credentials it carries. */
   async load(): Promise<void> {
+    // before anything can need it: boot provisioning (spec 0007 §5) attaches a
+    // vault repo with this token, and that happens right after load() returns
+    this.absorbEnvToken();
     const file = Bun.file(this.vault.settingsPath);
     let parsed: Json = {};
     this.onDisk = null;
@@ -482,6 +485,14 @@ export class Settings {
       } catch (err) {
         process.stderr.write(`[z-notes] settings.toml is not valid TOML, using defaults: ${String(err)}\n`);
         parsed = {};
+        /* Park the bytes before anything can heal over them. The file is
+           committed, so an unparseable copy can ARRIVE — a pull, or the
+           checkout an attach runs (ADR 0017) — and the next persist() (any
+           save, or attach adopting `git.branch`) rewrites the file from
+           defaults, which the next sync then commits and pushes. Healing is
+           this file's contract (see the preamble it serializes); destroying
+           the only local copy of what it healed over is not. */
+        await this.parkUnparseable(text);
       }
     }
     this.data = mergeOneLevel(structuredClone(DEFAULTS), parsed);
@@ -815,6 +826,40 @@ export class Settings {
     return true;
   }
 
+  /** The unparseable settings.toml, kept where the pre-attach park goes —
+      `.znotes/tmp/` is git-excluded app scratch, so the copy never syncs. */
+  private async parkUnparseable(text: string): Promise<void> {
+    try {
+      const dir = resolve(this.vault.znotesDir, "tmp");
+      await mkdir(dir, { recursive: true });
+      await Bun.write(resolve(dir, "settings.toml.unparseable"), text);
+      process.stderr.write("[z-notes] the unparseable settings.toml is copied to .znotes/tmp/settings.toml.unparseable\n");
+    } catch {
+      /* parking is a courtesy; failing to park must not stop the boot */
+    }
+  }
+
+  /**
+   * FIRST-RUN ONLY, for the same reason `absorbTerminalPassword` is: a
+   * container's first boot has no UI and no settings.toml, so `ZNOTES_GIT_TOKEN`
+   * is how a fresh PVC gets a credential to attach its vault repo with (spec
+   * 0007 §5). Once one is stored the env var is IGNORED — rotation happens in
+   * Settings, and a stale value left on the deployment must not silently
+   * un-rotate the live token on the next restart.
+   *
+   * The env var is read here and nowhere else: the credentials table has one
+   * owner. The log line says a token was adopted and never what it is.
+   */
+  private absorbEnvToken(): void {
+    const value = process.env.ZNOTES_GIT_TOKEN;
+    if (typeof value !== "string" || !value) return;
+    if (this.index.getCredential("git.token")) return;
+    this.index.setCredential("git.token", value);
+    process.stderr.write(
+      "[z-notes] git token adopted from ZNOTES_GIT_TOKEN into .znotes/index.db — the env var can be dropped after this boot.\n"
+    );
+  }
+
   /** Move raw/masked credential fields out of a settings object into sqlite. */
   private absorbCredentials(obj: Json): boolean {
     let touched = false;
@@ -1062,6 +1107,19 @@ function validateEditor(editor: unknown): void {
    sync layer only ever sees a usable name. `autoSync`/`autoSyncSeconds` are
    handled by the generic validators above. */
 
+/**
+ * The whole rule, over an already-trimmed name. Exported because attach
+ * (git.ts) resolves a branch name from `git ls-remote --symref` — a string that
+ * arrives from the network and reaches the same argv — and holding it to a
+ * second, hand-copied version of this rule is exactly how the two would drift.
+ */
+export function validBranchName(name: string): boolean {
+  if (typeof name !== "string" || !name) return false;
+  if (name.startsWith("-")) return false;
+  if (/[\s~^:?*[\\\x00-\x1f\x7f]/.test(name) || name.includes("..") || name.endsWith(".lock")) return false;
+  return true;
+}
+
 function validateGit(git: unknown): void {
   if (git == null) return;
   if (!isPlainObject(git)) throw new SettingsError("bad-git", "git must be an object.");
@@ -1070,9 +1128,10 @@ function validateGit(git: unknown): void {
     if (typeof b !== "string" || !b.trim())
       throw new SettingsError("bad-branch", "git.branch must be a non-empty string.");
     const name = b.trim();
+    // the leading `-` is called out by name; validBranchName covers it too
     if (name.startsWith("-"))
       throw new SettingsError("bad-branch", "git.branch may not start with '-'.");
-    if (/[\s~^:?*[\\\x00-\x1f\x7f]/.test(name) || name.includes("..") || name.endsWith(".lock"))
+    if (!validBranchName(name))
       throw new SettingsError("bad-branch", `Not a valid git branch name: ${name}`);
   }
 }
