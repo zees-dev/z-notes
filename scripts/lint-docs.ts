@@ -6,7 +6,8 @@
    an agent. Checks:
 
      1. AGENTS.md exists and stays ≤ 100 lines (a map, not a manual)
-     2. CLAUDE.md is exactly the @AGENTS.md pointer
+     2. CLAUDE.md starts with the @AGENTS.md pointer (Claude-specific
+        addon content may follow — it applies to Claude sessions only)
      3. every relative link in AGENTS.md and docs/ resolves to a real file
      4. specs in docs/specs/{open,done} carry all seven template sections
      5. server/ layering is forward-only (the table below IS the law;
@@ -37,11 +38,15 @@ if (!existsSync(agentsPath)) {
 /* ---------- 2. CLAUDE.md pointer ---------- */
 const claudePath = join(ROOT, "CLAUDE.md");
 if (!existsSync(claudePath)) {
-  fail("CLAUDE.md", "missing", 'create it containing exactly one line: "@AGENTS.md"');
+  fail("CLAUDE.md", "missing", 'create it starting with the line "@AGENTS.md"');
 } else {
-  const first = readFileSync(claudePath, "utf8").trim();
+  /* The pointer must come FIRST so every Claude session loads the shared map
+     before anything else. What follows is the Claude-specific addon — rules
+     that apply to Claude sessions only. Anything agent-agnostic still belongs
+     in AGENTS.md or docs/, where every agent sees it. */
+  const first = readFileSync(claudePath, "utf8").split("\n").map((l) => l.trim()).filter(Boolean)[0] ?? "";
   if (first !== "@AGENTS.md")
-    fail("CLAUDE.md", `contains ${JSON.stringify(first.slice(0, 60))}`, 'CLAUDE.md must be exactly "@AGENTS.md" — put content in AGENTS.md or docs/, not here');
+    fail("CLAUDE.md", `first line is ${JSON.stringify(first.slice(0, 60))}`, 'CLAUDE.md must START with "@AGENTS.md"; Claude-specific addons go below it, agent-agnostic content in AGENTS.md or docs/');
 }
 
 /* ---------- helpers ---------- */
