@@ -427,18 +427,26 @@
             <div class="grp-t">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v12M18 9v6M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/><path d="M18 9a6 6 0 0 1-6 6"/></svg>
               Git sync
+              <!-- the unsynced primary, named in passing: label · local only ·
+                   root, painted by settings.js and HIDDEN once a remote is
+                   attached — a synced vault says so in its own card. -->
+              <span class="grp-sub mono" id="gitGrpSub" hidden></span>
             </div>
+            <!-- ONE CARD PER VAULT, the primary first. Its header is painted by
+                 settings.js from GET /api/vaults, the same body the secondary
+                 cards below are built from, so the section reads as one list —
+                 each vault individually configurable. -->
+            <div class="vault-blk" id="vaultPrimaryBlk">
             <!-- ATTACH (ADR 0017) — the one user-initiated operation that may
-                 create a repository in the vault. The remote shown is the sync
-                 status's own `remote`, the same object the statusbar chip reads,
-                 so the two surfaces cannot disagree about what this vault is
-                 attached to. `.stacked`: a whole-row control (input + button),
-                 which an unshrinkable `.ctl` would otherwise take out of the
-                 label — see base.css. -->
+                 create a repository in the vault. THE INPUT IS THE IDENTITY:
+                 once connected it carries the sanitized remote (never the raw
+                 URL, which may hold userinfo) and locks, so the card says what
+                 this vault is attached to without a line of prose repeating it.
+                 `.stacked`: a whole-row control (input + button), which an
+                 unshrinkable `.ctl` would otherwise take out of the label. -->
             <div class="field stacked">
               <div class="lab">
                 <b>Repository</b>
-                <span>Currently <code id="gitRemoteTxt">—</code>. Connect fetches the remote and checks it out here; it never overwrites a local file, and leaves the vault untouched if it fails.</span>
               </div>
               <div class="ctl git-remote">
                 <input class="inp mono" id="gitRemoteUrl" placeholder="https://github.com/you/vault.git" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Repository URL">
@@ -464,9 +472,29 @@
                 <span class="unit"></span>
               </div>
             </div>
-            <div class="sync-line" id="syncLine">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
-              <span id="syncLineTxt">—</span>
+            <!-- the card's footer: what sync last did, quietly, on the left;
+                 the actions on the right where a thumb reaches (docs/style.md).
+                 Disconnect appears only while there IS a remote to disconnect
+                 from — settings.js hides it otherwise. -->
+            <div class="vault-acts">
+              <span class="sync-line" id="syncLine"><span id="syncLineTxt">—</span></span>
+              <button class="btn" type="button" id="gitSyncNow">Sync now</button>
+              <button class="btn danger" type="button" id="gitDisconnect" hidden>Disconnect…</button>
+            </div>
+            </div>
+            <!-- MORE VAULTS. Each vault added here is a directory and a
+                 repository of its own, with its own branch, cadence and token,
+                 and its docs addressed as `@<id>/…`. The cards are built by
+                 settings.js from GET /api/vaults — the one body that carries
+                 each vault's git section — into this host. The add form stays
+                 folded behind the + button until it is asked for. -->
+            <div id="vaultBlocks"></div>
+            <!-- the next vault, being registered: the SAME card component the
+                 list is made of, built by settings.js vaultBlock() in draft
+                 mode — one builder, no second form to drift. -->
+            <div id="vaultAddHost"></div>
+            <div class="vault-add-row">
+              <button class="btn" type="button" id="vaultAddBtn" aria-expanded="false" aria-controls="vaultAddField" title="Add a vault">+</button>
             </div>
           </section>
 

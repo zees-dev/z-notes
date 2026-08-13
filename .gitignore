@@ -1,6 +1,11 @@
 # the vault is bring-your-own (ADR 0017): the app repo carries only the app.
-# ./vault is the ZNOTES_VAULT default — a local scratch vault, never committed.
+# ./vault was the ZNOTES_VAULT default before the vaults home held every vault
+# (ADR 0018); ignored still, so an install that predates the move stays clean.
 /vault/
+
+# ./vaults is the ZNOTES_VAULTS_DIR default — every subdirectory is a whole
+# secondary vault, git repo and all (ADR 0018). Same rule, one level down.
+/vaults/
 
 # sqlite index is a rebuildable cache — never committed (SPEC §5/§7)
 *.db

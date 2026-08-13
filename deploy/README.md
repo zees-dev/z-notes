@@ -175,6 +175,44 @@ Secret) entirely; the token lives in the vault's `.znotes/index.db` from then
 on. That is the only reason a credential appears in this manifest at all — the
 note on secrets in `20-deployment.yaml` otherwise still holds.
 
+### More than one vault (optional)
+
+`ZNOTES_VAULTS_DIR` is the **vaults home**: one subdirectory per vault, every one
+a full vault with its own git remote, branch, cadence, trash and index (ADR 0018).
+`ZNOTES_VAULT` is the **primary** among them — the only home of app-level state
+(settings, keyring, AI relay, terminal) — and it defaults to
+`$ZNOTES_VAULTS_DIR/vault`, so a plain `bun server/index.ts` grows exactly one
+directory rather than two that mean different things.
+
+**The image pins `ZNOTES_VAULT=/vault` explicitly**, so the deployment above is
+unaffected by that default: the primary stays on its own PVC mount and the home
+is wherever you put it. Both shapes work — the boot scan skips whichever
+subdirectory is the primary, by real path, so nothing is ever indexed twice.
+
+```yaml
+- name: ZNOTES_VAULTS_DIR
+  value: /vaults
+```
+
+The directory is scanned at boot — the filesystem is the registry, so vaults
+added through the UI come back after a restart with nothing to migrate. Two
+overlaps are refused, because both would index the same files twice: the home
+INSIDE the primary vault, and the primary sitting deeper than a direct child of
+the home. Either one costs the secondary vaults, never the app.
+
+Give it durable storage or lose those vaults on reschedule. Whether that is a
+second PVC mounted at `/vaults`, a subPath of the existing one, or an
+`emptyDir` you are content to re-add from is the operator's choice — the
+manifests in `k3s/` ship neither, and none of them need to change. The
+single-replica invariant below is **unchanged**: more vaults still means one
+sqlite writer, one reconciler and one git working tree *per vault*, all inside
+one process.
+
+Two operational notes carry over per vault: the `.git/index.lock` recipe below
+applies at `<vaults-dir>/<id>/.git/`, and the backup argument applies to every
+vault directory, since each holds its own `.znotes/index.db` with that vault's
+git token.
+
 ## 6. Trust the CA
 
 Export the **public** half only — the private key stays in the cluster:
@@ -233,8 +271,13 @@ public internet.
 
 ```sh
 bun install
-ZNOTES_VAULT="$HOME/notes-vault" bun server/index.ts     # http://localhost:4700
+bun server/index.ts                                      # http://localhost:4700
+ZNOTES_VAULTS_DIR="$HOME/notes" bun server/index.ts      # …or keep them elsewhere
 ```
+
+Every vault lives under `ZNOTES_VAULTS_DIR` — `./vaults` in the repo, gitignored —
+one subdirectory each, the primary at `vaults/vault` and created on first boot.
+Point `ZNOTES_VAULT` somewhere else only if the primary belongs outside that home.
 
 `http://localhost` is a *trustworthy origin*, so WebCrypto works and secrets are
 fully functional with no certificate anywhere. That stops being true the moment

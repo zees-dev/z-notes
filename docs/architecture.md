@@ -16,14 +16,30 @@ markdown files (source of truth), `.znotes/settings.toml` (committed),
 replica behind a private-CA TLS ingress (`deploy/`); the replica count is a
 correctness constraint, not a cost choice — see `deploy/k3s/20-deployment.yaml`.
 
-The vault is **not** part of this repo (ADR 0017) — four env vars place it and,
-optionally, seed it: `ZNOTES_VAULT` (default `./vault`, gitignored, created at
-boot if missing), `ZNOTES_PORT` (default 4700), and the two first-boot
+There may be more than one vault (ADR 0018). `$ZNOTES_VAULT` is the **primary**
+vault — the one described above, addressed by bare doc paths, and the only home
+of app-level state (settings, keyring, AI relay, terminal). Every direct
+subdirectory of `$ZNOTES_VAULTS_DIR` is a **secondary** vault: the same layout
+on disk, its own full stack in the process, and doc paths prefixed `@<id>/`
+everywhere they cross the wire. The filesystem is the registry; there is no
+list to migrate.
+
+The vault is **not** part of this repo (ADR 0017) — five env vars place it and,
+optionally, seed it: `ZNOTES_VAULTS_DIR` (the vaults home, default `./vaults`,
+gitignored, scanned at boot), `ZNOTES_VAULT` (the primary, default
+`$ZNOTES_VAULTS_DIR/vault`, created at boot if missing — so one directory holds
+every vault, one subdirectory each; a deployment that mounts a PVC elsewhere
+just sets it, and the boot scan skips whichever subdirectory is the primary, by
+real path. The home may not sit INSIDE the primary, and the primary may not sit
+deeper than a direct child of the home: either would double-index, and costs
+the secondaries rather than the app), `ZNOTES_PORT` (default 4700), and the two first-boot
 bootstraps — `ZNOTES_VAULT_REPO` attaches the vault to that remote when it is
 not already its own repo (a vault that is one is left alone; a failure is logged
 and boot continues into an offline vault), and `ZNOTES_GIT_TOKEN` is absorbed
 into the sqlite credential store as `git.token` only when none is stored, so a
-stale env var can never clobber a rotated one. Platform behavior the design leans on
+stale env var can never clobber a rotated one. Both bootstraps are
+primary-only: a secondary vault is added through `POST /api/vaults`, and the
+vaults home is what makes it survive the restart. Platform behavior the design leans on
 (fs.watch semantics, `bun --hot`, sqlite/FTS5, Bun.build) is documented in
 [the platform research](specs/done/0005-bun-platform-foundation.md) — reference, not contract.
 
@@ -48,7 +64,8 @@ new module must be added there (and here) to compile through CI.
 | 3 | `terminal.ts` | password-gated command runner, sessions, AI-command approval | `Terminal`, `TerminalError`, `bearerOf` |
 | 4 | `ai.ts` | turn orchestration, context assembly + leak guard, the two wire dialects, proposal stack | `AI` (single export) |
 | 4 | `docs.ts` | every doc/folder/trash transaction: create, CAS-write, move + backlink rewrite + rollback, delete/restore/purge/sweep, commit | `DocStore`, `isMd` |
-| 5 | `index.ts` | composition root: wiring, route table, `/events` bus, vendor bundle, static serving, boot/shutdown | none (entrypoint) |
+| 5 | `vaults.ts` | the vault registry: one stack per vault, the boot scan of the vaults home, add/remove, `@id/` qualification (ADR 0018) | `VaultRegistry`, `VaultStack`, `validVaultId`, `qualify` |
+| 6 | `index.ts` | composition root: wiring, route table, `/events` bus, vendor bundle, static serving, boot/shutdown | none (entrypoint) |
 
 Dependency-injection convention: modules take **narrow structural deps**
 (`Pick<Settings, …>`, the `db.ts` slices, callback fields) — never a concrete

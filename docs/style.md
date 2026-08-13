@@ -43,6 +43,16 @@ scar": many comments cite the bug that forced the shape
 - No new dependencies without an ADR. The zero-dep bias is load-bearing:
   the frontend must run unbuilt, and `tests/secrets.test.ts` structurally
   depends on the server's import graph staying crypto-free.
+- UI action buttons sit RIGHT-ALIGNED in their row (`justify-content:
+  flex-end`) unless a stronger convention says otherwise (a dialog's own
+  footer order, an input+button pair where the button hugs its input). The
+  app is installable and phone-first on small screens (ADR 0007/0008), and
+  the right edge is where a thumb reaches; a new button earns a left seat
+  only with a reason written next to it.
+- A REQUIRED field is marked with an asterisk on its label (`.lab .req`),
+  and only a field the operation cannot proceed without earns one — a field
+  with a working default is optional and stays unmarked, so the mark keeps
+  meaning something.
 
 ## Tests
 

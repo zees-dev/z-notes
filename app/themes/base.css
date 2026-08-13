@@ -29,6 +29,11 @@
   --panel-3: #eeeff2;                  /* deepest fill: chips, hover wells */
   --line: #e2e3e8;                     /* structural border */
   --line-2: #ededf1;                   /* hairline / internal border */
+  /* the sidebar's branch guides: a LINE THAT MUST READ, unlike the structural
+     hairlines above, which some themes take to near-transparency. Derived from
+     the decorative ink so it lands visible on every panel; themes override the
+     token, never the guide rules (ADR 0003). */
+  --tree-guide: color-mix(in srgb, var(--muted-2) 55%, transparent);
 
   /* --- palette: ink --- */
   --text: #14161c;
@@ -583,9 +588,25 @@ kbd {
 .row .ico { flex: 0 0 auto; color: var(--muted-2); display: grid; place-items: center; transition: color .13s, transform var(--dur-2) var(--ease); }
 .row:hover .ico { color: var(--muted); }
 .row .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row.folder .chev { transition: transform var(--dur-2) var(--ease); }
-.row.folder.open .chev { transform: rotate(90deg); }
-.row.file { padding-left: 14px; }
+/* Every row is indented by ONE formula in tree.js (8 + depth*14) and no row
+   kind adds to it here — no chevron column: DISCLOSURE READS FROM THE TEXT.
+   An open folder's (and vault's) label leans a step toward the accent, and the
+   branch guides below already say "children" the way tree(1) output does. */
+.row.folder.open, .row.vault.open { color: color-mix(in srgb, var(--text) 70%, var(--accent)); }
+.row.folder.open .ico, .row.vault.open .ico { color: color-mix(in srgb, var(--muted) 70%, var(--accent)); }
+/* WHAT'S INSIDE, at a glance: a folder holding anything is drawn filled, an
+   empty one is a gray well. The fill rides currentColor, so an open folder's
+   fill leans with its label. */
+.row.folder.full .ico svg { fill: color-mix(in srgb, currentColor 26%, transparent); }
+.row.folder.bare .ico svg { fill: var(--panel-3); }
+.row.folder.bare .ico { color: var(--muted-2); }
+/* THE VAULT ROW — a top-level entry, not a folder: it holds a repo's whole
+   tree, so it reads at the weight of the panel's own headings. */
+.row.vault { font-weight: var(--w-semi); color: var(--text); }
+.row.vault .dot { margin-left: auto; width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; background: var(--muted-2); }
+.row.vault .dot.sync-ok { background: var(--ok); }
+.row.vault .dot.sync-busy { background: var(--warn); animation: blip .9s var(--ease) infinite; }
+.row.vault .dot.sync-warn { background: transparent; box-shadow: inset 0 0 0 1.6px var(--danger); }
 .row.file .dot { margin-left: auto; width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); opacity: 0; transition: opacity .15s; }
 .row.file.inert .lbl { color: var(--muted); }
 .row.file.inert .dot { opacity: .45; }
@@ -597,6 +618,40 @@ kbd {
 }
 .children { overflow: hidden; }
 .children.closed { display: none; }
+/* THE BRANCH GUIDES — the tree(1) look: every row hangs off its parent's line
+   with a tick (├─), and the run ENDS at its last row (└─) instead of trailing
+   past it. Drawn per element rather than once per box: each direct child of a
+   box paints the slice of the line that spans itself plus the row gap above
+   it, so the slices abut and the line reads continuous, while the last row's
+   slice can stop at its own tick. `--guide-x` (the box's own line) and
+   `--pass-x` (the line of the box ABOVE, continued beside an open subtree) are
+   set inline by renderTree because only it knows the depths. Tokens only, per
+   ADR 0003. */
+.tree .children { position: relative; }
+.tree .newwrap { position: relative; }
+.tree .children > .rowwrap::before,
+.tree .children > .newwrap::before {
+  content: ""; position: absolute; left: var(--guide-x); top: 50%;
+  width: 7px; height: 1px;
+  background: var(--tree-guide); pointer-events: none;
+}
+.tree .children > .rowwrap::after,
+.tree .children > .newwrap::after {
+  content: ""; position: absolute; left: var(--guide-x);
+  top: calc(-1 * var(--d-row-gap)); bottom: 0; width: 1px;
+  background: var(--tree-guide); pointer-events: none;
+}
+/* an open subtree continues the line of the box it SITS IN beside itself —
+   its own --guide-x is already the deeper run */
+.tree .children > .children::after {
+  content: ""; position: absolute; left: var(--pass-x);
+  top: calc(-1 * var(--d-row-gap)); bottom: 0; width: 1px;
+  background: var(--tree-guide); pointer-events: none;
+}
+/* └ — the last row's slice stops at its own tick; whatever hangs below it (an
+   open subtree of a last folder) draws no continuation at this depth */
+.tree .children > .t-end::after { bottom: 50%; }
+.tree .children > .t-off::after { content: none; }
 
 /* Row + its rename/delete affordances. The actions overlay the row's right
    edge rather than sitting in flow, so adding them changed no row metric the
@@ -1638,6 +1693,13 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   100% { background: transparent; box-shadow: none; }
 }
 .grp-t { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: var(--w-bold); letter-spacing: var(--label-tracking); text-transform: var(--label-transform); color: var(--accent); margin-bottom: 10px; }
+/* a faded aside inside a section title — plain case and weight, never louder
+   than the title it trails, truncating before it wraps */
+.grp-t .grp-sub {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 500; letter-spacing: 0; text-transform: none;
+  font-size: 10.5px; color: var(--muted-2); opacity: .85;
+}
 /* label on the left, control on the right — sized by the CONTROL, which is
    right for the switch/segment/number box this row was designed around: each
    has one natural width and the label takes whatever is left. */
@@ -1682,8 +1744,41 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .sw.on { background: var(--accent); }
 .sw.on::after { transform: translateX(16px); }
 
-.sync-line { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: var(--r); background: var(--ok-soft); border: var(--bd-w) var(--bd-style) var(--ok-bd); color: var(--ok); font-size: 12.5px; font-weight: var(--w-med); }
-.sync-line .mono { font-family: var(--mono); font-size: 11.5px; opacity: .8; }
+/* What sync last did — a FOOTNOTE, not a banner: it sits in the card's action
+   row and must never out-shout the two buttons beside it. Truncates rather
+   than wraps; the full message is the title. */
+.sync-line {
+  min-width: 0; flex: 1 1 auto; margin-right: auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; color: var(--muted-2); font-weight: 500;
+}
+
+/* ---------- Settings › Sync: one card per secondary vault ----------
+   Everything above them in the section is the primary vault's. A card, not
+   another run of fields, so N repositories read as N things. */
+.vault-blk { margin-top: 12px; padding: 10px 12px 12px; border: var(--bd); border-radius: var(--r); background: var(--panel-2); }
+.vault-blk.busy { opacity: .6; pointer-events: none; }
+.vault-blk .field { padding: 6px 0; }
+.vault-hd { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13.4px; }
+.vault-hd b { font-weight: 600; flex: 0 0 auto; }
+.vault-hd .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; background: var(--muted-2); }
+.vault-hd .dot.sync-ok { background: var(--ok); }
+.vault-hd .dot.sync-busy { background: var(--warn); }
+.vault-hd .dot.sync-warn { background: transparent; box-shadow: inset 0 0 0 1.6px var(--danger); }
+.vault-hd .mono { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the on-disk root, spelled out: it is what Disconnect promises stays put */
+.vault-root { font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); margin-top: 2px; }
+/* status left, actions right, one row (docs/style.md: buttons right-aligned) */
+.vault-acts { display: flex; align-items: center; gap: 7px; margin-top: 10px; }
+.vault-acts .btn { flex: 0 0 auto; }
+/* a REQUIRED field's mark, on the label it belongs to (docs/style.md): only
+   fields the operation cannot proceed without wear one. `display:inline`
+   beats the block the generic `.lab span` hint rule would force on it. */
+.field .lab .req { display: inline; color: var(--danger); font-weight: 500; font-size: inherit; margin: 0 0 0 3px; }
+/* the + at the foot of the vault list — the one way IN to the add form.
+   Right-aligned, like every action button (docs/style.md: thumb reach). */
+.vault-add-row { display: flex; justify-content: flex-end; margin-top: 10px; }
+#vaultAddBtn { min-width: 34px; font-size: 15px; line-height: 1; }
 
 .pp { width: min(360px, 100%); }
 .pp .modal-body { padding: 16px 18px 6px; }

@@ -9,7 +9,7 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, I, apiFail, clearStickyToast, dirname, el, esc, normTarget, toast } from "./ui.js";
+import { $, $$, I, apiFail, clearStickyToast, dirname, el, esc, normTarget, relOf, syncDotClass, toast, vaultOf, vaultPrefix, vaultRootKey } from "./ui.js";
 import { cells } from "./markdown.js";
 import { confirmDialog } from "./dialogs.js";
 import { refreshTrash, trashRetentionNote } from "./trash.js";
@@ -19,14 +19,36 @@ import { recordHistory } from "./history.js";
 
 /* ============================================================
    SIDEBAR TREE
+
+   ONE TOP-LEVEL ROW PER VAULT, and everything under it is that vault's own
+   tree with its paths already qualified by the server. The rows below a vault
+   row know nothing about vaults: `node()` draws whatever path it is handed.
+
+   INDENTATION IS ONE FORMULA — `8 + depth*14` px for EVERY row, folder and file
+   alike. Files used to indent 6px further than their folder siblings, which was
+   a mis-alignment dressed as a hierarchy; the chevron column they were missing
+   is now an empty box of the same width, so labels line up at every depth and
+   the only thing that moves a row is its depth.
    ============================================================ */
-function indexTree(nodes, seen) {
+
+/** Every row's left inset, and the ONE place the step is written down. */
+const rowPad = (depth) => 8 + depth * 14;
+
+/** Where a `.children` box draws its branch guide: a step in from its parent
+    row's text, so each row's tick runs from the line to its own content. */
+const guideX = (parentDepth) => rowPad(parentDepth) + 7 + "px";
+
+function indexTree(nodes, seen, bySlug) {
   nodes.forEach((n) => {
     if (n.type === "folder") {
       if (!state.folderOpen.has(n.path)) state.folderOpen.set(n.path, !!n.open);
-      indexTree(n.children, seen);
+      indexTree(n.children, seen, bySlug);
     } else {
       seen.add(n.path);
+      const slug = n.path.split("/").pop().replace(/\.md$/i, "");
+      const list = bySlug.get(slug);
+      if (list) list.push(n.path);
+      else bySlug.set(slug, [n.path]);
       const prev = state.docs.get(n.path);
       state.docs.set(n.path, Object.assign({ markdown: "", rev: null, loaded: false }, prev || {}, n));
     }
@@ -37,34 +59,70 @@ export async function loadTree() {
   const r = await api.getTree();
   state.vault = r.vault;
   state.tree = r.tree;
+  /* `vaults[]` is the whole picture; `vault`/`tree` are the primary's slice of
+     it, kept for the header and for anything that only ever meant the primary.
+     A server that answered without `vaults[]` still has one vault — draw it as
+     one row rather than an empty sidebar. */
+  state.vaults =
+    Array.isArray(r.vaults) && r.vaults.length
+      ? r.vaults
+      : [{ id: "vault", label: r.vault.name, root: r.vault.root, docCount: r.vault.docCount, remote: null, repo: false, prefix: "", sync: state.sync, tree: r.tree }];
   /* The tree is the authoritative doc set, so the link world is rebuilt from
      it rather than accumulated: after a rename or a delete a stale slug would
      otherwise keep resolving to a path that is now a 404, and a slug that has
      just become AMBIGUOUS would keep silently resolving to whichever doc was
-     indexed last. */
+     indexed last. One slug map PER VAULT — a link never crosses one. */
   const seen = new Set();
-  indexTree(r.tree, seen);
-  state.docPaths = seen;
-  state.slugs = new Map();
-  seen.forEach((p) => {
-    const slug = p.split("/").pop().replace(/\.md$/i, "");
-    const list = state.slugs.get(slug);
-    if (list) list.push(p);
-    else state.slugs.set(slug, [p]);
+  const slugs = new Map();
+  state.vaults.forEach((v) => {
+    const bySlug = new Map();
+    slugs.set(v.id, bySlug);
+    indexTree(v.tree || [], seen, bySlug);
+    bySlug.forEach((list) => list.sort());
   });
-  state.slugs.forEach((list) => list.sort());
+  state.docPaths = seen;
+  state.slugs = slugs;
   for (const p of [...state.docs.keys()]) if (!seen.has(p) && p !== state.active) state.docs.delete(p);
   renderTree();
   $("#vaultName").textContent = r.vault.name;
-  $("#vaultSub").textContent = r.vault.root + " · " + r.vault.docCount + " docs";
+  $("#vaultSub").textContent =
+    r.vault.root + " · " + r.vault.docCount + " docs" + (state.vaults.length > 1 ? " · " + state.vaults.length + " vaults" : "");
+}
+
+/** The descriptor for a vault id, or null. */
+const vaultById = (id) => state.vaults.find((v) => v.id === id) || null;
+
+/**
+ * A `sync-status` frame named a vault: keep its descriptor current and repaint
+ * that one row's dot WHERE IT IS. A full `renderTree()` per frame would tear
+ * down the inline create/rename row and the focused row with it, several times
+ * a sync — and nothing about a dot needs the tree rebuilt.
+ */
+export function adoptVaultSync(s) {
+  const v = vaultById((s && s.vault) || "vault");
+  if (!v) return;
+  v.sync = s;
+  /* `offline` is published exactly when the directory is not a repository —
+     which is the same question "does this row carry a dot at all" asks */
+  v.repo = s.state !== "offline";
+  const row = $('#tree .row.vault[data-vault="' + v.id + '"]');
+  if (!row) return;
+  const had = $(".dot", row);
+  if (!v.repo) {
+    if (had) had.remove();
+    return;
+  }
+  const dot = had || row.appendChild(el("span", "dot"));
+  dot.className = "dot " + syncDotClass(s);
+  dot.title = s.message || "";
 }
 
 export function renderTree() {
   const host = $("#tree");
   host.innerHTML = "";
-  host.appendChild(el("div", "sec-label", "Vault"));
+  /* create/rename mount points, keyed by the folder they belong to — and a
+     vault's ROOT is a key like any other ("" for the primary, "@id" else) */
   const slots = new Map();
-  slots.set("", { box: host, depth: 0 });
 
   /* Rename / delete affordances. They live BESIDE the row, never inside it:
      `.row` is a <button> and a button inside a button is not a thing. Both are
@@ -112,6 +170,8 @@ export function renderTree() {
       if (n.type === "folder") {
         // keep the subtree mounted so a rename does not collapse the tree
         const kids = el("div", "children");
+        kids.style.setProperty("--guide-x", guideX(depth));
+        kids.style.setProperty("--pass-x", guideX(depth - 1));
         slots.set(n.path, { box: kids, depth: depth + 1 });
         parent.appendChild(kids);
         n.children.forEach((c) => node(c, depth + 1, kids));
@@ -121,15 +181,21 @@ export function renderTree() {
     if (n.type === "folder") {
       const open = state.folderOpen.get(n.path) !== false;
       const wrap = el("div", "rowwrap");
-      const row = el("button", "row folder" + (open ? " open" : ""));
-      row.style.paddingLeft = 8 + depth * 12 + "px";
+      /* full/bare drives the icon's fill: a folder with anything inside reads
+         filled, an empty one reads as a gray well */
+      const row = el("button", "row folder" + (open ? " open" : "") + (n.children && n.children.length ? " full" : " bare"));
+      row.style.paddingLeft = rowPad(depth) + "px";
       /* what the context menu reads off whatever was right-clicked. Uniform
          across both row kinds — `data-doc` stays on files because that is the
          selector the doc-open path and the tests already use. */
       row.dataset.path = n.path;
       row.dataset.kind = "folder";
-      row.innerHTML = '<span class="ico chev">' + I.chev + '</span><span class="ico">' + I.folder + '</span><span class="lbl">' + esc(n.name) + "</span>";
+      /* no chevron: disclosure reads from the text (`.open` lights the label)
+         and from the branch guides, the way `tree(1)` output does */
+      row.innerHTML = '<span class="ico">' + I.folder + '</span><span class="lbl">' + esc(n.name) + "</span>";
       const kids = el("div", "children" + (open ? "" : " closed"));
+      kids.style.setProperty("--guide-x", guideX(depth));
+      kids.style.setProperty("--pass-x", guideX(depth - 1));
       slots.set(n.path, { box: kids, depth: depth + 1 });
       row.addEventListener("click", () => {
         state.pick = { path: n.path, kind: "folder" };
@@ -149,11 +215,16 @@ export function renderTree() {
     } else {
       const wrap = el("div", "rowwrap");
       const row = el("button", "row file" + (n.empty ? " inert" : "") + (state.active === n.path ? " active" : ""));
-      row.style.paddingLeft = 14 + depth * 12 + "px";
+      row.style.paddingLeft = rowPad(depth) + "px";
       row.dataset.doc = n.path;
       row.dataset.path = n.path;
       row.dataset.kind = "doc";
-      row.innerHTML = '<span class="ico">' + (n.hasSecrets ? I.key : I.file) + '</span><span class="lbl">' + esc(n.name) + '</span><span class="dot"></span>';
+      row.innerHTML =
+        '<span class="ico">' +
+        (n.hasSecrets ? I.key : I.file) +
+        '</span><span class="lbl">' +
+        esc(n.name) +
+        '</span><span class="dot"></span>';
       row.addEventListener("click", () => openDoc(n.path));
       row.addEventListener("focus", () => (state.pick = { path: n.path, kind: "doc" }));
       row.addEventListener("keydown", (e) => rowKeys(e, n.path, "doc"));
@@ -163,12 +234,51 @@ export function renderTree() {
       parent.appendChild(wrap);
     }
   };
-  state.tree.forEach((n) => node(n, 0, host));
+  /* THE VAULT ROWS. Expanded by default, no rename and no delete — a vault is
+     not a folder you can move, and disconnecting one lives in Settings where
+     the sentence about the directory staying on disk fits. Its children are its
+     own tree, one step in. */
+  state.vaults.forEach((v) => {
+    const open = state.vaultOpen.get(v.id) !== false;
+    const rootKey = vaultRootKey(v.id);
+    const wrap = el("div", "rowwrap");
+    const row = el("button", "row vault" + (open ? " open" : ""));
+    row.style.paddingLeft = rowPad(0) + "px";
+    row.dataset.path = rootKey;
+    row.dataset.kind = "vault";
+    row.dataset.vault = v.id;
+    row.innerHTML =
+      '<span class="ico">' +
+      I.vault +
+      '</span><span class="lbl">' +
+      esc(v.label) +
+      "</span>" +
+      (v.repo ? '<span class="dot ' + syncDotClass(v.sync) + '" title="' + esc((v.sync && v.sync.message) || "") + '"></span>' : "");
+    const kids = el("div", "children" + (open ? "" : " closed"));
+    kids.style.setProperty("--guide-x", guideX(0));
+    slots.set(rootKey, { box: kids, depth: 1 });
+    /* the vault root is a FOLDER as far as context goes — `createParent` and
+       `treeHas` both already speak that language, and a third kind of pick
+       would only be a third thing they had to learn */
+    const pickRoot = () => (state.pick = { path: rootKey, kind: "folder" });
+    row.addEventListener("click", () => {
+      pickRoot();
+      const now = !(state.vaultOpen.get(v.id) !== false);
+      state.vaultOpen.set(v.id, now);
+      row.classList.toggle("open", now);
+      kids.classList.toggle("closed", !now);
+    });
+    row.addEventListener("focus", pickRoot);
+    wrap.appendChild(row);
+    host.appendChild(wrap);
+    host.appendChild(kids);
+    (v.tree || []).forEach((n) => node(n, 1, kids));
+  });
 
   if (state.creating) {
     const c = state.creating;
     const folder = c.kind === "folder";
-    const slot = slots.get(c.parent) || slots.get("");
+    const slot = slots.get(c.parent) || slots.get("") || { box: host, depth: 0 };
     slot.box.appendChild(
       inlineRow({
         depth: slot.depth,
@@ -208,6 +318,20 @@ export function renderTree() {
       })
     );
   }
+
+  /* ├ vs └ — marked once the boxes are fully built (create row included): the
+     LAST row in each box ends its line slice at its own tick, and an open
+     subtree hanging below it draws no continuation at that depth. */
+  $$(".children", host).forEach((box) => {
+    const kids = [...box.children];
+    let last = -1;
+    kids.forEach((elm, i) => {
+      if (elm.classList.contains("rowwrap") || elm.classList.contains("newwrap")) last = i;
+    });
+    if (last < 0) return;
+    kids[last].classList.add("t-end");
+    for (let i = last + 1; i < kids.length; i++) kids[i].classList.add("t-off");
+  });
 }
 
 /* ============================================================
@@ -247,10 +371,13 @@ export function renderTree() {
    answers is surfaced verbatim in the row's error line rather than swallowed.
    ============================================================ */
 
-/** Is this path still in the tree, as this kind? */
+/** Is this path still in the tree, as this kind? Every vault's ROOT counts as
+    an existing folder — it is where a create with no other context lands. */
 function treeHas(path, kind) {
-  if (!path) return kind === "folder";
   if (kind === "doc") return state.docPaths.has(path);
+  const v = vaultById(vaultOf(path));
+  if (!v) return false;
+  if (!relOf(path)) return true;
   let found = false;
   const walk = (nodes) =>
     nodes.forEach((n) => {
@@ -258,7 +385,7 @@ function treeHas(path, kind) {
       if (n.path === path) found = true;
       else walk(n.children || []);
     });
-  walk(state.tree);
+  walk(v.tree || []);
   return found;
 }
 
@@ -271,10 +398,10 @@ function createParent() {
 }
 
 /**
- * Open `path` and every folder above it, so a row mounted there is visible.
- * Returns whether anything that was explicitly CLOSED got opened — the only
- * reason a repaint is owed, which is all `revealInTree` wanted from its own
- * copy of this walk.
+ * Open `path`, every folder above it AND the vault row over all of them, so a
+ * row mounted there is visible. Returns whether anything that was explicitly
+ * CLOSED got opened — the only reason a repaint is owed, which is all
+ * `revealInTree` wanted from its own copy of this walk.
  *
  * The write stays unconditional even when nothing changed: `commitCreate` pins
  * a brand-new folder open BEFORE `loadTree`, and `indexTree` only seeds a key
@@ -282,12 +409,15 @@ function createParent() {
  * server.
  */
 export function revealFolder(path) {
+  const id = vaultOf(path);
+  const prefix = vaultPrefix(id);
+  let changed = state.vaultOpen.get(id) === false;
+  state.vaultOpen.set(id, true);
   let acc = "";
-  let changed = false;
-  for (const s of String(path || "").split("/").filter(Boolean)) {
+  for (const s of relOf(path).split("/").filter(Boolean)) {
     acc = acc ? acc + "/" + s : s;
-    if (state.folderOpen.get(acc) === false) changed = true;
-    state.folderOpen.set(acc, true);
+    if (state.folderOpen.get(prefix + acc) === false) changed = true;
+    state.folderOpen.set(prefix + acc, true);
   }
   return changed;
 }
@@ -298,6 +428,12 @@ export function revealFolder(path) {
  * Returns `{ ok, kind, path, error }`. Every refusal here is a MIRROR of a
  * server rule, caught before the round trip so the row can hold itself open
  * and say why; the server remains the authority.
+ *
+ * The parent's VAULT comes off first and goes back on last: the grammar inside
+ * a vault is the grammar it always was, and the leading-`/` "from the root"
+ * rule anchors at the root of the vault you are creating in — never at the
+ * primary's. A create cannot address another vault, because a typed `@` is
+ * refused for the same reason the server refuses it.
  */
 function parseCreate(input, mode, parent) {
   const no = (error) => ({ ok: false, error });
@@ -319,15 +455,19 @@ function parseCreate(input, mode, parent) {
     /* safePath() rejects a dot-prefixed segment outright: it would be invisible
        to the scanner, so the file would exist and never appear in any tree */
     if (s.startsWith(".")) return no("A name cannot start with “.” — dot-files are invisible to the vault index.");
+    /* the address grammar's one reserved character: `@x/` is how a path names
+       another VAULT, so it can never also be a name inside one */
+    if (s.startsWith("@")) return no("A name cannot start with “@” — that prefix addresses a vault.");
     if (s.trim() !== s) return no("A name cannot start or end with a space.");
   }
 
-  const base = fromRoot ? "" : parent || "";
+  const prefix = vaultPrefix(vaultOf(parent));
+  const base = fromRoot ? "" : relOf(parent);
   if (!folder) {
     const leaf = segs[segs.length - 1];
     segs[segs.length - 1] = /\.md$/i.test(leaf) ? leaf : leaf + ".md";
   }
-  const path = (base ? base + "/" : "") + segs.join("/");
+  const path = prefix + (base ? base + "/" : "") + segs.join("/");
 
   /* Every folder this create would have to make on the way, checked against
      the tree so an intermediate segment that is already a DOC is refused here
@@ -336,7 +476,7 @@ function parseCreate(input, mode, parent) {
   let acc = base;
   for (let i = 0; i < depth; i++) {
     acc = acc ? acc + "/" + segs[i] : segs[i];
-    if (state.docPaths.has(acc)) return no(acc + " is a doc, not a folder.");
+    if (state.docPaths.has(prefix + acc)) return no(prefix + acc + " is a doc, not a folder.");
   }
   if (folder) {
     if (state.docPaths.has(path)) return no(path + " is a doc, not a folder.");
@@ -372,7 +512,9 @@ function parseCreate(input, mode, parent) {
 function inlineRow(o) {
   const wrap = el("div", "newwrap");
   const row = el("div", "newrow" + (o.renaming ? " renaming" : ""));
-  row.style.paddingLeft = 10 + o.depth * 12 + "px";
+  row.style.paddingLeft = rowPad(o.depth) + "px";
+  /* the same two icon boxes an ordinary row carries, so the field starts where
+     the label it is replacing started */
   row.innerHTML = '<span class="ico">' + (o.folder ? I.folder : I.file) + "</span>";
   const inp = el("input");
   if (o.value) inp.value = o.value;
@@ -444,7 +586,8 @@ function inlineRow(o) {
      no second line at all, which is what "no helper text" means structurally */
   if (o.error !== undefined) {
     note = el("div", "newhint");
-    note.style.paddingLeft = 10 + o.depth * 12 + 24 + "px";
+    /* under the FIELD, not under the row: the two icon boxes and their gaps */
+    note.style.paddingLeft = rowPad(o.depth) + 38 + "px";
     note.textContent = o.error;
     wrap.appendChild(note);
   }
@@ -550,12 +693,17 @@ async function commitCreate(plan) {
  * and, for a bare slug, is the folder of the doc the link was written in —
  * the same default the inline "New doc" flow uses, and the one that keeps the
  * new doc where the author was already working.
+ *
+ * Always in the ACTIVE DOC'S VAULT, both forms: the link resolver would not
+ * have looked anywhere else, so creating the doc it was looking for anywhere
+ * else would leave the link just as broken.
  */
 export async function createFromLink(name) {
   const t = normTarget(name);
   if (!t) return;
-  const here = dirname(state.active || "");
-  const path = t.indexOf("/") >= 0 ? t + ".md" : (here ? here + "/" : "") + t + ".md";
+  const prefix = vaultPrefix(vaultOf(state.active || ""));
+  const here = relOf(dirname(state.active || ""));
+  const path = prefix + (t.indexOf("/") >= 0 ? t : (here ? here + "/" : "") + t) + ".md";
   try {
     await api.createEntry({ path, type: "doc", markdown: "# " + t.split("/").pop() + "\n\n" });
     rememberFileOp({ kind: "create", path, type: "doc", markdown: "" });
@@ -686,6 +834,15 @@ export async function commitRename(node, value) {
     toast('A name cannot contain "]" — a [[link]] pointing at it would not survive');
     return;
   }
+  /* Mirror of the server's other move guard. A vault is a repository of its
+     own — moving a doc out of one is a delete there and a create here, with
+     two histories to match, and the field that spells the destination is not
+     the place to start that. The server refuses it too. */
+  if (vaultOf(to) !== vaultOf(node.path)) {
+    renderTree();
+    toast("A move cannot cross vaults");
+    return;
+  }
 
   /* Anything still in the buffer has to reach disk first. Not only when the
      open doc is the one moving: the server rewrites [[links]] in the moved
@@ -809,9 +966,17 @@ function askDelete(path, kind) {
    delete) or by another device in the meantime. */
 
 /** Where `path` sits: the sibling list holding it, its index, and the folder
-    that owns that list ("" for the vault root). */
+    that owns that list (the VAULT ROOT key — "" for the primary — at the top).
+    Entered with no `nodes`, it searches every vault in order. */
 function treeLocate(path, nodes, parent) {
-  const list = nodes || state.tree;
+  if (!nodes) {
+    for (const v of state.vaults) {
+      const hit = treeLocate(path, v.tree || [], vaultRootKey(v.id));
+      if (hit) return hit;
+    }
+    return null;
+  }
+  const list = nodes;
   for (let i = 0; i < list.length; i++) {
     if (list[i].path === path) return { list, index: i, parent: parent || "" };
   }
@@ -861,7 +1026,10 @@ function neighbourDoc(path) {
       const p = lastDocIn(at.list[i]);
       if (p) return p;
     }
-    cur = at.parent; // "" at the root ends the loop
+    /* "" at the primary root ends the loop; a secondary vault's root key names
+       nothing in any tree, so the next lookup misses and the climb stops there
+       — a delete in one vault never throws the user into another one */
+    cur = at.parent;
   }
   return null;
 }
@@ -1157,12 +1325,15 @@ export const LONGPRESS_MS = 500;
 
 export const ctxOpen = () => !$("#ctxMenu").hidden;
 
-/** What was right-clicked: a folder, a doc, or the panel itself. */
+/** What was right-clicked: a vault, a folder, a doc, or the panel itself.
+    A vault ROW is the root of that vault — there is nothing to rename or
+    delete, but it is a fine place to create in. */
 export function ctxTarget(node) {
   const row = node && node.closest ? node.closest(".row[data-path]") : null;
   if (!row) return { kind: "root", path: "", parent: "" };
   const kind = row.dataset.kind;
   const path = row.dataset.path;
+  if (kind === "vault") return { kind, path: "", parent: path };
   return { kind, path, parent: kind === "folder" ? path : dirname(path) };
 }
 
@@ -1177,7 +1348,7 @@ function ctxItems(t) {
   /* rename/move and delete already exist as row actions and as F2/Del on the
      focused row — folded in here rather than duplicated, so the menu is the
      complete set of things you can do to a row */
-  if (t.kind !== "root") {
+  if (t.kind !== "root" && t.kind !== "vault") {
     items.push({ sep: true });
     items.push({ label: "Rename / move", hint: "⏎", icon: I.pencil, run: () => startRename(t.path, t.kind) });
     items.push({ label: "Delete", hint: "Del", icon: I.trash, danger: true, run: () => askDelete(t.path, t.kind) });
@@ -1222,7 +1393,9 @@ export function openCtx(t, x, y) {
   const menu = $("#ctxMenu");
   const was = ctxOpen() ? ctxReturn : document.activeElement;
   menu.innerHTML = "";
-  menu.appendChild(el("div", "menu-head", esc(t.kind === "root" ? "Vault root" : t.path)));
+  menu.appendChild(
+    el("div", "menu-head", esc(t.kind === "root" || t.kind === "vault" ? (t.parent ? t.parent + " root" : "Vault root") : t.path))
+  );
   ctxItems(t).forEach((it) => {
     if (it.sep) return menu.appendChild(el("div", "menu-sep"));
     const b = el("button", "menu-item" + (it.danger ? " danger" : ""));

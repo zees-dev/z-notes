@@ -4,29 +4,53 @@
    One bun process: Bun.serve hosts the v0 JSON API, the SSE event stream, and
    the static frontend in ./app. Zero runtime deps.
 
-     ZNOTES_VAULT      vault directory   (default ./vault; created if missing)
+     ZNOTES_VAULTS_DIR home of EVERY vault (default ./vaults), one subdirectory
+                       each; scanned at boot, so the filesystem is the registry
+     ZNOTES_VAULT      the PRIMARY vault (default <ZNOTES_VAULTS_DIR>/vault;
+                       created if missing). It may live outside the home — a
+                       deployment mounts one at /vault — and the scan skips it
+                       wherever it is, so nothing is ever indexed twice.
      ZNOTES_PORT       listen port       (default 4700)
      ZNOTES_VAULT_REPO vault repo to attach on first boot (ADR 0017)
      ZNOTES_GIT_TOKEN  git credential, absorbed into sqlite on first boot
 
-   sqlite always lives at <vault>/.znotes/index.db.
+   sqlite always lives at <vault>/.znotes/index.db — one per vault.
    ============================================================ */
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { AI } from "./ai.ts";
 import { Index } from "./db.ts";
-import { GitSync, sanitizeRemote } from "./git.ts";
+import { GitSync, sanitizeRemote, validRemoteUrl } from "./git.ts";
 import { META, Settings } from "./settings.ts";
 import { Terminal, TerminalError, bearerOf } from "./terminal.ts";
-import { Trash, isTrashId } from "./trash.ts";
+import { Trash } from "./trash.ts";
 import { Reconciler } from "./watch.ts";
 import { SSE_HEADERS, sseFrame } from "./sse.ts";
 import { BAD_JSON, TOO_LARGE, MAX_BODY_BYTES, JSON_HEADERS, fail, json, readJsonBody } from "./http.ts";
 import { DocStore, isMd } from "./docs.ts";
-import { safePath, Vault } from "./vault.ts";
+import { PRIMARY_VAULT_ID, VaultRegistry, qualify, type VaultStack } from "./vaults.ts";
+import { Vault } from "./vault.ts";
 
-const VAULT = resolve(process.env.ZNOTES_VAULT || "./vault");
+/* ONE HOME FOR EVERY VAULT. The vaults home holds them all — the primary at
+   `<home>/vault` and every secondary beside it — so an install is one directory
+   with one subdirectory per repository, not a `vault` and a `vaults` sitting
+   next to each other meaning different things. The primary is still special
+   (app-level settings, the keyring, the AI relay and the terminal are its), it
+   simply lives with the others; the registry knows to skip it when it scans.
+   Both paths stay independently overridable — a deployment that mounts a PVC at
+   /vault and nothing else sets `ZNOTES_VAULT` and is untouched by this. */
+const VAULTS_DIR = resolve(process.env.ZNOTES_VAULTS_DIR || "./vaults");
+const VAULT = resolve(process.env.ZNOTES_VAULT || resolve(VAULTS_DIR, "vault"));
+/* An install from before the vaults home existed kept its notes in `./vault`.
+   Nothing here adopts it — a second possible default is exactly the ambiguity
+   this consolidation removes — but booting into a silently empty vault while
+   the notes sit one directory away is not a thing to leave unsaid. */
+if (!process.env.ZNOTES_VAULT && !existsSync(VAULT) && existsSync(resolve("./vault"))) {
+  process.stderr.write(
+    `[z-notes] ./vault exists but the vault is now ${VAULT} — move it there (mv ./vault ${VAULT}), or set ZNOTES_VAULT=./vault to keep it where it is.\n`
+  );
+}
 /* The vault is BROUGHT, not shipped (ADR 0017), so a path that does not exist
    yet is the ordinary first-run shape — a fresh clone, an empty PVC. Create it
    here, explicitly and before anything reads it: db.ts happened to do it as a
@@ -68,7 +92,11 @@ function crossSiteWrite(req: Request, url: URL): boolean {
   return false;
 }
 
-/** `/api/docs/a/b%20c.md` → `a/b c.md`, or null if it is not a legal doc path. */
+/**
+ * `/api/docs/%40work/b%20c.md` → `@work/b c.md`, or null if a segment cannot be
+ * decoded. Percent-decoding only — deciding which vault the result names, and
+ * whether the remainder is a legal vault path, is the registry's job.
+ */
 function decodeDocPath(rest: string): string | null {
   const parts = rest.split("/");
   const decoded: string[] = [];
@@ -82,7 +110,7 @@ function decodeDocPath(rest: string): string | null {
     if (d.includes("/") || d.includes("\\")) return null;
     decoded.push(d);
   }
-  return safePath(decoded.join("/"));
+  return decoded.join("/");
 }
 
 /* ============================================================
@@ -118,6 +146,10 @@ const GIT_LOG = process.env.ZNOTES_GIT_LOG === "1";
 const logFor = (env: string) => (line: string) => {
   if (GIT_LOG || process.env[env] === "1") process.stdout.write(`[z-notes] ${line}\n`);
 };
+/** The git logger every vault's pipeline shares — argv only, never an env. */
+const gitLog = (line: string) => {
+  if (GIT_LOG) process.stdout.write(`[z-notes] ${line}\n`);
+};
 
 /* ============================================================
    Trash — a delete is recoverable.
@@ -143,15 +175,46 @@ const gitSync = new GitSync({
   vault,
   settings,
   index,
-  onStatus: (s) => broadcast("sync-status", s),
+  // `vault` says WHICH vault the frame is about; the statusbar chip stays bound
+  // to the primary and every other vault paints its own row
+  onStatus: (s) => broadcast("sync-status", { ...s, vault: PRIMARY_VAULT_ID }),
   // argv only; git.ts never hands this an environment, so the token cannot
   // reach a log line even when tracing is on
-  log: (line) => {
-    if (GIT_LOG) process.stdout.write(`[z-notes] ${line}\n`);
-  },
+  log: gitLog,
 });
 
-const docs = new DocStore({ vault, index, recon, trash, git: gitSync, broadcast });
+/* `trash-changed` is the ONE event no single stack can answer — the drawer the
+   panel renders is the union of every vault's — so the registry intercepts it
+   and broadcasts the aggregate instead. Everything else goes straight to the
+   bus. Late-bound: the primary DocStore is built before the registry that owns
+   the rest, and nothing broadcasts until boot has finished. */
+const docsBroadcast = (event: string, data: unknown) => registry.docsBroadcast(event, data);
+
+const docs = new DocStore({ vault, index, recon, trash, git: gitSync, broadcast: docsBroadcast });
+
+/* ============================================================
+   The registry — one primary vault, N secondary ones.
+
+   Everything above is the primary stack, built exactly as it always was. The
+   registry owns the vaults under ZNOTES_VAULTS_DIR, the `@<id>/` address
+   grammar and every aggregate the route table answers with; the route table
+   below stays the only router.
+   ============================================================ */
+
+const primaryStack: VaultStack = { id: PRIMARY_VAULT_ID, vault, index, settings, recon, trash, git: gitSync, docs };
+
+const registry = new VaultRegistry({
+  primary: primaryStack,
+  vaultsDir: VAULTS_DIR,
+  broadcast,
+  // the ONE epoch, in the primary index: the client's gap-resync compares a
+  // single number from `hello`, whichever vault moved
+  bumpEpoch: () => {
+    vaultEpoch = index.nextSeq("vaultEpoch");
+  },
+  log: logFor("ZNOTES_VAULTS_LOG"),
+  gitLog,
+});
 
 /* ============================================================
    SSE
@@ -413,6 +476,8 @@ interface RouteCtx {
   params: Record<string, string>;
   body: any; // parsed for PUT/POST/PATCH only, else null
   caller: string | null;
+  /** the vault a `pre` resolved this request to; params are BARE from there on */
+  stack?: VaultStack;
 }
 
 type Handler = (c: RouteCtx) => Response | Promise<Response>;
@@ -470,14 +535,58 @@ const term = (h: Handler): Handler => async (c) => {
   }
 };
 
-/** Trash ids are validated BEFORE method dispatch — bad-id beats 405 here. */
+/** No such vault — the one 404 the `@<id>/` grammar can produce. */
+const noVault = (id: string) => fail(404, "not-found", { message: `No vault @${id}.` });
+
+/**
+ * Trash ids are validated BEFORE method dispatch — bad-id beats 405 here. An id
+ * may carry the vault it belongs to (`@work/m7k2x9-4f1a8b3c`); the stack is
+ * resolved off the front and the handler sees the bare id its own trash minted.
+ */
 const preTrashId = (c: RouteCtx): Response | null => {
-  const id = decodeId(c.params.id, "trash");
-  if (id instanceof Response) return id;
-  if (!isTrashId(id)) return fail(400, "bad-id", { message: `Not a trash id: ${id}` });
-  c.params.id = id;
+  const raw = decodeId(c.params.id, "trash");
+  if (raw instanceof Response) return raw;
+  const t = registry.resolveTrashId(raw);
+  if (!t) return fail(400, "bad-id", { message: `Not a trash id: ${raw}` });
+  if ("unknownVault" in t) return noVault(t.unknownVault);
+  c.params.id = t.id;
+  c.stack = t.stack;
   return null;
 };
+
+/**
+ * A PATCH's destination, in the source vault's own address space.
+ *
+ * Content never crosses a vault: `[[links]]` resolve inside one repository, the
+ * move is one `rename(2)` and its backlink rewrites and commit belong to one
+ * git history. Refused here, before anything is planned. A `to` that is not a
+ * legal path at all is handed on unchanged — the DocStore owns that refusal and
+ * its wording.
+ */
+const crossVaultTo = (stack: VaultStack, body: any): unknown => {
+  if (typeof body?.to !== "string") return body;
+  const t = registry.resolveDocPath(body.to);
+  if (!t) return body;
+  if ("unknownVault" in t) return noVault(t.unknownVault);
+  if (t.stack !== stack) return fail(400, "bad-path", { message: "A move cannot cross vaults." });
+  return { ...body, to: t.rel };
+};
+
+/** `/api/vaults/{id}/…` — the vault itself is the resource; unknown is a 404. */
+const preVaultId = (c: RouteCtx): Response | null => {
+  const id = decodeId(c.params.id, "vault");
+  if (id instanceof Response) return id;
+  const stack = registry.get(id);
+  if (!stack) return noVault(id);
+  c.stack = stack;
+  return null;
+};
+
+/** A doc/trash handler run against the resolved vault, its reply re-qualified. */
+const inVault =
+  (h: (s: VaultStack, c: RouteCtx) => Response | Promise<Response>): Handler =>
+  async (c) =>
+    registry.requalify(c.stack!, await h(c.stack!, c));
 
 const aiProp = (action: "accept" | "revert" | "reject"): Handler => async (c) => {
   const id = decodeId(c.params.id, "proposal");
@@ -491,46 +600,63 @@ const ROUTES: Route[] = [
   {
     pattern: "docs",
     methods: {
-      GET: async () => json(await docs.treeResponse()),
-      POST: (c) => docs.create(c.body),
+      GET: async () => json(await registry.treeBody()),
+      POST: async (c) => {
+        /* `path` picks the vault here exactly as the URL does on the routes
+           below; a body that names no legal path falls through to the primary,
+           whose DocStore owns the `bad-path` refusal. */
+        const t = registry.resolveDocPath(c.body?.path);
+        if (t && "unknownVault" in t) return noVault(t.unknownVault);
+        if (!t) return docs.create(c.body);
+        return registry.requalify(t.stack, await t.stack.docs.create({ ...c.body, path: t.rel }));
+      },
     },
   },
   {
     pattern: "docs/{...path}",
     pre: (c) => {
-      const p = decodeDocPath(c.params.path);
-      if (p === null) return fail(400, "bad-path", { message: "Path escapes the vault." });
-      c.params.path = p; // decoded from here on
+      const decoded = decodeDocPath(c.params.path);
+      const t = decoded === null ? null : registry.resolveDocPath(decoded);
+      if (!t) return fail(400, "bad-path", { message: "Path escapes the vault." });
+      if ("unknownVault" in t) return noVault(t.unknownVault);
+      c.params.path = t.rel; // decoded AND vault-relative from here on
+      c.stack = t.stack;
       return null;
     },
     methods: {
       /* The file ops address FOLDERS as well as docs (a folder rename moves
          the subtree), so they dispatch before the ".md or it is not a doc"
          gate — fileOp applies that gate itself once it knows what is there. */
-      PATCH: (c) => docs.fileOp("PATCH", c.params.path, c.body),
-      DELETE: (c) => docs.fileOp("DELETE", c.params.path, c.body),
-      GET: (c) => docs.read(c.params.path),
-      PUT: (c) => docs.putDoc(c.params.path, c.body),
+      PATCH: inVault((s, c) => {
+        const to = crossVaultTo(s, c.body);
+        return to instanceof Response ? to : s.docs.fileOp("PATCH", c.params.path, to);
+      }),
+      DELETE: inVault((s, c) => s.docs.fileOp("DELETE", c.params.path, c.body)),
+      GET: inVault((s, c) => s.docs.read(c.params.path)),
+      PUT: inVault((s, c) => s.docs.putDoc(c.params.path, c.body)),
     },
     otherwise: (c) => {
+      const s = c.stack!;
       const p = c.params.path;
-      if (!isMd(p)) return fail(404, "not-found", { message: `No doc at ${p}` });
-      return fail(405, "method-not-allowed", { message: `${c.method} /api/docs/${docs.canonicalDocPath(p)}` });
+      if (!isMd(p)) return fail(404, "not-found", { message: `No doc at ${qualify(s.id, p)}` });
+      return fail(405, "method-not-allowed", {
+        message: `${c.method} /api/docs/${qualify(s.id, s.docs.canonicalDocPath(p))}`,
+      });
     },
   },
 
   /* ---------- trash — a SEPARATE namespace from /api/docs:
      a trashed doc is in no tree, no search result and no backlink, and is
      addressed by the opaque id the delete minted. ---------- */
-  { pattern: "trash", methods: { GET: async () => json(await trash.view()) } },
-  { pattern: "trash/purge", methods: { POST: (c) => docs.trashPurge(c.body) } },
-  { pattern: "trash/{id}/restore", pre: preTrashId, methods: { POST: (c) => docs.restoreTrash(c.params.id) } },
+  { pattern: "trash", methods: { GET: async () => json(await registry.trashView()) } },
+  { pattern: "trash/purge", methods: { POST: async (c) => json(await registry.trashPurge(c.body)) } },
+  { pattern: "trash/{id}/restore", pre: preTrashId, methods: { POST: inVault((s, c) => s.docs.restoreTrash(c.params.id)) } },
   {
     pattern: "trash/{id}",
     pre: preTrashId,
     methods: {
-      GET: (c) => docs.trashEntry(c.params.id),
-      DELETE: (c) => docs.purgeTrashEntry(c.params.id),
+      GET: inVault((s, c) => s.docs.trashEntry(c.params.id)),
+      DELETE: inVault((s, c) => s.docs.purgeTrashEntry(c.params.id)),
     },
   },
   { pattern: "trash/{...rest}", methods: {}, otherwise: "no-route" },
@@ -545,7 +671,7 @@ const ROUTES: Route[] = [
         // quietly lop results off the END of the list instead of paging
         const asked = parseInt(c.url.searchParams.get("limit") || "24", 10);
         const limit = Number.isFinite(asked) && asked > 0 ? Math.min(100, asked) : 24;
-        return json({ query: q, results: index.search(q, limit) });
+        return json({ query: q, results: registry.search(q, limit) });
       },
     },
   },
@@ -597,6 +723,107 @@ const ROUTES: Route[] = [
   },
   { pattern: "vault/{...rest}", methods: {}, otherwise: "no-route" },
 
+  /* ---------- vaults — the registry's own surface. Adding one is the
+     ADR 0017 attach against a directory the call creates; disconnecting one is
+     a registry operation and leaves the directory (and its repo) on disk. ---------- */
+  {
+    pattern: "vaults",
+    methods: {
+      GET: () => json(registry.vaultsBody()),
+      POST: async (c) => {
+        const r = await registry.addVault(c.body?.url, c.body?.name, c.body?.token);
+        return r.ok ? json({ vault: r.vault }, 201) : json(r.body, r.status);
+      },
+    },
+  },
+  {
+    /* Only the `git` section: theme, editor, AI, terminal and secrets are
+       APP settings and live in the primary's `/api/settings` alone. */
+    pattern: "vaults/{id}/settings",
+    pre: preVaultId,
+    methods: {
+      PUT: async (c) => {
+        const body = c.body;
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((k) => k !== "git"))
+          return fail(400, "bad-body", { message: "Only the git section is settable per vault." });
+        const out = await c.stack!.settings.putRoute(body);
+        if (out.status !== 200) return json(out.body, out.status);
+        registry.announceVaults();
+        return json({ vault: registry.descriptor(c.stack!) });
+      },
+    },
+  },
+  {
+    pattern: "vaults/{id}/sync",
+    pre: preVaultId,
+    methods: {
+      POST: async (c) => json({ ...(await c.stack!.git.trigger("manual")), vault: c.stack!.id }),
+    },
+  },
+  {
+    /* Point a vault at a (new) remote — the same attach the primary's
+       POST /api/sync/remote runs, against this vault's stack: non-destructive,
+       atomic, refusals relayed verbatim. Works for `vault` too, where it is
+       that route's twin. */
+    pattern: "vaults/{id}/remote",
+    pre: preVaultId,
+    methods: {
+      POST: async (c) => {
+        const s = c.stack!;
+        const url = String(c.body?.url ?? "");
+        /* one remote, one vault — checked BEFORE attach can move origin, and
+           only for a URL attach would accept (a bad one gets attach's own
+           refusal below, verbatim) */
+        if (validRemoteUrl(url)) {
+          const taken = registry.remoteTakenBy(url, s.id);
+          if (taken)
+            return fail(409, "exists", {
+              message: `@${taken} is already connected to ${sanitizeRemote(url)}.`,
+            });
+        }
+        const r = await s.git.attachRemote(url);
+        if (!r.ok) return json(r.body, r.status);
+        const saved = await s.settings.putRoute({ git: { branch: r.branch } });
+        if (saved.status !== 200)
+          process.stderr.write(
+            `[z-notes] vaults: @${s.id} git.branch=${r.branch} was not persisted (${(saved.body as any)?.error ?? saved.status})\n`
+          );
+        // index and announce the pulled docs BEFORE answering, as the primary
+        // attach route does, so the tree is queryable the moment this returns
+        await s.recon.reconcile();
+        const out = { ...(await s.git.trigger("manual")), vault: s.id };
+        // the label derives from the origin, so the row every client shows renames
+        registry.announceVaults();
+        return json(out);
+      },
+      /* Disconnect from the remote — `git remote remove origin` and nothing
+         else, so the vault stays a working local-only repository. This is what
+         "Disconnect" means for the PRIMARY vault, which can never leave the
+         app; a secondary's own DELETE /api/vaults/{id} unregisters it instead. */
+      DELETE: async (c) => {
+        const s = c.stack!;
+        const r = await s.git.detachRemote();
+        if (!r.ok) return json(r.body, r.status);
+        registry.announceVaults();
+        return json({ ...s.git.snapshot(), vault: s.id });
+      },
+    },
+  },
+  {
+    pattern: "vaults/{id}",
+    pre: preVaultId,
+    methods: {
+      GET: (c) => json({ vault: registry.descriptor(c.stack!) }),
+      DELETE: async (c) => {
+        if (c.stack!.id === PRIMARY_VAULT_ID)
+          return fail(400, "primary-vault", { message: "The primary vault cannot be disconnected." });
+        await registry.removeVault(c.stack!.id);
+        return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+      },
+    },
+  },
+  { pattern: "vaults/{...rest}", methods: {}, otherwise: "no-route" },
+
   /* ---------- settings ---------- */
   {
     pattern: "settings",
@@ -640,7 +867,11 @@ const ROUTES: Route[] = [
         await recon.reconcile();
         // exactly the sync-status object, like POST /api/sync/now: this push is
         // what sends local-only docs (or the first commit) to a fresh remote
-        return json(await gitSync.trigger("manual"));
+        const out = json(await gitSync.trigger("manual"));
+        // the primary's LABEL is derived from its origin, so an attach renames
+        // the top-level row every client is showing
+        registry.announceVaults();
+        return out;
       },
     },
   },
@@ -853,17 +1084,24 @@ if (VAULT_REPO) {
 await recon.reconcile();
 recon.start();
 
+/* Every vault already under the vaults home comes back, each with its own
+   index, watcher and git pipeline. Never fatal per vault: the registry logs the
+   one that failed and the app boots with the rest. */
+await registry.boot();
+
 // the crypto worker's only dependency, bundled once (never written to disk)
 await buildVendor();
 
 /* Retention sweep at boot, BEFORE the port opens: a server that was off for a
    month must not serve a trash listing full of entries it is about to delete.
    Never fatal — a trash that cannot be swept is not a reason to refuse to boot. */
-await docs.sweepTrash("at boot").catch((err) =>
-  process.stderr.write(`[z-notes] trash sweep at boot failed: ${String(err)}\n`)
-);
+for (const stack of registry.stacks()) {
+  await stack.docs.sweepTrash("at boot").catch((err) =>
+    process.stderr.write(`[z-notes] trash sweep at boot failed: ${String(err)}\n`)
+  );
+}
 const trashSweep = setInterval(() => {
-  docs.sweepTrash("on schedule").catch(() => {});
+  for (const stack of registry.stacks()) stack.docs.sweepTrash("on schedule").catch(() => {});
 }, TRASH_SWEEP_MS);
 (trashSweep as any)?.unref?.();
 
@@ -1000,15 +1238,18 @@ function shutdown() {
     } catch {}
   }
   clients.clear();
-  recon.stop();
-  // cancels the pending debounce AND kills any git child still running, so a
-  // SIGTERM never leaves an orphaned push holding the index lock
-  gitSync.stop();
+  const stacks = registry.stacks();
+  for (const stack of stacks) {
+    stack.recon.stop();
+    // cancels the pending debounce AND kills any git child still running, so a
+    // SIGTERM never leaves an orphaned push holding the index lock
+    stack.git.stop();
+  }
   // SIGKILL anything the terminal still has running and drop every session, so
   // a SIGTERM never leaves an orphaned command holding a pipe
   terminal.stop();
   server.stop(true);
-  index.close();
+  for (const stack of stacks) stack.index.close();
   process.exit(0);
 }
 

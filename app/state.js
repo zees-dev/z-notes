@@ -12,12 +12,25 @@
    STATE — caches of what the server said, never a source of truth
    ============================================================ */
 export const state = {
-  vault: null,
-  tree: [],
+  vault: null, // the PRIMARY vault's legacy header block (name, root, docCount)
+  tree: [], // the primary vault's tree — `vaults[0].tree` under another name
+  /* Every vault the server serves, primary first: the `vaults[]` descriptors of
+     GET /api/docs, each carrying its own `tree` with QUALIFIED paths. The tree,
+     the link world and the neighbour walk all read this, so a doc in a
+     secondary vault is addressed as `@<id>/<rel>` everywhere above the API. */
+  vaults: [],
+  /* Vault row disclosure — id → bool, default true. Client-only, deliberately:
+     the server's `folders` table is per-vault and knows nothing about the rows
+     that now sit above it. */
+  vaultOpen: new Map(),
   docs: new Map(), // path → { …meta, markdown, rev, loaded }
   docPaths: new Set(), // every doc path the tree knows — the link resolver's world
-  slugs: new Map(), // slug → [paths]; two entries is a COLLISION, not a winner
-  folderOpen: new Map(), // path → bool (survives tree refetches)
+  /* vault id → Map(slug → [paths]). One map per vault, never one shared one: a
+     `[[slug]]` resolves inside the vault of the doc that wrote it, so the same
+     slug in two vaults is two answers, not a collision. Two entries in ONE
+     vault's list is still a COLLISION, not a winner. */
+  slugs: new Map(),
+  folderOpen: new Map(), // qualified path → bool (survives tree refetches)
   active: null,
   /* Which PLACE the editor pane is showing: the open doc, or the settings page
      at `/settings`. `active` keeps naming the doc either way — settings is a

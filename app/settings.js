@@ -15,7 +15,7 @@ import { refreshTrash } from "./trash.js";
 import { autoGrow, guardRawExit, openDoc, syncRaw } from "./editor.js";
 import { applyLockPolicy, clearKeyFields, clearTerminalSecretFields, initSecrets, paintVaultKey } from "./secrets.js";
 import { updateSessionUI } from "./chat.js";
-import { SETTINGS_SECTIONS, app, canPopBack, closeNav, homeTarget, isDrawer, isTriPane, paintHome, paintSync, routeSettings, toggleChat } from "./shell.js";
+import { SETTINGS_SECTIONS, app, canPopBack, closeNav, homeTarget, isDrawer, isTriPane, paintHome, paintSync, routeSettings, syncNow, toggleChat } from "./shell.js";
 import { paintTerminal, refreshTerminalStatus } from "./terminal.js";
 
 /* ============================================================
@@ -232,6 +232,8 @@ export function paintSettings() {
   $("#aiKey").value = s.ai.apiKeyMasked;
   wireGitRemote();
   paintGitRemote();
+  wireVaultAdd();
+  paintVaults();
   paintSaveState();
   /* one call: paintAiStatus owns the chip AND (via paintEndpoint) the Settings
      note, so the two surfaces are painted from a single signal and cannot drift */
@@ -249,13 +251,32 @@ export function paintSettings() {
 
 /** The remote this vault is attached to, read from `state.sync` — the same
     object the statusbar chip is painted from, so the two cannot disagree. */
+/**
+ * The Repository row IS the remote: connected, the input carries it and locks,
+ * because a field you can edit is a promise you can change what it says — and
+ * changing where a vault points is Disconnect, then Connect. Local-only, the
+ * field is empty, editable and waiting for a URL.
+ *
+ * What it shows is the SANITIZED remote (`github.com/z/notes`), the only form
+ * that ever leaves the server: a raw origin URL may carry userinfo, and the
+ * contract keeps credentials out of every response.
+ */
 export function paintGitRemote() {
-  const txt = $("#gitRemoteTxt");
-  if (!txt) return;
-  const s = state.sync;
-  /* "local only" is a statement ABOUT the vault (a working, unsynced one), not
-     a stand-in for "no status has landed yet" — which is what the dash is */
-  txt.textContent = !s ? "—" : s.remote || "local only";
+  const inp = $("#gitRemoteUrl");
+  const btn = $("#gitConnect");
+  const drop = $("#gitDisconnect");
+  if (!inp) return;
+  const remote = state.sync && state.sync.remote;
+  lockRemoteInput(inp, btn, remote);
+  if (drop) drop.hidden = !remote;
+}
+
+/** Shared by the primary's static row and every card `vaultBlock` builds. */
+function lockRemoteInput(inp, btn, remote) {
+  inp.value = remote || "";
+  inp.disabled = !!remote;
+  inp.title = remote ? "Connected — disconnect to point this vault somewhere else." : "";
+  if (btn) btn.disabled = !!remote;
 }
 
 /**
@@ -302,11 +323,10 @@ export async function connectRemote() {
   btn.disabled = true;
   try {
     const s = await api.attachRemote(remote);
-    /* the field has done its job: what the vault is attached to is the line
-       above it now, and a URL left in the box invites a second attach */
-    inp.value = "";
+    /* the field stops being an input and becomes the statement of what this
+       vault is attached to — paintSync → paintGitRemote fills and locks it */
     paintSync(s);
-    paintGitRemote();
+    refreshVaults();
     toast(s.state === "error" ? "Connected, but the first sync failed — " + s.message : "Connected · " + s.message);
   } catch (err) {
     /* every refusal already names the problem in `message` — `checkout-conflict`
@@ -316,6 +336,477 @@ export async function connectRemote() {
   } finally {
     btn.classList.remove("busy");
     btn.disabled = false;
+  }
+}
+
+/* ============================================================
+   MORE VAULTS — the blocks below the primary's own controls
+
+   Everything above this point is the PRIMARY vault. Each block here is a whole
+   other vault: its own directory, its own repository, its own branch, cadence
+   and token, its own trash. They are ACTIONS, not settings — every control
+   writes through `PUT /api/vaults/{id}/settings` the moment it changes, exactly
+   as the two credential fields do, and none of them touches the Save button.
+   There is nothing to diff against: the page holds no baseline for a vault it
+   does not otherwise know about, and a Discard that silently reverted another
+   repository's branch would be a surprise.
+
+   DISCONNECT IS NOT DELETE, and the confirm says so with the path: the registry
+   forgets the vault, the directory and its git history stay exactly where they
+   are.
+   ============================================================ */
+
+/**
+ * What a token for these fields actually has to be able to do — written down
+ * ONCE, and hung on every token row (the primary's static one included) so the
+ * two panels cannot drift into describing different requirements.
+ *
+ * It is exactly this narrow because the sync pipeline only ever fetches and
+ * pushes: no issues, no actions, no packages, no user data. `Metadata: Read` is
+ * not a choice — GitHub adds it to any fine-grained token that carries a
+ * repository permission at all — so it is named as a consequence, not a step.
+ */
+const TOKEN_HELP =
+  "Fine-grained token — Repository permissions → Contents: Read and write " +
+  '(Metadata: Read is added automatically).\nClassic token — the "repo" scope.\n' +
+  "Nothing else: sync only ever fetches and pushes.";
+
+/** The `GET /api/vaults` list this panel is painted from — deliberately NOT
+    `state.vaults`, which comes from `GET /api/docs` and carries each vault's
+    TREE but not the `git` section that is the whole of what this panel edits. */
+const vaultPage = { list: [] };
+
+/** Re-read the list. Fire and forget: an absent panel (an older server, a
+    request that failed) leaves the blocks unmounted and says nothing, the way
+    the trash drawer does. */
+export function refreshVaults() {
+  api.getVaults().then((r) => paintVaults(r && r.vaults), () => {});
+}
+
+/** Adopt a list and repaint. Called by the fetch above, by `vaults-changed`,
+    and by every write here with the server's own answer. */
+export function paintVaults(list) {
+  if (Array.isArray(list)) vaultPage.list = list;
+  const host = $("#vaultBlocks");
+  if (!host) return;
+  /* The page has ONE error element and it may be parked in a block that is
+     about to be replaced. Send it back to the head first — an error can outlive
+     the row it was about, but not being torn out of the document. */
+  const err = $("#settingsErr");
+  const head = $("#settingsView .sv-head");
+  if (err && head && host.contains(err)) head.parentNode.insertBefore(err, head.nextSibling);
+  host.innerHTML = "";
+  vaultPage.list.filter((v) => v.id !== "vault").forEach((v) => host.appendChild(vaultBlock(v)));
+
+  /* The primary's Repository row and its Disconnect follow the same rule every
+     card does — see paintGitRemote. The faded aside in the section header names
+     the vault while it is local-only; connected, the input says it instead. */
+  const primary = vaultPage.list.find((v) => v.id === "vault");
+  if (!primary) return;
+  const sub = $("#gitGrpSub");
+  if (sub) {
+    sub.hidden = !!primary.remote;
+    if (!primary.remote) sub.textContent = primary.label + " · local only · " + primary.root;
+  }
+  paintGitRemote();
+}
+
+/** Fold one vault's answer back into the list, then repaint from it. */
+function adoptVault(v) {
+  if (v && v.id) {
+    const i = vaultPage.list.findIndex((x) => x.id === v.id);
+    if (i < 0) vaultPage.list.push(v);
+    else vaultPage.list[i] = v;
+  }
+  paintVaults();
+}
+
+/** One labelled row inside a block — the page's own `.field` shape, built
+    rather than written out, because there are four of them per vault. `key`
+    is how a refusal finds its way back to the row after a repaint. */
+function vaultField(key, label, hint, ctl, req) {
+  const f = el("div", "field");
+  f.dataset.vf = key;
+  f.appendChild(
+    el(
+      "div",
+      "lab",
+      "<b>" +
+        esc(label) +
+        (req ? '<span class="req" title="Required">*</span>' : "") +
+        "</b>" +
+        (hint ? "<span>" + esc(hint) + "</span>" : "")
+    )
+  );
+  const box = el("div", "ctl");
+  box.appendChild(ctl);
+  f.appendChild(box);
+  return f;
+}
+
+/**
+ * Write one key of a vault's git section.
+ *
+ * The block goes busy for the round trip — these are per-repository operations
+ * and a second one racing the first would be answering a question the server
+ * has already moved past.
+ *
+ * A refusal REPAINTS FIRST and puts the message on the rebuilt row: the control
+ * is still showing what the user typed, and a panel that goes on displaying a
+ * value the server declined is lying about what the vault is set to.
+ */
+async function putVaultGit(id, git, key) {
+  const blk = $('#vaultBlocks .vault-blk[data-vault="' + id + '"]');
+  if (blk) blk.classList.add("busy");
+  clearSettingsError();
+  try {
+    adoptVault((await api.putVaultSettings(id, git)).vault);
+  } catch (err) {
+    paintVaults();
+    showSettingsError(err, $('#vaultBlocks .vault-blk[data-vault="' + id + '"] .field[data-vf="' + key + '"]'));
+  }
+}
+
+/**
+ * ONE component, two lives. With a vault it is that vault's card, every
+ * control writing through the per-vault routes as it changes. With NO vault
+ * (`v == null`) it is the SAME card in draft: the controls just hold their
+ * values, and Connect is the add — `POST /api/vaults`, then the git slice for
+ * whatever was moved off its default. The add form is not a second component;
+ * it is this one, which is what keeps the two from drifting.
+ */
+function vaultBlock(v) {
+  const draft = !v;
+  const git = draft ? {} : v.git || {};
+  const who = draft ? "New vault" : v.label;
+  const box = el("div", "vault-blk");
+  if (draft) box.id = "vaultAddField";
+  else box.dataset.vault = v.id;
+
+  /* THE REPOSITORY IS THE CARD'S IDENTITY — no header, no root line and no
+     prose repeating what the field already says. Connected, the input carries
+     the sanitized remote and locks (pointing a vault elsewhere is Disconnect,
+     then Connect); local-only or draft, it is empty and waiting for a URL. */
+  const repoInp = el("input", "inp mono");
+  repoInp.placeholder = "https://github.com/you/vault.git";
+  repoInp.spellcheck = false;
+  repoInp.setAttribute("autocomplete", "off");
+  repoInp.setAttribute("aria-label", who + " repository URL");
+  const repoBtn = el("button", "btn", "Connect");
+  repoBtn.type = "button";
+  const repoField = vaultField(
+    "remote",
+    "Repository",
+    "",
+    repoInp,
+    /* the ONE required field of the add: everything else has a default */
+    draft
+  );
+  repoField.classList.add("stacked");
+  const repoCtl = $(".ctl", repoField);
+  repoCtl.classList.add("git-remote");
+  repoCtl.appendChild(repoBtn);
+  box.appendChild(repoField);
+  if (!draft) lockRemoteInput(repoInp, repoBtn, v.remote);
+
+  /* WRITE-ONLY, and deliberately NOT pre-filled with the mask the way the
+     primary's field is. The primary sends `tokenMasked`, which the server can
+     recognise as its own mask and decline; this route takes the raw `token`,
+     where a mask edited by one keystroke would be stored AS the credential.
+     An empty field therefore means "leave it alone" (draft: "copy the
+     primary's"), the mask is the placeholder, and only typed text is sent. */
+  const tokenInp = el("input", "inp mono masked");
+  tokenInp.type = "text";
+  // the mask is the PLACEHOLDER here, never the value (see above); with no
+  // token stored the box is simply empty, exactly as the primary's is
+  if (!draft && git.tokenMasked) tokenInp.placeholder = git.tokenMasked;
+  tokenInp.setAttribute("autocomplete", "off");
+  tokenInp.setAttribute("data-1p-ignore", "");
+  tokenInp.setAttribute("data-lpignore", "true");
+  tokenInp.setAttribute("aria-label", who + " GitHub token");
+  if (!draft)
+    tokenInp.addEventListener("change", () => {
+      const next = tokenInp.value.trim();
+      if (!next) return;
+      tokenInp.value = "";
+      putVaultGit(v.id, { token: next }, "token");
+    });
+  // one panel, one wording — the primary's row says exactly this
+  const tokenField = vaultField("token", "GitHub token", "Stored in the system keychain; the server only ever sends it masked.", tokenInp);
+  // the permissions the token needs, on hover — the whole row, not just the box
+  tokenField.title = TOKEN_HELP;
+  box.appendChild(tokenField);
+
+  /* the draft's branch stays EMPTY: not provided means the repository's own
+     default branch, adopted by the checkout — a prefill here would read as a
+     decision and override it. The cadence controls prefill the app defaults
+     (on · 60), and doAdd only sends what the user moved off them. */
+  const branch = el("input", "inp mono");
+  branch.value = draft ? "" : git.branch || "";
+  if (draft) branch.placeholder = "repository's default";
+  branch.setAttribute("aria-label", who + " branch");
+  branch.spellcheck = false;
+  if (!draft)
+    branch.addEventListener("change", () => {
+      const next = branch.value.trim();
+      if (!next || next === (git.branch || "")) return paintVaults();
+      putVaultGit(v.id, { branch: next }, "branch");
+    });
+  box.appendChild(vaultField("branch", "Branch", "Commits land here on every sync.", branch));
+
+  const sw = el("button", "sw" + (draft || git.autoSync ? " on" : ""));
+  sw.type = "button";
+  sw.setAttribute("aria-label", who + " auto-sync");
+  sw.addEventListener("click", () =>
+    draft ? sw.classList.toggle("on") : putVaultGit(v.id, { autoSync: !git.autoSync }, "autoSync")
+  );
+  box.appendChild(vaultField("autoSync", "Auto-sync", "Push after each autosave, pull on focus.", sw));
+
+  const secs = el("input", "inp w-sm mono");
+  secs.value = draft ? "60" : git.autoSyncSeconds == null ? "" : String(git.autoSyncSeconds);
+  secs.setAttribute("inputmode", "numeric");
+  secs.setAttribute("aria-label", who + " auto-sync seconds");
+  if (!draft)
+    secs.addEventListener("change", () => {
+      const n = coerceNumberSetting("git.autoSyncSeconds", secs.value);
+      if (n == null || n === git.autoSyncSeconds) return paintVaults();
+      putVaultGit(v.id, { autoSyncSeconds: n }, "autoSyncSeconds");
+    });
+  const secsField = vaultField("autoSyncSeconds", "Auto-sync interval", "Commits once changes have settled for this long.", secs);
+  const secsCtl = $(".ctl", secsField);
+  secsCtl.classList.add("num");
+  secsCtl.appendChild(el("span", "unit", "seconds"));
+  box.appendChild(secsField);
+
+  if (draft) {
+    const doAdd = async () => {
+      const remote = repoInp.value.trim();
+      if (!remote) return repoInp.focus();
+      if (repoBtn.disabled) return;
+      clearSettingsError();
+      repoBtn.classList.add("busy");
+      repoBtn.disabled = true;
+      try {
+        const token = tokenInp.value.trim();
+        const r = await api.addVault({ url: remote, token: token || undefined });
+        let nv = r && r.vault;
+        /* the rest of the draft, applied to the vault that now exists — only
+           what was moved off the PREFILLS above; an untouched control is no
+           decision, and an untouched "main" must not override the branch the
+           checkout just adopted */
+        const g = {};
+        const b = branch.value.trim();
+        if (b && b !== (nv && nv.git && nv.git.branch)) g.branch = b;
+        if (!sw.classList.contains("on")) g.autoSync = false;
+        const n = secs.value.trim() && secs.value.trim() !== "60" ? coerceNumberSetting("git.autoSyncSeconds", secs.value) : null;
+        if (n != null && n !== (nv && nv.git && nv.git.autoSyncSeconds)) g.autoSyncSeconds = n;
+        if (nv && Object.keys(g).length) nv = (await api.putVaultSettings(nv.id, g)).vault || nv;
+        /* the draft has done its job: reset it to the prefills for the next vault */
+        repoInp.value = "";
+        tokenInp.value = "";
+        branch.value = "";
+        secs.value = "60";
+        sw.classList.add("on");
+        toggleVaultAdd(false);
+        adoptVault(nv);
+        toast("Connected " + ((nv && nv.label) || remote));
+      } catch (err) {
+        /* the add may have LANDED with only the follow-up settings refused —
+           the refresh shows whatever the server now holds either way */
+        refreshVaults();
+        showSettingsError(err, $('.field[data-vf="remote"]', box));
+      } finally {
+        repoBtn.classList.remove("busy");
+        repoBtn.disabled = false;
+      }
+    };
+    repoBtn.addEventListener("click", doAdd);
+    box.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        toggleVaultAdd(false);
+        return;
+      }
+      if (e.key === "Enter" && e.target && e.target.tagName === "INPUT") {
+        e.preventDefault();
+        doAdd();
+      }
+    });
+  } else {
+    repoBtn.addEventListener("click", async () => {
+      const remote = repoInp.value.trim();
+      if (!remote) return repoInp.focus();
+      box.classList.add("busy");
+      clearSettingsError();
+      try {
+        const s = await api.setVaultRemote(v.id, remote);
+        /* the vaults-changed frame repaints the card with its new remote and
+           label; refresh anyway so this tab never depends on a stream frame */
+        refreshVaults();
+        toast(s.state === "error" ? v.label + " — connected, but the first sync failed · " + s.message : "Connected · " + s.message);
+      } catch (err) {
+        box.classList.remove("busy");
+        paintVaults();
+        showSettingsError(err, $('#vaultBlocks .vault-blk[data-vault="' + v.id + '"] .field[data-vf="remote"]'));
+      }
+    });
+
+    /* the footer the primary's card carries too: what sync last did, quietly,
+       on the left; the actions on the right (docs/style.md) */
+    const acts = el("div", "vault-acts");
+    const line = el("span", "sync-line");
+    line.textContent = (v.sync && v.sync.message) || "";
+    line.title = line.textContent; // it truncates; the full message is here
+    acts.appendChild(line);
+    const syncBtn = el("button", "btn", "Sync now");
+    syncBtn.type = "button";
+    syncBtn.addEventListener("click", () => syncOneVault(v, syncBtn));
+    /* danger, like every button that takes something away: this one is the
+       vault leaving the sidebar (the folder stays — see the confirm) */
+    const dropBtn = el("button", "btn danger", "Disconnect…");
+    dropBtn.type = "button";
+    dropBtn.addEventListener("click", () => askDisconnectVault(v));
+    acts.appendChild(syncBtn);
+    acts.appendChild(dropBtn);
+    box.appendChild(acts);
+  }
+  return box;
+}
+
+/** That vault's pipeline, now. The status frame it broadcasts repaints its
+    sidebar dot on the way back, so this only has to say what happened. */
+async function syncOneVault(v, btn) {
+  btn.classList.add("busy");
+  btn.disabled = true;
+  try {
+    const s = await api.syncVault(v.id);
+    toast(
+      s.state === "error"
+        ? v.label + " — sync failed · " + s.message
+        : s.state === "offline"
+        ? v.label + " — not syncing · " + s.message
+        : v.label + " — synced · " + s.message
+    );
+  } catch (err) {
+    apiFail(err, "Could not sync " + v.label);
+  } finally {
+    btn.classList.remove("busy");
+    btn.disabled = false;
+  }
+}
+
+function askDisconnectVault(v) {
+  confirmDialog({
+    title: "Disconnect vault",
+    path: v.label,
+    /* the ONE thing the button does not say, and the one thing a user about to
+       press it wants to know */
+    body: "Its docs leave the sidebar. Nothing is deleted.",
+    ok: "Disconnect",
+    danger: true,
+    note: "The folder stays at " + v.root + ".",
+    onOk: () => disconnectVault(v),
+  });
+}
+
+/**
+ * DISCONNECTING THE PRIMARY is a different act, and the dialog says so: the
+ * vault cannot leave the app — it is the app's home, and every app-level
+ * setting, the keyring and the AI relay live in it — so what is disconnected is
+ * the REMOTE. `git remote remove origin`, nothing else: the notes and the whole
+ * local repository stay, sync simply stops, and re-connecting is one URL in the
+ * field above.
+ */
+function askDisconnectPrimary(v) {
+  confirmDialog({
+    title: "Disconnect from the remote",
+    path: v.remote || v.label,
+    body: "Sync stops. The vault stays where it is, with all its notes and its full git history — only the remote is forgotten.",
+    ok: "Disconnect",
+    danger: true,
+    note: "Reconnect any time by entering the URL again.",
+    onOk: () => disconnectPrimary(v),
+  });
+}
+
+async function disconnectPrimary(v) {
+  const btn = $("#gitDisconnect");
+  if (btn) btn.classList.add("busy");
+  try {
+    const s = await api.clearVaultRemote(v.id);
+    /* one painter owns every sync surface — the statusbar chip, the branch and
+       this section's own line — so the answer goes through it, not around it */
+    if (s) paintSync(s);
+    refreshVaults();
+    toast("Disconnected · the vault is local only");
+  } catch (err) {
+    apiFail(err, "Could not disconnect " + v.label);
+  } finally {
+    if (btn) btn.classList.remove("busy");
+  }
+}
+
+async function disconnectVault(v) {
+  try {
+    await api.removeVault(v.id);
+  } catch (err) {
+    apiFail(err, "Could not disconnect " + v.label);
+    return;
+  }
+  /* the `vaults-changed` frame repaints everything — including the pane, if the
+     doc on screen was in this vault. Refresh anyway: this tab must not be
+     showing a disconnected vault because a stream frame went missing. */
+  refreshVaults();
+  toast("Disconnected " + v.label + " · the folder stays at " + v.root);
+}
+
+/**
+ * ADD A VAULT — the + at the foot of the list unfolds ONE MORE `vaultBlock`,
+ * in draft mode: the identical card, whose Connect performs the add (the
+ * attach operation, ADR 0017, against a directory the server creates for it).
+ * Built once and kept mounted, so a half-typed URL survives every repaint the
+ * vault list goes through.
+ */
+let vaultAddWired = false;
+export function wireVaultAdd() {
+  if (vaultAddWired) return;
+  const plus = $("#vaultAddBtn");
+  const host = $("#vaultAddHost");
+  if (!plus || !host) return;
+  vaultAddWired = true;
+  /* the primary's token row is static markup, so it is given the same hover
+     help here rather than carrying a second copy of the text in the HTML */
+  const primaryToken = $("#gitToken");
+  if (primaryToken && primaryToken.closest(".field")) primaryToken.closest(".field").title = TOKEN_HELP;
+  const card = vaultBlock(null);
+  card.hidden = true;
+  host.appendChild(card);
+  plus.addEventListener("click", () => toggleVaultAdd());
+  /* the primary's card carries the same two actions the built ones do; its
+     markup is static, so they are wired here, once */
+  const syncBtn = $("#gitSyncNow");
+  if (syncBtn) syncBtn.addEventListener("click", () => syncNow());
+  const dropBtn = $("#gitDisconnect");
+  if (dropBtn)
+    dropBtn.addEventListener("click", () => {
+      const primary = vaultPage.list.find((x) => x.id === "vault");
+      if (primary) askDisconnectPrimary(primary);
+    });
+}
+
+/** The draft card lives folded behind the + at the foot of the vault list. */
+function toggleVaultAdd(show) {
+  const card = $("#vaultAddField");
+  const plus = $("#vaultAddBtn");
+  if (!card || !plus) return;
+  const next = show != null ? show : card.hidden;
+  card.hidden = !next;
+  plus.setAttribute("aria-expanded", String(next));
+  plus.textContent = next ? "\u00d7" : "+";
+  plus.title = next ? "Close" : "Add a vault";
+  if (next) {
+    const inp = $('.field[data-vf="remote"] input', card);
+    if (inp) inp.focus();
   }
 }
 
@@ -443,6 +934,10 @@ export function showSettings(section, opts) {
   /* the Repository line is live state too — `state.sync`, which moves without
      anything on this page being drafted or saved, so arriving repaints it */
   paintGitRemote();
+  /* …and so is the vault list, which no `settings-changed` covers: it has its
+     own route and its own event. Arriving re-reads it. */
+  wireVaultAdd();
+  refreshVaults();
   /* The keyring line is the one row in this panel that is not a stored setting
      — it is live state (is there an identity, is it unlocked, which recipient),
      so it is repainted from the worker every time the page is shown rather than
@@ -879,8 +1374,13 @@ export function clearSettingsError() {
 }
 
 /** Show a failed save where it happened, and leave the draft DIRTY — a value
-    the server refused has not been saved, and the button must keep saying so. */
-function showSettingsError(err) {
+    the server refused has not been saved, and the button must keep saying so.
+
+    `where` is the `.field` to park it in when the CALLER knows better than the
+    code map: a per-vault write's refusal belongs under the control of the vault
+    it was about, and every one of its codes (`bad-branch`, `bad-url`, …) is
+    already spoken for by the primary's own field. */
+function showSettingsError(err, where) {
   const box = $("#settingsErr");
   if (!box) return;
   clearSettingsError();
@@ -890,7 +1390,7 @@ function showSettingsError(err) {
   box.hidden = false;
   const sel = SETTINGS_ERROR_FIELDS[code];
   const ctl = sel && $(sel);
-  const field = ctl && ctl.closest(".field");
+  const field = where || (ctl && ctl.closest(".field"));
   if (field) {
     field.classList.add("bad");
     field.appendChild(box);

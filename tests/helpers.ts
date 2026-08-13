@@ -434,6 +434,15 @@ export async function startServer(opts: StartOptions = {}): Promise<TestServer> 
       ...process.env,
       ZNOTES_VAULT: vault,
       ZNOTES_PORT: String(port),
+      /* A SIBLING of this server's own vault, and never the default. The
+         default is `./vaults` beside the repo — the developer's real secondary
+         vaults — so a suite that did not name one would boot indexing them, and
+         every "the tree is exactly the seed" assertion would fail on a machine
+         that happens to have one connected. The path is not created here: the
+         boot scan skips a home that is not there, and only `addVault` mkdirs
+         it. A sibling rather than a child because a vaults home nested in the
+         primary vault is a state the registry deliberately refuses. */
+      ZNOTES_VAULTS_DIR: `${vault}-vaults`,
       ...(opts.env ?? {}),
     },
     stdout: "pipe",

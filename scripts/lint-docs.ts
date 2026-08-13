@@ -109,7 +109,8 @@ const LAYERS: Record<string, number> = {
   trash: 2, "ai-endpoint": 2,
   git: 3, terminal: 3,
   ai: 4, docs: 4,
-  index: 5,
+  vaults: 5,
+  index: 6,
 };
 const serverDir = join(ROOT, "server");
 for (const f of readdirSync(serverDir)) {

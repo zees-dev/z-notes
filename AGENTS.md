@@ -7,9 +7,10 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
 ## Layout
 
 - `server/` — the backend. Flat files, each a deep module with a deliberate export
-  surface; `index.ts` is the composition root + route table. Forward-only layering
-  (enforced by `bun run lint:docs`): `vault db http sse` → `settings watch ai-edits`
-  → `trash ai-endpoint` → `git terminal` → `ai docs` → `index`.
+  surface; `index.ts` is the composition root + route table, `vaults.ts` the vault
+  registry it routes through. Forward-only layering (enforced by
+  `bun run lint:docs`): `vault db http sse` → `settings watch ai-edits` →
+  `trash ai-endpoint` → `git terminal` → `ai docs` → `vaults` → `index`.
 - `app/` — the frontend. ES modules, no build step, no runtime deps. Leaf modules
   (`state ui api armor entropy dialogs crypto-worker history`) never import
   feature modules — `history` reaches editor.js and tree.js through callbacks
@@ -27,8 +28,10 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
   `mermaid-e2e` — a fence is untrusted input (ADR 0010) and its hardening is
   the one thing here that must not regress quietly.
 - `deploy/` — Dockerfile + k3s manifests; `deploy/README.md` is the runbook.
-- `vault/` — NOT part of this repo. The vault is external and bring-your-own
-  (ADR 0017): `ZNOTES_VAULT`, default `./vault`, gitignored local scratch.
+- `vaults/` — NOT part of this repo (gitignored). Vaults are bring-your-own
+  (ADR 0017) and plural (ADR 0018): `ZNOTES_VAULTS_DIR` (default `./vaults`) is
+  the home, one subdirectory per vault, the primary among them at
+  `ZNOTES_VAULT` (default `./vaults/vault`).
 
 ## Commands
 
@@ -63,15 +66,17 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   statusbar pip plus a topbar mark that appears only when there is something to
   save; 0013 gives a collapsed caret in Raw the whole-line ⌘X/⌘C/⌘V; 0014
   makes ⌘Z/⌘⇧Z ONE app-owned timeline across documents — text edits and file
-  operations in the order they happened, navigating to the doc each step is
-  about, with the file ones behind a prompt (`app/history.js`). 0015 gives
-  Preview the source's line structure: one newline is one line break, one blank
-  line is one blank line (it amends 0001's soft-break and blank-multiplicity
-  rules), and every rendered line carries its own `[data-line]`. 0016 renders
-  external URLs (`[text](url)`, `<url>`, bare) as real new-tab anchors —
-  http(s)/mailto only; `javascript:` and everything else stays literal text.
+  operations in the order they happened, navigating to each step's doc, the
+  file ones behind a prompt (`app/history.js`). 0015 gives Preview the source's
+  line structure — one newline is one line break, one blank line one blank line
+  (amending 0001's soft-break and blank-multiplicity rules) — and every rendered
+  line its own `[data-line]`. 0016 renders external URLs as real new-tab
+  anchors — http(s)/mailto only; `javascript:` and the rest stay literal text.
   0017 makes the vault bring-your-own — external to this repo, any directory
-  qualifies, and attach is the one place `git init` may run.
+  qualifies, and attach is the one place `git init` may run. 0018 makes vaults
+  plural: the primary keeps today's bare paths and all app-level state,
+  secondary vaults are `@id/`-prefixed stacks under the vaults home, and `@` is
+  a reserved path segment.
 
 ## Workflow
 

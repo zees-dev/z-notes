@@ -372,7 +372,16 @@ export class Settings {
       only way to tell "the file changed under us" from "the file is ours". */
   private onDisk: string | null = null;
 
-  constructor(private readonly vault: Vault, private readonly index: Index) {}
+  /* `adoptEnvToken` is false for every SECONDARY vault (ADR 0018):
+     ZNOTES_GIT_TOKEN is primary-only boot provisioning, and a secondary that
+     absorbed it would re-credential an explicitly anonymous attach on the next
+     restart — offering the primary account's token to whatever remote that
+     vault points at. */
+  constructor(
+    private readonly vault: Vault,
+    private readonly index: Index,
+    private readonly adoptEnvToken = true
+  ) {}
 
   /* Late-bound collaborators (same pattern as setMetaProvider): Settings is
      constructed before gitSync/ai/trash/docs exist, but a settings change
@@ -850,6 +859,7 @@ export class Settings {
    * owner. The log line says a token was adopted and never what it is.
    */
   private absorbEnvToken(): void {
+    if (!this.adoptEnvToken) return;
     const value = process.env.ZNOTES_GIT_TOKEN;
     if (typeof value !== "string" || !value) return;
     if (this.index.getCredential("git.token")) return;

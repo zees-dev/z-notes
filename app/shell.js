@@ -9,16 +9,16 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, apiFail, dirname, toast } from "./ui.js";
-import { closeCtx, loadTree, renderTree, revealFolder } from "./tree.js";
+import { $, $$, apiFail, dirname, toast, vaultOf } from "./ui.js";
+import { adoptVaultSync, closeCtx, loadTree, renderTree, revealFolder } from "./tree.js";
 import { closeConfirm, closeConflict, confirmDialog } from "./dialogs.js";
 import { adoptTrash, refreshTrash } from "./trash.js";
 import { closeExitGuard, guardRawExit, navGate, openDoc, rawExitDiff, renderDoc, saveDoc, setBaseline, setMode, syncRaw, viewedPath } from "./editor.js";
 import { closePP } from "./secrets.js";
 import { closeEffort, closePal, renderChat, updateSessionUI } from "./chat.js";
-import { adoptSettings, cacheLook, commitFocusedNumber, exitSettings, guardSettingsExit, paintAiStatus, paintGitRemote, settingAt, settingsDirty, showSettings } from "./settings.js";
+import { adoptSettings, cacheLook, commitFocusedNumber, exitSettings, guardSettingsExit, paintAiStatus, paintGitRemote, paintVaults, settingAt, settingsDirty, showSettings } from "./settings.js";
 import { loadCommands } from "./terminal.js";
-import { findDoc } from "./app.js";
+import { findDocAcross } from "./app.js";
 
 /* ============================================================
    SYNC + CONNECTION
@@ -32,10 +32,42 @@ export function paintSync(s) {
   el_.title = s.message + " · click to sync now";
   $("#stBranch").lastElementChild.textContent = s.branch;
   const line = $("#syncLineTxt");
-  if (line) line.textContent = s.message;
+  if (line) {
+    line.textContent = s.message;
+    // it truncates in the card's action row; the full message is the title
+    line.parentElement.title = s.message;
+  }
   // the Settings Repository line reads the same state.sync — a frame that
   // changes `remote` while that page is open must repaint it too
   paintGitRemote();
+}
+
+/**
+ * The vault list moved — one was added, one disconnected, or one's git section
+ * was saved (here, or in another tab).
+ *
+ * `vaults-changed` carries the whole `GET /api/vaults` body rather than a hint,
+ * so the two surfaces painted from it (the Settings blocks, and the tree, whose
+ * own copy comes back with the trees attached) are simply repainted.
+ *
+ * The third case is the pane: the doc on screen may have been in the vault that
+ * just left. That is the delete-under-you path one level up — clear the buffer
+ * and open the first doc anywhere, REPLACING the history entry rather than
+ * stacking one that names a doc no route can reach any more.
+ */
+export async function adoptVaults(payload) {
+  const list = (payload && payload.vaults) || [];
+  paintVaults(list);
+  const gone = state.active && !list.some((v) => v.id === vaultOf(state.active));
+  const was = state.active;
+  await loadTree().catch(() => {});
+  if (!gone) return;
+  state.docs.delete(was);
+  state.active = null;
+  state.dirty = false;
+  const next = findDocAcross(() => true);
+  if (next) await openDoc(next, { replace: true });
+  toast(was + " is in a vault that is no longer connected");
 }
 
 /* Statusbar chip → POST /api/sync/now. The status arrives twice: once as the
@@ -259,7 +291,18 @@ export function connect() {
       paintConn();
       blipConn();
     },
-    onSyncStatus: paintSync,
+    /* One stream, N pipelines. The statusbar chip is the PRIMARY vault's — it
+       is one chip and there is one vault whose sync the rest of the app (the
+       Repository line, the branch) is about. Every frame, primary included,
+       also lands on its own vault row's dot. */
+    onSyncStatus: (s) => {
+      if (!s) return;
+      if (!s.vault || s.vault === "vault") paintSync(s);
+      adoptVaultSync(s);
+    },
+    /* Add, disconnect, or a per-vault settings change: the whole list, and the
+       three surfaces that are painted from it. */
+    onVaultsChanged: adoptVaults,
     /* pushed by the relay whenever the endpoint's real status changes — a
        finished probe, a turn that failed, a rung the ladder took. The statusbar
        item therefore never polls and never guesses. */
@@ -1244,9 +1287,10 @@ export function paintHome() {
   btn.setAttribute("aria-label", label);
 }
 
-/** Whatever is first in the tree — never a folder path (see findDoc). */
+/** Whatever is first in the tree, in the first vault that has one — never a
+    folder path (see findDoc). */
 export function openFirstDoc() {
-  const first = findDoc(state.tree, (n) => !n.empty) || findDoc(state.tree, () => true);
+  const first = findDocAcross((n) => !n.empty) || findDocAcross(() => true);
   if (first) return openDoc(first);
   toast("This vault has no docs yet");
 }

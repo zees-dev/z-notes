@@ -37,6 +37,21 @@ frontend does not change if the implementation does.
 - **Doc paths** are vault-relative POSIX paths without a leading slash
   (`architecture/z-notes-design.md`). Each segment is percent-encoded in the URL; `/`
   separators are not. Path traversal (`..`, absolute, escaping the vault) is `400`.
+- **Vaults and the `@` prefix** (ADR 0018). The server hosts one **primary vault** (id
+  `vault`) and any number of **secondary vaults**. A primary-vault doc path is the bare
+  path above and always has been. A secondary-vault doc path is `@<id>/<rel>`, where
+  `<id>` matches `^[a-z0-9][a-z0-9-]{0,39}$` and `<rel>` is an ordinary vault-relative
+  path — `@work-notes/inbox.md`. Every doc surface speaks this one grammar: `/api/docs/*`,
+  `GET /api/search` hits, `GET /api/trash` entries, `doc-changed` frames and `/d/{path}`
+  URLs. An unknown id is `404 {"error":"not-found"}`; a move whose two ends resolve to
+  different vaults is `400 {"error":"bad-path"}`.
+- **`@` is a reserved segment.** A path segment starting with `@` is refused by the same
+  guard that refuses `..` and dot-prefixed segments, and the vault scan skips such
+  directories on disk. Consequence, stated so no client has to discover it: **a vault can
+  never contain a doc whose path collides with the vault grammar** — `@x/a.md` is not a
+  creatable primary-vault path, only an address into vault `x`. Inside a vault nothing
+  carries the prefix: markdown, `[[links]]` and the git repository are vault-relative, so
+  a vault repo is portable and a link never resolves across vaults.
 - **Revisions.** Every doc carries an opaque `rev` string. Writes may pass the `rev` they
   read; a mismatch is `409` (`{"error":"rev-conflict"}`) and the client must re-read.
   Omitting `rev` is a forced overwrite.
@@ -65,6 +80,13 @@ frontend does not change if the implementation does.
 
 ### Docs
 
+Every route in this section takes a doc path under the grammar in
+[Conventions](#conventions), qualified or not. A qualified path is resolved to its vault
+and then behaves identically inside it — CAS, implicit parents, the one-commit move with
+its backlink rewrites, canonical spelling. The reply re-qualifies whatever it echoes
+(`path`, `from`, `updated[]`, `moved[]`), so a client that reads paths out of responses
+never has to know which vault it is in.
+
 #### `GET /api/docs`
 
 The vault tree. Folders carry children; files carry metadata only, never content.
@@ -87,6 +109,34 @@ The vault tree. Folders carry children; files carry metadata only, never content
 
 `slug` is what `[[wiki-links]]` resolve against. `open` is the server's remembered
 disclosure state — advisory; the client may override it locally.
+
+*Additive:* `vaults` lists every vault, primary first then by id. `vault` and `tree` are
+unchanged and describe the **primary vault only**, so a single-vault client needs no edit.
+
+```json
+{
+  "vault": { "name": "z-notes", "root": "~/vault", "docCount": 7 },
+  "tree":  [ "…primary tree, exactly as above…" ],
+  "vaults": [
+    { "id": "vault", "label": "vault (unsynced)", "root": "~/vault", "docCount": 7,
+      "remote": null, "repo": false, "prefix": "",
+      "sync": { "state": "offline", "…": "the GET /api/sync/status object" },
+      "tree": [ "…the same nodes as \"tree\"…" ] },
+    { "id": "work-notes", "label": "work-notes", "root": "~/vaults/work-notes",
+      "docCount": 3, "remote": "github.com/z/work-notes", "repo": true,
+      "prefix": "@work-notes/",
+      "sync": { "state": "synced", "…": "…" },
+      "tree": [ { "type": "file", "path": "@work-notes/inbox.md", "…": "…" } ] }
+  ]
+}
+```
+
+A secondary vault's `tree` carries **qualified** paths throughout, so a client uses them
+verbatim wherever it uses a doc path. `prefix` is `""` for the primary and `@<id>/`
+otherwise — prepend it rather than rebuilding the grammar. `label` is the display name:
+the last segment of the sanitized remote when there is one, else the directory's basename,
+else `<basename> (unsynced)` when the directory is not a git repository at all. `sync` is
+the vault's last known sync status — a snapshot, never a git spawn per tree request.
 
 #### `GET /api/docs/{path}`
 
@@ -180,6 +230,7 @@ move answers `"type":"folder"` with `rev`/`bytes`/`mtime` `null` plus
 | Status | When |
 |---|---|
 | `400 bad-path` | `to` traverses out of the vault, names a `.` segment (`.znotes/`), is not `.md` for a doc, or moves a folder inside itself |
+| `400 bad-path` | `{path}` and `to` resolve to different vaults — `A move cannot cross vaults.` (ADR 0018) |
 | `404 not-found` | nothing at `{path}`, or it is a file that is not a `.md` doc |
 | `409 exists` | `to` is taken, or a path segment of `to` is a doc rather than a folder |
 | `500 move-failed` | the write phase failed; **every file already touched was rolled back** and the vault is exactly as it was |
@@ -235,6 +286,12 @@ The trash is outside the document namespace. Its payload lives under `.znotes/tr
 which the vault scan, search, backlink graph and AI context all exclude. Each entry has an
 opaque id, a `meta.json` record, and a `files/` subtree mirroring its original vault path.
 
+Every vault has its own trash, under its own `.znotes/trash/`, and the routes below present
+them as one. A `{id}` may be bare (the primary's) or qualified `@<vault>/<id>` (a
+secondary's); the id is validated against its vault's trash after the prefix is resolved,
+so a malformed id is still `400 bad-id` and never a path (an unknown vault prefix is
+`404 not-found`).
+
 #### `GET /api/trash`
 
 ```json
@@ -254,7 +311,8 @@ opaque id, a `meta.json` record, and a `files/` subtree mirroring its original v
       "expired": false,
       "complete": true,
       "restorable": true,
-      "blockedBy": null
+      "blockedBy": null,
+      "vault": "vault"
     }
   ]
 }
@@ -263,6 +321,14 @@ opaque id, a `meta.json` record, and a `files/` subtree mirroring its original v
 Newest deletion first. `retentionDays` is the live value of
 `settings.trash.retentionDays`; `purgeAt` is derived from it on every read. A path occupied
 since the deletion reports `restorable:false` and names that path in `blockedBy`.
+
+*Additive:* the view is **aggregated across every vault** — one trash drawer, not one per
+vault. Each entry names its vault in `vault`, and an entry from a secondary vault carries a
+qualified `id` **and** `path` (`"id": "@work-notes/m7k2x9-4f1a8b3c"`,
+`"path": "@work-notes/projects/homelab.md"`), so the id in the list is the id the
+`trash/{id}` routes below take. Sorting is newest-first across all vaults. Retention is
+per-vault; the top-level `retentionDays` is the primary's, and each entry's own `purgeAt`
+already carries the truth for that entry.
 
 `GET /api/trash/{id}` returns one entry in the same shape or `404 not-found`.
 
@@ -284,7 +350,8 @@ this route. Emits `trash-changed`.
 
 With no body (or `{}`), applies the retention policy now. With `{"all":true}`, permanently
 empties the trash including entries whose window has not expired. →
-`200 {"purged":["<id>",…],"retentionDays":7,"all":false|true}`.
+`200 {"purged":["<id>",…],"retentionDays":7,"all":false|true}`. Both forms fan out to every
+vault, and `purged` carries qualified ids for entries that came from a secondary one.
 
 The same retention sweep runs at boot, after every delete, immediately after a retention
 change, and hourly while the server is alive. `trash.retentionDays` defaults to 7 and is
@@ -394,6 +461,12 @@ and the match indices are the server's job so every client highlights identicall
 
 `line` is 0-based. `matches` are character offsets into `text`. `limit` defaults to 24.
 An empty `q` returns every doc as `kind:"doc"`, unscored, path-ordered.
+
+*Additive:* the query **fans out across every vault**. Each vault searches its own index,
+hits from a secondary vault carry a qualified `path` (`"@work-notes/inbox.md"`), and the
+merged list is re-sorted by `score` descending then `path` before `limit` is applied — so
+`limit` bounds the whole answer, not each vault's share. The same slug in two vaults is two
+results, distinguishable only by their prefix.
 
 ---
 
@@ -724,6 +797,142 @@ keyring is never exempt: a local `identity.age` losing to a remote one would los
 
 The token rule is unchanged and applies verbatim: it reaches git only through the askpass
 environment, so it appears in no argv, no `.git/config`, no log and no response body.
+
+---
+
+### Vaults
+
+Which vaults exist, and each one's own git configuration (ADR 0018). The `/api/sync/*`
+routes above stay **primary-bound** and unchanged — this section is how a *secondary* vault
+is added, configured, synced and disconnected. Every vault, primary included, is addressable
+here, so `{id}` = `vault` is always valid.
+
+The **vault descriptor** is the `vaults[]` element of `GET /api/docs` minus `tree`, plus
+that vault's git settings:
+
+```json
+{
+  "id": "work-notes",
+  "label": "work-notes",
+  "root": "~/vaults/work-notes",
+  "docCount": 3,
+  "remote": "github.com/z/work-notes",
+  "repo": true,
+  "prefix": "@work-notes/",
+  "sync": { "state": "synced", "…": "the GET /api/sync/status object" },
+  "git": { "branch": "main", "autoSync": true, "autoSyncSeconds": 60,
+           "tokenMasked": "ghp_9f3kx2Qm7Lp0" }
+}
+```
+
+`tokenMasked` follows the credential rule everywhere else in this contract: the token lives
+only in that vault's sqlite, reaches git only through the askpass environment, and is never
+returned whole.
+
+#### `GET /api/vaults`
+
+→ `200 {"vaults":[ <descriptor>, … ]}` — primary first, then by id. This exact body is what
+the `vaults-changed` SSE event carries.
+
+#### `POST /api/vaults`
+
+```json
+{ "url": "https://github.com/z/work-notes.git", "name": "Work notes", "token": "ghp_…" }
+```
+
+Adds a vault: creates a directory under the vaults home and runs the ordinary **attach**
+(`POST /api/sync/remote`, ADR 0017) inside it, so every guarantee attach makes is inherited.
+`name` is optional and defaults to the last path segment of the sanitized remote; it is
+slugified into the vault **id** (lowercase, non-alphanumerics to `-`, clamped to 40 chars).
+`token` is optional: omitted, the primary's `git.token` is **copied** into the new vault's
+credential store (one account, many repos, is the ordinary case); pass `token: ""` to attach
+anonymously. → `201 {"vault": <descriptor>}`.
+
+**A failed add leaves nothing behind** — no directory, no registry entry, no credential.
+
+| Status | When |
+|---|---|
+| `400 bad-url` | `url` fails the same check `POST /api/sync/remote` applies, verbatim |
+| `400 bad-name` | the derived id is empty, out of `^[a-z0-9][a-z0-9-]{0,39}$`, or the reserved literal `vault` |
+| `409 exists` | a vault with that id is already connected, a connected vault already has that remote, or a directory of that name already sits in the vaults home |
+| `409 vaults-nested` | the vaults home and the primary vault contain one another — secondary vaults are disabled until they are separated |
+| `502 attach-failed` | the remote is unreachable, refused the credential, or answered with an unusable default branch |
+
+`409 vault-busy` and `409 checkout-conflict` are relayed verbatim if attach ever raises them
+— a directory this call created seconds ago cannot practically be in either state, but the
+refusal is passed through rather than reinterpreted.
+
+#### `GET /api/vaults/{id}`
+
+→ `200 {"vault": <descriptor>}`, or `404 {"error":"not-found"}` for an unknown id.
+
+#### `DELETE /api/vaults/{id}`
+
+**Disconnect.** Stops that vault's watcher, sync and index and drops it from the registry.
+→ `204`, no body. Emits `vaults-changed`.
+
+**The directory is not deleted.** Its notes and its git repository stay on disk exactly as
+they were; disconnecting is a registry operation and deleting is a human one. A later add of
+the same remote therefore refuses with `409 exists` on the surviving directory — remove it
+by hand first.
+
+| Status | When |
+|---|---|
+| `400 primary-vault` | `{id}` is `vault` — `The primary vault cannot be disconnected.` |
+| `404 not-found` | no vault with that id |
+
+#### `PUT /api/vaults/{id}/settings`
+
+```json
+{ "git": { "branch": "main", "autoSync": true, "autoSyncSeconds": 60, "token": "ghp_…" } }
+```
+
+Per-vault git settings, every field optional. Validation, healing, credential absorption,
+persistence to that vault's `settings.toml` and live application to its sync loop are
+exactly what `PUT /api/settings` does for the primary — this route is the same operation
+aimed at one vault. → `200 {"vault": <descriptor>}`.
+
+Only `git` is settable here: any other key is
+`400 {"error":"bad-body","message":"Only the git section is settable per vault."}`.
+App-level settings (theme, editor, secrets, ai, terminal, trash retention) are the primary's
+and live at `PUT /api/settings` only. `404 not-found` for an unknown id.
+
+#### `POST /api/vaults/{id}/sync`
+
+Manual **Sync now** for one vault. Empty body. → `200` with that vault's
+`GET /api/sync/status` object plus a `vault` field naming the id. Same pipeline, same
+single-flight behaviour, same non-destructive rebase handling as `POST /api/sync/now`.
+`404 not-found` for an unknown id.
+
+#### `POST /api/vaults/{id}/remote`
+
+```json
+{ "url": "https://github.com/z/work-notes.git" }
+```
+
+Point a vault at a (new) remote — the ordinary **attach** run against that vault's stack,
+with every attach guarantee intact: non-destructive, atomic, credentials only through the
+askpass env. The checkout's branch is adopted into that vault's `git.branch`, the pulled
+docs are indexed before the reply, and a `vaults-changed` frame announces the new label.
+→ `200` with that vault's sync-status object plus a `vault` field. For `{id}` = `vault`
+this is `POST /api/sync/remote`'s twin. Refusals: the attach family (`400 bad-url`,
+`409 vault-busy`, `409 checkout-conflict`, `502 attach-failed`) relayed verbatim,
+`409 exists` when another vault already holds the remote, `404 not-found` for an
+unknown id.
+
+#### `DELETE /api/vaults/{id}/remote`
+
+Disconnect a vault from its remote: `git remote remove origin` and nothing else. The
+notes, the repository and its whole history stay on disk — only the address the pipeline
+pushes to is forgotten, so the vault carries on local-only and re-attaching is one POST.
+Idempotent: a vault that is not a repository, or has no origin, answers `200` unchanged.
+→ `200` with that vault's sync-status object plus a `vault` field, and a `vaults-changed`
+frame (the label falls back to the directory's name). `502 detach-failed` if git refuses,
+`404 not-found` for an unknown id.
+
+This is what **disconnect** means for the primary vault, which can never leave the app.
+A secondary vault's `DELETE /api/vaults/{id}` unregisters the vault itself instead; the
+two are different acts and both leave every byte on disk.
 
 ---
 
@@ -1254,8 +1463,16 @@ event: doc-changed
 data: {"path":"projects/homelab.md","rev":"r4","reason":"external","removed":true,
        "bytes":0,"mtime":"2026-08-01T00:13:02.000Z"}
 
+event: doc-changed
+data: {"path":"@work-notes/inbox.md","rev":"r2","reason":"write",
+       "bytes":41,"mtime":"2026-08-01T00:13:44.000Z"}
+
 event: sync-status
-data: {"state":"syncing","branch":"main","remote":"origin/main","message":"syncing…"}
+data: {"state":"syncing","branch":"main","remote":"origin/main","message":"syncing…",
+       "vault":"vault"}
+
+event: vaults-changed
+data: {"vaults":[ … ]}
 
 event: ai-status
 data: {"state":"unreachable","model":"gpt-5","effort":"high",
@@ -1284,9 +1501,25 @@ data: {"t":"2026-08-01T00:12:24.000Z"}
 string and its output are fetched over the bearer-gated `GET /api/terminal/commands` by
 clients that are actually unlocked. A locked client learns nothing from it.
 
-`trash-changed` carries exactly the body `GET /api/trash` serves. It is emitted after a
-delete, restore, permanent deletion or sweep, so clients repaint the disclosure from the
-server list rather than maintaining a second local trash index.
+`trash-changed` carries exactly the body `GET /api/trash` serves — the aggregate across
+every vault, whichever vault changed. It is emitted after a delete, restore, permanent
+deletion or sweep, so clients repaint the disclosure from the server list rather than
+maintaining a second local trash index.
+
+*Additive (ADR 0018):* `vaults-changed` carries exactly the body `GET /api/vaults` serves.
+It is emitted when a vault is added or disconnected, when per-vault settings change, and
+when a vault's `label` would move (attaching the primary to a remote renames its row).
+Clients re-read the tree and repaint any vault UI from the frame rather than tracking the
+registry themselves.
+
+*Additive:* `doc-changed` paths obey the doc-path grammar in
+[Conventions](#conventions) — bare for the primary vault, `@<id>/`-qualified for a
+secondary, in `path`, `from` and `to` alike. `sync-status` gains a `vault` field naming the
+vault the status belongs to; the primary's frames say `"vault":"vault"`. Both are additive:
+a client that ignores the prefix and the field sees exactly today's stream for a
+single-vault install. `hello` and `epoch` are unchanged — there is one `vaultEpoch` for the
+whole server, bumped by a change in **any** vault, and a reconnecting client re-reads the
+tree, which now describes every vault.
 
 `reason` ∈ `write | created | proposal-accepted | proposal-reverted | external | moved |
 deleted` — `external` is the fs-watch reconcile telling open editors the file
@@ -1379,7 +1612,9 @@ the prefix that reserves a routing space no vault path can ever collide with —
 
 `{path}` is a **doc path** under the same rule as `/api/docs/{path}`: vault-relative POSIX,
 no leading slash, each segment percent-encoded, `/` separators left alone —
-`/d/architecture/z-notes-design.md`.
+`/d/architecture/z-notes-design.md`. A secondary vault's doc is its qualified path, so the
+`@` arrives percent-encoded (`/d/%40work-notes/inbox.md`) and decodes before the vault
+prefix is read; the unencoded spelling works too.
 
 The response is `index.html` byte-for-byte, with the same `ETag` and `cache-control:
 no-cache` the shell gets at `/`; nothing about asset caching or the vendor bundle changes.

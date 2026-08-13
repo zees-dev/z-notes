@@ -65,6 +65,11 @@ export type AttachResult =
   | { ok: true; branch: string; created: "repo" | "origin" | "none" }
   | { ok: false; status: number; body: { error: string; message: string; paths?: string[] } };
 
+/** `detachRemote`. `detached:false` = there was no origin to remove. */
+export type DetachResult =
+  | { ok: true; detached: boolean }
+  | { ok: false; status: number; body: { error: string; message: string } };
+
 /**
  * A credential key in the committed settings.toml — see `settingsCanary`.
  *
@@ -1603,6 +1608,49 @@ export class GitSync {
     const r = await this.withIndexLock(() => this.attachLocked(url));
     this.lastAttachFailure = r.ok ? null : r.body.message;
     return r;
+  }
+
+  /**
+   * The inverse of attach, and DELIBERATELY THE SMALL ONE: `git remote remove
+   * origin`, nothing else. The notes, the repository, every commit and the
+   * whole reflog stay exactly where they are — only the address the pipeline
+   * pushes to goes away, so the vault carries on as a working local-only repo
+   * and re-attaching is one URL in the same field.
+   *
+   * Never a failure to find nothing: a vault that is not a repository, or one
+   * with no origin, is already in the state this asks for.
+   *
+   * Under the writer lock like `attachRemote` — removing a remote takes its
+   * remote-tracking refs with it, and a debounced push landing in the middle is
+   * the same two-writers race the lock exists for.
+   */
+  async detachRemote(): Promise<DetachResult> {
+    const r = await this.withIndexLock(() => this.detachLocked());
+    // publish the new truth (no remote ⇒ "local only") before the caller answers
+    if (r.ok && r.detached) await this.refresh();
+    return r;
+  }
+
+  private async detachLocked(): Promise<DetachResult> {
+    if (this.stopped) return { ok: false, status: 409, body: { error: "vault-busy", message: "the server is shutting down" } };
+    if (!(await this.detectRepo()).ok) return { ok: true, detached: false };
+    const origin = await this.git(["remote", "get-url", "origin"], { optionalLocks: false });
+    if (!origin.ok || !origin.stdout.trim()) return { ok: true, detached: false };
+    const rm = await this.git(["remote", "remove", "origin"]);
+    if (!rm.ok) {
+      return {
+        ok: false,
+        status: 502,
+        body: {
+          error: "detach-failed",
+          message: this.cleanMessage(gitMessage(rm.stderr, rm.stdout, `git remote remove failed (exit ${rm.code})`)),
+        },
+      };
+    }
+    this.lastOriginUrl = null;
+    // the refusal that belonged to the remote we just dropped
+    this.lastAttachFailure = null;
+    return { ok: true, detached: true };
   }
 
   private async attachLocked(url: string): Promise<AttachResult> {

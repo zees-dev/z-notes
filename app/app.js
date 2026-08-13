@@ -16,7 +16,7 @@
 import * as api from "./api.js";
 import { generatePassphrase } from "./entropy.js";
 import { state } from "./state.js";
-import { $, $$, clearStickyToast, lookupLink, toast } from "./ui.js";
+import { $, $$, clearStickyToast, lookupLink, toast, vaultTrees } from "./ui.js";
 import { pendingHistory, stepHistory, wireHistory } from "./history.js";
 import { LONGPRESS_MS, applyFileHistory, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
 import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, wireDialogs } from "./dialogs.js";
@@ -906,8 +906,8 @@ export async function start() {
   const wantSettings = urlSettings();
   const first =
     (wanted && state.docPaths.has(wanted) && wanted) ||
-    findDoc(state.tree, (n) => !n.empty) ||
-    findDoc(state.tree, () => true);
+    findDocAcross((n) => !n.empty) ||
+    findDocAcross(() => true);
   wire();
   initWordWrap();
   syncModeUI();
@@ -956,6 +956,17 @@ export async function start() {
 export function findDoc(nodes, ok) {
   for (const n of nodes) {
     const hit = n.type === "folder" ? findDoc(n.children, ok) : ok(n) ? n.path : null;
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The same, across every vault in sidebar order — "the first doc" now has to
+    say which vault's first doc it means, and the answer is the first one that
+    has any. */
+export function findDocAcross(ok) {
+  for (const nodes of vaultTrees()) {
+    const hit = findDoc(nodes, ok);
     if (hit) return hit;
   }
   return null;

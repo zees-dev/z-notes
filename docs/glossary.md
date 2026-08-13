@@ -5,9 +5,25 @@ entry lists banned synonyms where drift has happened or is likely.
 
 ## The vault and docs
 
-- **vault** — the directory of markdown files that IS the user's data
-  (`$ZNOTES_VAULT`). Also the class binding disk I/O to that root
-  (`server/vault.ts` `Vault`). *Not* "workspace", "notebook".
+- **vault** — a directory of markdown files that IS the user's data. Also the
+  class binding disk I/O to one such root (`server/vault.ts` `Vault`).
+  *Banned:* "workspace", "notebook", "mount".
+- **primary vault** — the one at `$ZNOTES_VAULT`, id `vault`. Bare doc paths,
+  and the only home of app-level state — settings, keyring, AI relay, terminal
+  (ADR 0018). *Not* "default vault", "main vault".
+- **secondary vault** — any other vault: a subdirectory of `$ZNOTES_VAULTS_DIR`
+  with its own git, trash, index and watcher. Its docs are addressed
+  `@<id>/<path>`. *Not* "extra vault", "sub-vault".
+- **vault id** — a vault's stable name in the address grammar
+  (`^[a-z0-9][a-z0-9-]{0,39}$`; `vault` is the primary's, reserved). The
+  **prefix** is `@<id>/`, empty for the primary. Distinct from a vault's
+  **label**, which is a display name derived from its remote or directory.
+- **add / disconnect** (a vault) — the two registry verbs
+  (`POST /api/vaults`, `DELETE /api/vaults/{id}`). Adding runs **attach** in a
+  new directory; disconnecting only forgets the vault — it never deletes the
+  directory. *Banned:* "detach" (attach's opposite here is disconnect;
+  "attach" stays the remote-connection verb), "mount"/"unmount", "remove" for
+  the on-disk directory.
 - **doc** — a `.md` file in the vault. The unit the API addresses
   (`/api/docs/{path}`). *Banned:* "note", "page", "document" (in code).
 - **folder** — a directory in the vault as the tree shows it. *Banned:*
@@ -42,10 +58,11 @@ entry lists banned synonyms where drift has happened or is likely.
   `git.token` credential.
 - **tracked set** — docs + committed `.znotes` meta (`TRACKED_META` in
   `git.ts`); the sqlite index is never committed.
-- **attach** — connecting the vault directory to a remote repo
-  (`POST /api/sync/remote`, or `ZNOTES_VAULT_REPO` at boot): init if needed,
-  set `origin`, fetch, checkout. *Banned:* "clone" (the app never
-  clones-into-place — that would refuse a non-empty vault), "link".
+- **attach** — connecting a vault directory to a remote repo
+  (`POST /api/sync/remote`, `ZNOTES_VAULT_REPO` at boot, or the directory a
+  vault **add** just created): init if needed, set `origin`, fetch, checkout.
+  *Banned:* "clone" (the app never clones-into-place — that would refuse a
+  non-empty vault), "link".
 
 ## AI relay (SPEC §8)
 
@@ -83,6 +100,7 @@ entry lists banned synonyms where drift has happened or is likely.
 - **route table** — the declarative dispatch in `index.ts`; a route entry is a
   one-line delegation to a module.
 - **broadcast / `/events`** — the app-wide SSE bus (`doc-changed`,
-  `sync-status`, `settings-changed`, `trash-changed`, heartbeat).
+  `sync-status`, `settings-changed`, `trash-changed`, `vaults-changed`,
+  heartbeat). One bus for every vault.
 - **gates** — the five acceptance suites (`bun run gates`).
 - **seam** — a boundary tests go through; prefer the highest existing seam.

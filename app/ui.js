@@ -14,6 +14,9 @@ import { state } from "./state.js";
    ============================================================ */
 export const I = {
   chev: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
+  /* a vault: the repo box, with the branch that makes it one */
+  vault:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2.2"/><path d="M3.5 9h17"/><circle cx="9" cy="12.8" r="1.4"/><circle cx="15" cy="12.8" r="1.4"/><path d="M9 14.2v2.3M15 14.2a2.3 2.3 0 0 1-2.3 2.3H9"/></svg>',
   folder: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.4h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5z"/></svg>',
   file: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
   key: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="8" cy="13" r="4"/><path d="m11 11 8-8M17 5l2 2M15 7l2 2"/></svg>',
@@ -60,6 +63,48 @@ export const esc = (s) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 export const dirname = (p) => (p.indexOf("/") < 0 ? "" : p.slice(0, p.lastIndexOf("/")));
+
+/* ---------- vault addressing ----------
+
+   One grammar, restated client-side: a doc in a SECONDARY vault is `@<id>/<rel>`
+   everywhere above the API — the tree, `state.docPaths`, `/d/` URLs, SSE frames
+   — and the PRIMARY vault's docs are bare paths, exactly as they have always
+   been. `@<id>` with no remainder is a vault's ROOT: the key the tree's slot map
+   and the create/rename context use for "the root of that vault".
+
+   These are the only place in the app that takes a prefix apart; nothing above
+   them should do it by hand. */
+const VAULT_AT = /^@([a-z0-9][a-z0-9-]*)(?:\/|$)/;
+
+/** Which vault a qualified path belongs to. An unqualified path is the primary. */
+export const vaultOf = (path) => {
+  const m = VAULT_AT.exec(String(path == null ? "" : path));
+  return m ? m[1] : "vault";
+};
+
+/** The vault-relative remainder — what the server's own stack sees. */
+export const relOf = (path) => {
+  const s = String(path == null ? "" : path);
+  const m = VAULT_AT.exec(s);
+  return m ? s.slice(m[0].length) : s;
+};
+
+/** What every path in that vault starts with: "" for the primary, "@id/" else. */
+export const vaultPrefix = (id) => (!id || id === "vault" ? "" : "@" + id + "/");
+
+/** A vault's root, as a PATH rather than a prefix: "" for the primary, "@id". */
+export const vaultRootKey = (id) => (!id || id === "vault" ? "" : "@" + id);
+
+/** The class a vault's status dot wears, from its last `sync-status`. One rule
+    for the two surfaces that draw one — the tree row and the Settings block —
+    which are painted from two different bodies and must not disagree. */
+export const syncDotClass = (s) =>
+  s && s.state === "synced" ? "sync-ok" : s && s.state === "syncing" ? "sync-busy" : "sync-warn";
+
+/** Every vault's tree, in order — the client's whole doc world, which the
+    neighbour walk and "the first doc" have to cross now that there is more
+    than one of them. */
+export const vaultTrees = () => state.vaults.map((v) => v.tree || []);
 
 let toastT;
 /**
@@ -142,7 +187,12 @@ const unesc = (s) =>
    unique filename slug vault-wide, `[[path/slug]]` is the disambiguating form,
    and a slug carried by two docs resolves to NEITHER. Rendering an ambiguous
    link as if it pointed somewhere would be the one behaviour a file-backed
-   vault must never have, so it is flagged exactly like a missing one. */
+   vault must never have, so it is flagged exactly like a missing one.
+
+   RESOLUTION NEVER CROSSES VAULTS. A vault's contents are portable — the same
+   directory may be somebody else's primary vault — so a `[[slug]]` written in
+   it can only mean a doc in it. The same slug in two vaults is two docs, not a
+   collision, and neither is reachable from the other. */
 export const normTarget = (t) =>
   String(t == null ? "" : t)
     .trim()
@@ -150,17 +200,31 @@ export const normTarget = (t) =>
     .replace(/^\/+/, "")
     .replace(/\.md$/i, "");
 
-/** → { state: "ok" | "ambiguous" | "missing", path, candidates } */
-export function lookupLink(target) {
+/** stand-in for a vault with no slugs yet, so the lookup below stays one
+    expression rather than a null check */
+const EMPTY_SLUGS = new Map();
+
+/**
+ * → { state: "ok" | "ambiguous" | "missing", path, candidates }
+ *
+ * `vaultId` is the vault of the doc being RENDERED — the one the link was
+ * written in. It defaults to the active doc's vault, which is the right answer
+ * for both surfaces that render `[[links]]`: the editor's own preview, and the
+ * assistant's messages (which are about the doc you are looking at). Every
+ * `path` that comes back is qualified, so `openDoc`, hrefs and `/d/` URLs take
+ * it verbatim.
+ */
+export function lookupLink(target, vaultId) {
+  const vault = vaultId || vaultOf(state.active || "");
   const t = normTarget(target);
   if (!t) return { state: "missing", path: null, candidates: [] };
   if (t.indexOf("/") >= 0) {
-    const p = t + ".md";
+    const p = vaultPrefix(vault) + t + ".md";
     return state.docPaths.has(p)
       ? { state: "ok", path: p, candidates: [p] }
       : { state: "missing", path: null, candidates: [] };
   }
-  const hits = state.slugs.get(t) || [];
+  const hits = (state.slugs.get(vault) || EMPTY_SLUGS).get(t) || [];
   if (hits.length === 1) return { state: "ok", path: hits[0], candidates: hits };
   if (hits.length > 1) return { state: "ambiguous", path: null, candidates: hits };
   return { state: "missing", path: null, candidates: [] };

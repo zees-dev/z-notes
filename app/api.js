@@ -241,6 +241,54 @@ export const syncNow = () => post("api/sync/now", {});
    `remote`, not `url`, because `url` is this module's request-URL builder. */
 export const attachRemote = (remote) => post("api/sync/remote", { url: remote });
 
+/* ---------------- vaults ----------------
+
+   Several vaults, one address grammar: a secondary vault's docs are `@<id>/…`
+   through every route above, and these five are the only ones that address a
+   vault as a THING. The primary (`vault`) is listed like any other and can be
+   settings-changed like any other, but it can never be removed.
+
+   Adding a vault IS the attach operation (ADR 0017) run against a directory
+   this call creates, so every refusal `attachRemote` can answer is relayed
+   verbatim — plus `bad-name` and `exists`. A failed add leaves nothing behind.
+
+   `remote`, not `url`, for the same reason as `attachRemote`: `url` is this
+   module's request-URL builder. */
+
+export const getVaults = () => get("api/vaults");
+
+/* `token` omitted COPIES the primary's stored token — one account, N repos, is
+   the common case. Pass `""` to attach anonymously; the empty string is a real
+   choice here and is sent, where an absent one is not. */
+export const addVault = ({ url: remote, name, token }) =>
+  post(
+    "api/vaults",
+    Object.assign({ url: remote }, name ? { name } : null, token != null ? { token } : null)
+  );
+
+/* Disconnect. The directory and its repo STAY ON DISK — this drops the vault
+   from the registry and nothing else. → 204 (null). */
+export const removeVault = (id) => del("api/vaults/" + encodeURIComponent(id));
+
+/* The git slice of that vault's own settings.toml — branch, autoSync,
+   autoSyncSeconds, and the write-only credential. → { vault: <descriptor> } */
+export const putVaultSettings = (id, git) => put("api/vaults/" + encodeURIComponent(id) + "/settings", { git });
+
+/* That vault's pipeline, now. → its sync-status object, `vault` field included. */
+export const syncVault = (id) => post("api/vaults/" + encodeURIComponent(id) + "/sync", {});
+
+/* Point a vault at a (new) remote — the same attach `attachRemote` runs for
+   the primary, against this vault's stack. → its sync-status object, `vault`
+   field included; refuses with the attach family plus 409 `exists` when
+   another vault already holds the remote. */
+export const setVaultRemote = (id, remote) => post("api/vaults/" + encodeURIComponent(id) + "/remote", { url: remote });
+
+/* Disconnect a vault from its remote — the repository and every commit stay on
+   disk, only `origin` goes. → that vault's sync-status object, now local-only.
+   This is what disconnecting the PRIMARY vault means; a secondary is
+   unregistered with `removeVault` instead. */
+export const clearVaultRemote = (id) => del("api/vaults/" + encodeURIComponent(id) + "/remote");
+
 /* ---------------- ai ---------------- */
 
 export const getSession = () => get("api/ai/sessions/current");
@@ -532,7 +580,13 @@ export function connectEvents(handlers = {}) {
   es.onerror = () => setState(es.readyState === 2 ? "closed" : "connecting");
   on("hello", handlers.onHello);
   on("doc-changed", handlers.onDocChanged);
+  /* carries `vault` — which vault's pipeline moved. The statusbar chip is the
+     primary's; every vault row reads its own frames off the same stream. */
   on("sync-status", handlers.onSyncStatus);
+  /* The whole vault list — byte for byte `GET /api/vaults` — on add, remove and
+     any per-vault settings change. A list, not a hint: what changed is rarely
+     one field and the body is small. */
+  on("vaults-changed", handlers.onVaultsChanged);
   on("ai-status", handlers.onAiStatus);
   /* `{settings, meta}` — byte for byte what `GET /api/settings` serves, so the
      credentials are already masked. Nothing secret is representable here. */

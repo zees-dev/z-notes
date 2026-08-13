@@ -28,6 +28,12 @@ export function safePath(input: unknown): string | null {
     // one here would mint a file the reconciler can never index (and .znotes
     // is exactly such a segment).
     if (p.startsWith(".")) return null;
+    /* `@` is the vault-address prefix: `@work/inbox.md` names a doc in another
+       vault, so a segment that starts with one may never also be vault content
+       — the two spellings would be the same string and the router could not
+       tell them apart. Invisible to the scanners for the same reason a
+       dot-prefixed segment is. */
+    if (p.startsWith("@")) return null;
   }
   return parts.join("/");
 }
@@ -863,13 +869,16 @@ async function removeNode(vault: string, rel: string): Promise<void> {
   await rm(abs, { recursive: true, force: true });
 }
 
-/** Every .md under the vault, vault-relative, excluding dot-directories. */
+/** A segment `safePath` refuses, and therefore one the scanners must not surface. */
+const hidden = (seg: string) => seg.startsWith(".") || seg.startsWith("@");
+
+/** Every .md under the vault, vault-relative, excluding hidden directories. */
 async function scanDocs(vault: string): Promise<string[]> {
   const glob = new Bun.Glob("**/*.md");
   const out: string[] = [];
   for await (const rel of glob.scan({ cwd: resolve(vault), onlyFiles: true, dot: false })) {
     const p = rel.split(/[\\/]/).join("/");
-    if (p.split("/").some((seg) => seg.startsWith("."))) continue;
+    if (p.split("/").some(hidden)) continue;
     out.push(p);
   }
   out.sort((a, b) => a.localeCompare(b));
@@ -877,8 +886,8 @@ async function scanDocs(vault: string): Promise<string[]> {
 }
 
 /**
- * Every FILE under `rel`, vault-relative, `.md` or not, excluding
- * dot-directories.
+ * Every FILE under `rel`, vault-relative, `.md` or not, excluding hidden
+ * directories.
  *
  * `moveNode`/`removeNode` are one `rename(2)` / one `rm -r`, so a folder op
  * carries its whole subtree — including the `.png` beside the note. `scanDocs`
@@ -900,7 +909,7 @@ async function scanTree(vault: string, rel: string): Promise<string[]> {
       return;
     }
     for (const e of entries) {
-      if (e.name.startsWith(".")) continue;
+      if (hidden(e.name)) continue;
       const p = `${r}/${e.name}`;
       if (e.isDirectory()) await walk(p);
       else out.push(p);
@@ -911,7 +920,7 @@ async function scanTree(vault: string, rel: string): Promise<string[]> {
   return out;
 }
 
-/** Every directory under the vault, vault-relative, excluding dot-directories.
+/** Every directory under the vault, vault-relative, excluding hidden ones.
     Folders exist on disk, so an empty one survives a database rebuild. */
 async function scanFolders(vault: string): Promise<string[]> {
   const root = resolve(vault);
@@ -919,7 +928,7 @@ async function scanFolders(vault: string): Promise<string[]> {
   const walk = async (rel: string) => {
     const entries = await readdir(rel ? resolve(root, rel) : root, { withFileTypes: true });
     for (const e of entries) {
-      if (!e.isDirectory() || e.name.startsWith(".")) continue;
+      if (!e.isDirectory() || hidden(e.name)) continue;
       const p = rel ? `${rel}/${e.name}` : e.name;
       out.push(p);
       await walk(p);

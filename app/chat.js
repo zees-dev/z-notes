@@ -9,7 +9,7 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, I, apiFail, cap, el, esc, inline, toast } from "./ui.js";
+import { $, $$, I, apiFail, cap, el, esc, inline, toast, vaultOf } from "./ui.js";
 import { renderDiff } from "./dialogs.js";
 import { autoGrow, openDoc, renderDoc, saveDoc, setBaseline, syncRaw } from "./editor.js";
 import { closeSess, isOpen } from "./shell.js";
@@ -467,7 +467,12 @@ export async function sendMessage() {
   };
 
   try {
-    const r = await api.sendMessageStream(text, state.active, {
+    /* THE RELAY IS THE PRIMARY VAULT'S. Its context assembly, its search and
+       its proposals all run on that one stack, so a doc in a secondary vault
+       goes UNNAMED rather than naming a path the relay cannot open — the same
+       shape a turn with no doc open already has. */
+    const docPath = vaultOf(state.active) === "vault" ? state.active : null;
+    const r = await api.sendMessageStream(text, docPath, {
       signal: ctl.signal,
       onText: (d) => {
         acc += d.delta;
