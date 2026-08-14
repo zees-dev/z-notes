@@ -1462,6 +1462,42 @@ describe("ux — the sidebar context menu", () => {
     expect(`click-away closed it: ${!(await menuOpen())}`).toBe("click-away closed it: true");
   }, 90000);
 
+  /* The tree is rebuilt for reasons the user did not ask for — a `doc-changed`
+     from another device, a vault appearing, a sync landing. Every row is a NEW
+     element afterwards, so a keyboard user who had one focused was left on
+     <body> and the next ⏎/F2/Del/⇧F10 went nowhere. Measured here the way it
+     bites: refresh the tree under a focused row, then press the chord. */
+  test("a tree refresh under a focused row does not swallow the next key", async () => {
+    /* focus a row and keep a handle on the very element, so the wait below is
+       for the REBUILD itself rather than for a guessed interval */
+    await page.evaluate((p) => {
+      const row = document.querySelector(`#tree .row.file[data-doc="${p}"]`) as HTMLElement;
+      (window as unknown as { __row: HTMLElement }).__row = row;
+      row.focus();
+    }, NAV_DOC);
+    /* a real frame off the real stream: a per-vault settings write broadcasts
+       `vaults-changed`, which reloads the tree. Nothing about the doc set or
+       the trash moves, so the rest of the file sees the vault it expects. */
+    expect((await srv.api("PUT", "/api/vaults/vault/settings", { git: { autoSync: true } })).status).toBe(200);
+    await page.waitForFunction(() => !(window as unknown as { __row: HTMLElement }).__row.isConnected, {
+      timeout: 8000,
+    });
+    expect(
+      `focus survived the rebuild: ${await page.evaluate(
+        (p) => document.activeElement === document.querySelector(`#tree .row.file[data-doc="${p}"]`),
+        NAV_DOC
+      )}`
+    ).toBe("focus survived the rebuild: true");
+
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("F10");
+    await page.keyboard.up("Shift");
+    await page.waitForFunction(() => !(document.getElementById("ctxMenu") as HTMLElement).hidden, { timeout: 5000 });
+    expect(`⇧F10 still opened the menu: ${await menuOpen()}`).toBe("⇧F10 still opened the menu: true");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => (document.getElementById("ctxMenu") as HTMLElement).hidden, { timeout: 5000 });
+  }, 90000);
+
   test("it flips at the viewport edges instead of spilling off screen", async () => {
     const box = await page.evaluate(() => {
       const r = document.getElementById("tree")!.getBoundingClientRect();

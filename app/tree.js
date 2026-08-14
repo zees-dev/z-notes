@@ -119,6 +119,15 @@ export function adoptVaultSync(s) {
 
 export function renderTree() {
   const host = $("#tree");
+  /* WHICH ROW HAD THE KEYBOARD, so the rebuild below can give it back.
+     `renderTree` replaces every row, and it runs for reasons the user did not
+     ask for — a `doc-changed` from another device, a sync landing, a vault
+     appearing. Without this, focus falls to <body> mid-keystroke and the next
+     ⏎/F2/Del/Menu press goes nowhere: the tree's whole keyboard surface
+     silently stops working until something is clicked. */
+  const had = document.activeElement;
+  const hadRow = had && had.closest ? had.closest("#tree .row[data-path]") : null;
+  const refocus = hadRow ? { path: hadRow.dataset.path, kind: hadRow.dataset.kind } : null;
   host.innerHTML = "";
   /* create/rename mount points, keyed by the folder they belong to — and a
      vault's ROOT is a key like any other ("" for the primary, "@id" else) */
@@ -332,6 +341,15 @@ export function renderTree() {
     kids[last].classList.add("t-end");
     for (let i = last + 1; i < kids.length; i++) kids[i].classList.add("t-off");
   });
+
+  /* …and hand the keyboard back to the row that had it. Only when the teardown
+     above is what took it (focus is on <body> now) and the row is still in the
+     tree — never steal it from an inline editor, a dialog, or wherever the user
+     has since moved. `focusQuiet` keeps the scroll position. */
+  if (refocus && (!document.activeElement || document.activeElement === document.body)) {
+    const back = $(`#tree .row[data-kind="${refocus.kind}"][data-path="${CSS.escape(refocus.path)}"]`);
+    if (back) focusQuiet(back);
+  }
 }
 
 /* ============================================================
