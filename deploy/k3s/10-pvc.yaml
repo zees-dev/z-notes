@@ -1,42 +1,68 @@
 # =============================================================================
-# The vault volume — the ONLY durable state in the system.
+# The vaults volume — the ONLY durable state in the system.
+#
+# ONE VOLUME, EVERY VAULT. This claim is mounted at /vaults and holds the vaults
+# home: one top-level directory per vault (ADR 0018), each a complete world of
+# its own — its markdown, its .znotes/ with that vault's sqlite index and
+# secrets, and its own .git. The primary vault is /vaults/vault and is a
+# directory like any other; the app derives it from the home and the boot scan
+# skips it so nothing is indexed twice. Adding a vault is creating a directory
+# in here, which is the whole point of one volume rather than one per vault:
+# there is no second claim to provision, no second mount to add to the
+# Deployment, and no manifest change at all.
+#
+# THE NAME SAYS `vault`, SINGULAR, AND MUST KEEP SAYING IT. It was created when
+# there was exactly one, and a PVC name is the identity of a bound volume — not
+# a label on it. Renaming it here renames nothing in the cluster: it asks the
+# provisioner for a new, empty volume and leaves the one holding the notes
+# orphaned. The name is history; the mountPath is the truth.
 #
 # WHY A PVC AND NOT AN emptyDir (this is the important comment in this file):
 #
-#   1. emptyDir dies with the pod. The vault is not a cache — it is the notes.
+#   1. emptyDir dies with the pod. A vault is not a cache — it is the notes.
 #      Files on disk are the source of truth; the app is a view over
 #      them. A view whose backing store evaporates on a node reboot is not a
 #      notes app.
 #
-#   2. sqlite + WAL is a THREE-FILE, SAME-DIRECTORY contract. The index lives at
-#      <vault>/.znotes/index.db with index.db-wal and index.db-shm beside it
-#      (research §2: journal_mode=WAL, synchronous=NORMAL, busy_timeout=5000).
-#      The -shm file is mmap'd shared memory; WAL requires that all three sit on
-#      one POSIX filesystem with working advisory locks. That rules out
-#      splitting them across volumes, and it rules out NFS-backed storage.
-#      k3s's default local-path provisioner is a plain host directory, which is
-#      exactly right: real POSIX locks, real mmap, no network filesystem.
+#   2. sqlite + WAL is a THREE-FILE, SAME-DIRECTORY contract, and it now holds
+#      PER VAULT. Each vault's index lives at <vault>/.znotes/index.db with
+#      index.db-wal and index.db-shm beside it (research §2: journal_mode=WAL,
+#      synchronous=NORMAL, busy_timeout=5000). The -shm file is mmap'd shared
+#      memory; WAL requires that all three sit on one POSIX filesystem with
+#      working advisory locks. That rules out splitting them across volumes, and
+#      it rules out NFS-backed storage. It also rules out the tempting shape
+#      where a secondary vault is a network mount grafted into the home: the
+#      requirement is a property of every vault directory under here, not of the
+#      volume root. k3s's default local-path provisioner is a plain host
+#      directory, which is exactly right: real POSIX locks, real mmap, no
+#      network filesystem.
 #
 #   3. WAL is also the crash story. A SIGKILL or an OOMKill mid-write leaves a
 #      WAL that the next open replays — the index recovers itself. But that only
 #      helps if the WAL still EXISTS after the restart, which again means a PVC.
-#      (And even total loss is survivable: the index is rebuildable
-#      from the markdown. The parts that are NOT rebuildable — the GitHub token,
-#      the AI key, AI chat history and proposal pre-images — live only in this
-#      sqlite file. Losing the volume loses those. Back it up.)
+#      (And even total loss is survivable: the indexes are rebuildable
+#      from the markdown. The parts that are NOT rebuildable — the git token,
+#      the AI key, AI chat history and proposal pre-images — live only in those
+#      sqlite files, and there is now one such credential store PER VAULT,
+#      because the remote and its token are per vault. Losing the volume loses
+#      all of them at once, and a git remote is not a backup of them: the
+#      .znotes/ index is never committed. Back it up.)
 #
-#   4. The vault is also a git working tree, including .git/ and the
+#   4. Every vault is also a git working tree, including .git/ and the
 #      0700 GIT_ASKPASS helper that git.ts writes to <vault>/.znotes/tmp and
-#      then EXECUTES. The volume therefore must not be mounted noexec. The
-#      local-path provisioner does not set noexec; a hand-rolled hostPath PV
-#      with mount options might.
+#      then EXECUTES — one such helper per vault, all of them under this one
+#      volume. The volume therefore must not be mounted noexec, and that is not
+#      a property one vault can opt out of. The local-path provisioner does not
+#      set noexec; a hand-rolled hostPath PV with mount options might.
 #
 # accessModes is ReadWriteOnce, which matches the single-replica Deployment.
 # Do not "fix" this to ReadWriteMany to enable scaling — see 20-deployment.yaml.
+# More vaults is not more replicas: one process holds all of them.
 # =============================================================================
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
+  # Singular on purpose — see the header. This is a live binding, not a label.
   name: znotes-vault
   namespace: znotes
   labels:
@@ -52,7 +78,10 @@ spec:
     requests:
       # A personal markdown vault is single-digit MB of text. The headroom is
       # for the sqlite index (FTS5 roughly doubles the corpus), git objects and
-      # history, and years of growth. local-path does not actually enforce a
-      # quota, so this number is documentation more than a limit — but it is the
-      # number a real StorageClass would honour.
+      # history, and years of growth — and it is now shared by every vault in
+      # the home, which is what makes 5Gi still generous rather than tight: a
+      # handful of text repositories does not approach it. A vault whose repo
+      # carries binaries is the case that would. local-path does not actually
+      # enforce a quota, so this number is documentation more than a limit —
+      # but it is the number a real StorageClass would honour.
       storage: 5Gi

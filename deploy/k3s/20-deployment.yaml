@@ -10,25 +10,31 @@ spec:
   # SINGLE REPLICA. THIS IS A CORRECTNESS CONSTRAINT, NOT A COST DECISION.
   # Do not raise it. Two things break, both silently:
   #
-  #   1. THE SQLITE INDEX. <vault>/.znotes/index.db is opened read-write by
-  #      every replica. WAL permits multiple *processes*, but only via POSIX
-  #      advisory locks on one machine — and each replica would additionally
-  #      maintain its own in-memory reconcile state, its own AI session table
-  #      writes and its own proposal pre-image stack. AI-edit revert is strictly
-  #      LIFO, enforced server-side against that stack; a second writer turns
-  #      "revert strictly LIFO" into a race. On a ReadWriteMany volume it is
-  #      worse: sqlite over a network filesystem corrupts.
+  # Multi-vault (ADR 0018) does not soften any of this — it multiplies it. One
+  # process now holds one index, one watcher and one working tree PER VAULT, so
+  # a second replica is not one race, it is one race per vault.
   #
-  #   2. THE WATCHER. watch.ts is one fs.watch on the vault root, debounced
-  #      120ms, then a full reconcile (research §3). Reconcile is a
-  #      read-modify-write against the index, serialised in-process by
-  #      recon.lock(). That lock is a JS mutex — it is process-local and means
-  #      nothing to a second pod. Two reconcilers racing on the same directory
-  #      produce interleaved index writes and duplicate/missing `doc-changed`
-  #      SSE events.
+  #   1. THE SQLITE INDEX. Every vault has its own <vault>/.znotes/index.db,
+  #      and each is opened read-write by every replica. WAL permits multiple
+  #      *processes*, but only via POSIX advisory locks on one machine — and
+  #      each replica would additionally maintain its own in-memory reconcile
+  #      state, its own AI session table writes and its own proposal pre-image
+  #      stack. AI-edit revert is strictly LIFO, enforced server-side against
+  #      that stack; a second writer turns "revert strictly LIFO" into a race.
+  #      On a ReadWriteMany volume it is worse: sqlite over a network
+  #      filesystem corrupts.
   #
-  #   3. (and git) git sync does add/commit/push against one working tree.
-  #      Two pods each taking .git/index.lock is a coin flip, not a merge.
+  #   2. THE WATCHER. watch.ts is one fs.watch on a vault root, debounced
+  #      120ms, then a full reconcile of that vault (research §3) — one such
+  #      watcher per vault. Reconcile is a read-modify-write against the index,
+  #      serialised in-process by recon.lock(). That lock is a JS mutex — it is
+  #      process-local and means nothing to a second pod. Two reconcilers racing
+  #      on the same directory produce interleaved index writes and
+  #      duplicate/missing `doc-changed` SSE events.
+  #
+  #   3. (and git) each vault is its own repository, and git sync does
+  #      add/commit/push against one working tree. Two pods each taking
+  #      .git/index.lock is a coin flip, not a merge — now in N repositories.
   #
   # Multi-DEVICE is already supported and is a different thing: any number of
   # browsers on the tailnet talk to this one process, and the doc-rev +
@@ -67,9 +73,11 @@ spec:
         runAsUser: 1000        # `bun` in the oven/bun base image
         runAsGroup: 1000
         # fsGroup makes the PVC group-owned by 1000 so the non-root process can
-        # write the vault, the sqlite WAL and the git tree. OnRootMismatch skips
-        # the recursive chown when the top-level ownership is already right —
-        # without it every restart walks the whole vault plus .git.
+        # write every vault under it, their sqlite WALs and their git trees.
+        # OnRootMismatch skips the recursive chown when the top-level ownership
+        # is already right — without it every restart walks the entire vaults
+        # home, every vault in it and every .git, which is now N trees deep
+        # rather than one and makes the skip worth more, not less.
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
@@ -98,7 +106,7 @@ spec:
             capabilities:
               drop: ["ALL"]
             # Nothing writes to the image filesystem: server/index.ts only ever
-            # writes under $ZNOTES_VAULT, and the /vendor/age.js bundle is built
+            # writes under the vaults home, and the /vendor/age.js bundle is built
             # by Bun.build into MEMORY at boot and never hits disk. /tmp is an
             # emptyDir below for anything in bun or git that wants scratch.
             readOnlyRootFilesystem: true
@@ -109,11 +117,23 @@ spec:
               protocol: TCP
 
           env:
-            # The vault path is injected, never derived from the code's own
+            # The vaults home is injected, never derived from the code's own
             # location — research §5's /$bunfs/root caveat, and the reason this
             # image works identically under `docker run -v` and under k8s.
-            - name: ZNOTES_VAULT
-              value: /vault
+            #
+            # This is the ONLY path knob, deliberately. The primary vault is
+            # <home>/vault — here /vaults/vault — and the server derives it, so
+            # it FOLLOWS the home instead of being pinned beside it. Setting
+            # ZNOTES_VAULT as well would be a second source of truth for one
+            # fact: change the mountPath and forget the other variable, and the
+            # primary lands outside the home, where the boot scan would find the
+            # operator's real vault sitting there as a *secondary* while the app
+            # booted into an empty primary. One knob cannot disagree with
+            # itself. (ZNOTES_VAULT is still honoured by the server — it is the
+            # escape hatch for a primary on its own separate mount, which is not
+            # what this deployment does.)
+            - name: ZNOTES_VAULTS_DIR
+              value: /vaults
             - name: ZNOTES_PORT
               value: "4700"
             # git 2.35.2+ refuses to operate on a repo whose owning UID differs
@@ -122,23 +142,42 @@ spec:
             # a vault seeded by root on the host would break every sync with a
             # message that looks nothing like a permissions problem. These three
             # env vars are git's file-less config channel: equivalent to
-            # `git config --global --add safe.directory /vault`, but with no
+            # `git config --global --add safe.directory ...`, but with no
             # writable HOME and no baked-in config file.
+            #
+            # The VALUE is a pattern because EVERY VAULT IS ITS OWN REPOSITORY
+            # (ADR 0018). /vaults itself is not a git repo and never will be;
+            # the repos are /vaults/vault, /vaults/<id>, … and each one needs
+            # the exception on its own. A single literal path would exempt the
+            # primary and leave every secondary failing its first sync, and the
+            # set is not knowable here anyway — vaults are added at runtime by
+            # creating a directory, and this manifest would have to be edited
+            # and re-applied for each one.
+            #
+            # `/vaults/*` is the narrow form git accepts for exactly this: the
+            # trailing `/*` matches the direct children, which is precisely the
+            # set of vaults, and not `/` — so nothing outside the mount is
+            # exempted the way the blunt `*` would do. Measured on the git in
+            # this image (2.47) against a root-owned repo read as uid 1000.
             - name: GIT_CONFIG_COUNT
               value: "1"
             - name: GIT_CONFIG_KEY_0
               value: safe.directory
             - name: GIT_CONFIG_VALUE_0
-              value: /vault
+              value: /vaults/*
             # NOTE ON SECRETS: there is deliberately no GitHub token and no AI
-            # key here. Both live in sqlite inside the vault, entered
-            # through the settings UI. Nothing in this manifest is a credential,
-            # so nothing in this manifest needs to be sealed, and `kubectl get
-            # deploy -o yaml` leaks nothing.
+            # key here. They live in sqlite inside a vault, entered through the
+            # settings UI — the AI key in the primary's index, and each vault's
+            # git token in that vault's own, because the remote is per vault.
+            # Nothing in this manifest is a credential, so nothing in this
+            # manifest needs to be sealed, and `kubectl get deploy -o yaml`
+            # leaks nothing.
             #
             # NOTE ON THE AI ENDPOINT: it is a SETTING, not an env var, so it
-            # comes from `.znotes/settings.toml` in the mounted vault (the same
-            # value the Settings UI writes). One gotcha if you point it at an
+            # comes from `.znotes/settings.toml` in the PRIMARY vault —
+            # /vaults/vault — which is where all app-level settings live (ADR
+            # 0018); a secondary's settings.toml is read only for its git and
+            # trash sections. One gotcha if you point it at an
             # AI proxy running in this same cluster: use the in-cluster Service
             # URL (`http://<svc>.<ns>.svc.cluster.local:<port>/v1`), not the
             # proxy's LAN ingress hostname — a LAN name is resolved by the
@@ -147,8 +186,12 @@ spec:
             # that path: it never leaves the cluster network.
 
           volumeMounts:
-            - name: vault
-              mountPath: /vault
+            # ONE mount for ALL vaults. The claim below holds the whole home;
+            # each vault is a top-level directory inside it, so a second vault
+            # costs a directory, not a volume, a mount and another manifest
+            # edit.
+            - name: vaults
+              mountPath: /vaults
             - name: tmp
               mountPath: /tmp
 
@@ -158,8 +201,10 @@ spec:
           # Bun.serve is only called AFTER the boot-time full reconcile, the
           # vendor bundle build and the first git observation have awaited — so
           # the port does not open until the index is warm, and a connection
-          # refused here means "still indexing", not "broken". 60 * 2s = up to
-          # two minutes for a cold first index on a large vault; the liveness
+          # refused here means "still indexing", not "broken". Boot also scans
+          # the vaults home and stands up a stack per vault it finds, so the
+          # cold-start cost scales with the number of vaults, not just the size
+          # of one. 60 * 2s = up to two minutes for a cold first index; the liveness
           # probe does not start until this one passes, so a slow first boot can
           # never be mistaken for a hang and restart-looped.
           startupProbe:
@@ -170,8 +215,8 @@ spec:
             failureThreshold: 60
 
           # Is the event loop still serving HTTP? Nothing more. Generous
-          # thresholds on purpose: restarting this pod costs a full reindex, so
-          # a single slow response must never trigger one.
+          # thresholds on purpose: restarting this pod costs a full reindex of
+          # every vault, so a single slow response must never trigger one.
           livenessProbe:
             httpGet:
               path: /healthz
@@ -191,13 +236,16 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 2
 
-          # ---- resources, sized for ONE person's markdown vault ----
+          # ---- resources, sized for ONE person's markdown vaults ----
           #
           # requests are what the scheduler reserves and what the pod is
           # guaranteed. Steady state for this process is a Bun runtime (~40-70MB
-          # RSS), the sqlite index and its page cache, and the in-memory
+          # RSS), a sqlite index and page cache PER VAULT, and the in-memory
           # /vendor/age.js bundle — comfortably inside 192Mi, and near-zero CPU
-          # while nobody is typing.
+          # while nobody is typing. Vaults cost linearly (ADR 0018): one sqlite
+          # connection, one recursive watcher and one working tree each. A
+          # handful is what these numbers cover; a dozen large ones is a reason
+          # to revisit them, not a reason to add a replica.
           #
           # That claim was WRONG between the AI panel landing and ADR 0011:
           # gpt-tokenizer built a ~123MB BPE rank table at boot, unconditionally,
@@ -205,9 +253,9 @@ spec:
           # character estimate is what made the number above honest again.
           #
           # limits cover the two genuine spikes: the boot-time Bun.build of the
-          # age bundle, and a full Glob+stat+hash reconcile of the vault. 1 CPU
-          # lets each finish fast instead of being throttled into a probe
-          # timeout.
+          # age bundle, and a full Glob+stat+hash reconcile — which at boot runs
+          # once per vault. 1 CPU lets each finish fast instead of being
+          # throttled into a probe timeout.
           #
           # The memory limit is the load-bearing one: without it a runaway
           # reconcile evicts other workloads on a single-node k3s box. With it,
@@ -223,8 +271,14 @@ spec:
               memory: 768Mi
 
       volumes:
-        - name: vault
+        - name: vaults
           persistentVolumeClaim:
+            # THE CLAIM NAME IS SINGULAR AND STAYS THAT WAY. It reads `vault`
+            # because it was created when there was exactly one; it now holds
+            # the whole vaults home. Do NOT "correct" it to znotes-vaults: a
+            # PVC name is the identity of a bound volume, so renaming it here
+            # does not rename anything in the cluster — it provisions a fresh
+            # empty one and orphans the volume with the notes in it.
             claimName: znotes-vault
         # Required because readOnlyRootFilesystem is true. Small and ephemeral:
         # nothing durable is ever written here — git's scratch, Bun's scratch.

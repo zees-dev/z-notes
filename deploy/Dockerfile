@@ -34,9 +34,9 @@
 #
 # NOT `bun build --compile`: the compiled binary reports import.meta.dir as
 #   /$bunfs/root (research §5), and server/index.ts derives APP_DIR, VENDOR_ENTRY
-#   and LOCKFILE from import.meta.dir. The vault and DB are already immune (they
-#   come from $ZNOTES_VAULT), but the app paths are not. Plain `bun
-#   server/index.ts` keeps import.meta.dir honest.
+#   and LOCKFILE from import.meta.dir. The vaults and their DBs are already
+#   immune (they come from $ZNOTES_VAULTS_DIR), but the app paths are not. Plain
+#   `bun server/index.ts` keeps import.meta.dir honest.
 # =============================================================================
 
 # --- stage 1: production dependencies only ----------------------------------
@@ -106,18 +106,43 @@ COPY --from=deps --chown=bun:bun /src/node_modules ./node_modules
 # hashes it into the /vendor/age.<hash>.js cache key.
 COPY --from=src --chown=bun:bun /src/ ./
 
-# The vault is a MOUNT POINT, never baked in. It is created empty and owned by
-# the runtime user so a plain `docker run -v` also works; in k8s the PVC covers
-# it. Everything stateful lives under here: notes, .znotes/settings.toml,
-# .znotes/vault.pub, .znotes/identity.age, .znotes/index.db{,-wal,-shm}.
-RUN mkdir -p /vault && chown bun:bun /vault
-VOLUME ["/vault"]
+# The VAULTS HOME is a MOUNT POINT, never baked in. One volume holds every
+# vault, one top-level directory each — the primary at /vaults/vault and any
+# secondary beside it (ADR 0018) — so N vaults are still one mount, one PVC and
+# one backup. Each of those directories is a self-contained world: its notes,
+# its .znotes/settings.toml, its .znotes/vault.pub, its .znotes/identity.age,
+# its .znotes/index.db{,-wal,-shm}, and its own .git. Nothing about which vaults
+# exist is baked into this image — the filesystem under here IS the registry, so
+# adding a vault is creating a directory, not editing a Dockerfile.
+#
+# Created empty and owned by the runtime user so a plain `docker run -v` also
+# works; in k8s the PVC covers it.
+#
+# BREAKING for anyone who ran `docker run -v "$HOME/notes:/vault"`: that path is
+# no longer special and the container will boot into an empty vault at
+# /vaults/vault. Mount the PARENT instead and put the old vault inside it as a
+# directory named `vault`:
+#     mkdir -p "$HOME/vaults" && mv "$HOME/notes" "$HOME/vaults/vault"
+#     docker run -v "$HOME/vaults:/vaults" ...
+# Mounting a single vault straight at /vaults/vault also works and keeps one
+# directory on the host, but then the home has no room for a second vault.
+RUN mkdir -p /vaults && chown bun:bun /vaults
+VOLUME ["/vaults"]
 
 # uid/gid 1000, shipped by the oven/bun base image. Nothing in /app is writable
-# by it, which is correct: the process only ever writes under $ZNOTES_VAULT.
+# by it, which is correct: the process only ever writes under the vaults home.
 USER bun
 
-ENV ZNOTES_VAULT=/vault \
+# ONE KNOB, not a pair that can disagree. ZNOTES_VAULTS_DIR is the home; the
+# server derives the primary as <home>/vault by itself. Pinning ZNOTES_VAULT
+# here as well would nail the primary to a literal path and stop it following
+# the home, so anyone who remounted the volume elsewhere would get a primary
+# outside their own vaults directory — an empty vault sitting next to their
+# notes, and a boot scan that indexes the real one as a *secondary*. Setting
+# only the home makes that shape unrepresentable. ZNOTES_VAULT still exists and
+# is still honoured; it is an override for the deliberate case (a primary on its
+# own mount), not something this image should decide on the operator's behalf.
+ENV ZNOTES_VAULTS_DIR=/vaults \
     ZNOTES_PORT=4700 \
     NODE_ENV=production \
     GIT_TERMINAL_PROMPT=0

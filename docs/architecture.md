@@ -28,9 +28,9 @@ The vault is **not** part of this repo (ADR 0017) — five env vars place it and
 optionally, seed it: `ZNOTES_VAULTS_DIR` (the vaults home, default `./vaults`,
 gitignored, scanned at boot), `ZNOTES_VAULT` (the primary, default
 `$ZNOTES_VAULTS_DIR/vault`, created at boot if missing — so one directory holds
-every vault, one subdirectory each; a deployment that mounts a PVC elsewhere
-just sets it, and the boot scan skips whichever subdirectory is the primary, by
-real path. The home may not sit INSIDE the primary, and the primary may not sit
+every vault, one subdirectory each, and a deployment mounts exactly that one
+directory. An install that wants the primary somewhere else sets it explicitly,
+and the boot scan skips whichever subdirectory is the primary, by real path. The home may not sit INSIDE the primary, and the primary may not sit
 deeper than a direct child of the home: either would double-index, and costs
 the secondaries rather than the app), `ZNOTES_PORT` (default 4700), and the two first-boot
 bootstraps — `ZNOTES_VAULT_REPO` attaches the vault to that remote when it is
