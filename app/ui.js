@@ -63,6 +63,14 @@ export const esc = (s) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 export const dirname = (p) => (p.indexOf("/") < 0 ? "" : p.slice(0, p.lastIndexOf("/")));
+/** A suffix belongs to the leaf, not to a dotted parent folder. */
+export const hasFileExtension = (path) => {
+  const leaf = String(path == null ? "" : path).split("/").pop();
+  const dot = leaf.lastIndexOf(".");
+  return dot > 0 && dot < leaf.length - 1;
+};
+/** Bare names are Markdown by default; an explicit extension is literal. */
+export const withDefaultExtension = (path) => (hasFileExtension(path) ? path : path + ".md");
 
 /* ---------- vault addressing ----------
 
@@ -197,8 +205,7 @@ export const normTarget = (t) =>
   String(t == null ? "" : t)
     .trim()
     .replace(/^\.\//, "")
-    .replace(/^\/+/, "")
-    .replace(/\.md$/i, "");
+    .replace(/^\/+/, "");
 
 /** stand-in for a vault with no slugs yet, so the lookup below stays one
     expression rather than a null check */
@@ -216,22 +223,32 @@ const EMPTY_SLUGS = new Map();
  */
 export function lookupLink(target, vaultId) {
   const vault = vaultId || vaultOf(state.active || "");
+  const raw = String(target == null ? "" : target).trim();
   const t = normTarget(target);
   if (!t) return { state: "missing", path: null, candidates: [] };
-  if (t.indexOf("/") >= 0) {
-    const p = vaultPrefix(vault) + t + ".md";
-    return state.docPaths.has(p)
+  const qualified = raw.startsWith("./") || raw.startsWith("/") || t.indexOf("/") >= 0;
+  if (qualified) {
+    const exact = vaultPrefix(vault) + t;
+    const p = state.docPaths.has(exact)
+      ? exact
+      : hasFileExtension(t)
+        ? null
+        : vaultPrefix(vault) + t + ".md";
+    return p && state.docPaths.has(p)
       ? { state: "ok", path: p, candidates: [p] }
       : { state: "missing", path: null, candidates: [] };
   }
-  const hits = (state.slugs.get(vault) || EMPTY_SLUGS).get(t) || [];
+  /* A bare `[[foo.md]]` keeps the original Markdown ergonomics; other explicit
+     extensions are part of the slug (`[[foo.txt]]`). */
+  const slug = t.replace(/\.md$/i, "");
+  const hits = (state.slugs.get(vault) || EMPTY_SLUGS).get(slug) || [];
   if (hits.length === 1) return { state: "ok", path: hits[0], candidates: hits };
   if (hits.length > 1) return { state: "ambiguous", path: null, candidates: hits };
   return { state: "missing", path: null, candidates: [] };
 }
 
-/* inline markdown: `code`, **bold**, *em*, [[wikilink]] — used for docs AND
-   for assistant messages, which arrive as markdown, never as HTML */
+/* inline markdown: `code`, **bold**, *em*, ~~strike~~, [[wikilink]] — used for
+   docs AND for assistant messages, which arrive as markdown, never as HTML */
 export function inline(s) {
   let h = esc(s);
   h = h.replace(/`([^`]+)`/g, (m, c) => '<code class="ic">' + c + "</code>");
@@ -240,10 +257,28 @@ export function inline(s) {
      a bare .replace would render `**bold**` INSIDE backticks — text the fence
      promises stays literal. Skip the spans; style everything else. */
   const CODE_SPAN = /(<code class="ic">[\s\S]*?<\/code>)/;
+  const combined = (pattern, outer, flags = "g") => {
+    h = h.replace(new RegExp(CODE_SPAN.source + "|" + pattern, flags), (m, code, pre, body) => {
+      if (code) return code;
+      const inner = outer === "strong" ? "em" : "strong";
+      return pre + "<" + outer + "><" + inner + ">" + body + "</" + inner + "></" + outer + ">";
+    });
+  };
+  /* Strong + emphasis has several ordinary Markdown spellings. Handle the
+     complete delimiter runs before either individual pass can consume their
+     middle, and keep underscore runs out of identifiers (`some___name___`). */
+  combined("(^|[^*])\\*\\*\\*(?=\\S)([^*\\n]*?\\S)\\*\\*\\*(?!\\*)", "em");
+  combined("(^|[^\\p{L}\\p{N}_])___(?=\\S)([^_\\n]*?\\S)___(?![\\p{L}\\p{N}_])", "em", "gu");
+  combined("(^|[^*])\\*\\*_(?=\\S)([^_\\n]*?\\S)_\\*\\*(?!\\*)", "strong");
+  combined("(^|[^\\p{L}\\p{N}_])__\\*(?=\\S)([^*\\n]*?\\S)\\*__(?![\\p{L}\\p{N}_])", "strong", "gu");
+  combined("(^|[^*])\\*__(?=\\S)([^_\\n]*?\\S)__\\*(?!\\*)", "em");
+  combined("(^|[^\\p{L}\\p{N}_])_\\*\\*(?=\\S)([^*\\n]*?\\S)\\*\\*_(?![\\p{L}\\p{N}_])", "em", "gu");
   h = h.replace(new RegExp(CODE_SPAN.source + "|\\*\\*([^*]+)\\*\\*", "g"), (m, code, b) =>
     code ? code : "<strong>" + b + "</strong>"
   );
-  h = h.replace(new RegExp(CODE_SPAN.source + "|(^|[\\s(])\\*([^*\\n]+)\\*", "g"), (m, code, pre, e) =>
+  /* `~` joins the opening boundary so strike may wrap emphasis symmetrically:
+     `~~*em*~~` must compose just as `*~~strike~~*` does. */
+  h = h.replace(new RegExp(CODE_SPAN.source + "|(^|[\\s(~])\\*([^*\\n]+)\\*", "g"), (m, code, pre, e) =>
     code ? code : pre + "<em>" + e + "</em>"
   );
   /* `h` is already escaped, so `name` must not be escaped a second time.
@@ -288,7 +323,7 @@ export function inline(s) {
     /* `!` is image syntax this renderer does not speak — the whole spelling
        stays literal rather than half-rendering as "!" + a link */
     (m, done, bang, text, url) =>
-      done ? done : !bang && /^(https?:\/\/|mailto:)/i.test(url) ? extLink(url, text) : m
+      done ? done : !bang && /^(https?:\/\/|mailto:)/i.test(url) ? extLink(url, strikeInline(text)) : m
   );
   h = h.replace(new RegExp(EMITTED + "|&lt;(https?:\\/\\/[^\\s]+?)&gt;", "g"), (m, done, url) =>
     done ? done : extLink(url, url)
@@ -298,7 +333,49 @@ export function inline(s) {
     const cut = trimUrlTail(url);
     return extLink(cut, cut) + url.slice(cut.length);
   });
-  return h;
+  /* Strike runs after links so a delimiter-looking URL can never be rewritten
+     before it reaches an href. Markdown-link LABELS are handled as they are
+     emitted above; the final pass treats every complete code span and anchor as
+     opaque. That preserves both useful compositions — `[~~label~~](url)` and
+     `~~[label](url)~~` — without interpreting delimiter-looking text inside a
+     bare URL, or letting a `~~` in an href/title mutate generated markup.
+
+     `inline()` is called once per source line (markdown.js / ADR 0015), so the
+     pattern cannot close a delimiter across lines. A space immediately inside
+     either delimiter keeps the spelling literal, matching the delimiter rule
+     rather than turning accidental prose tildes into markup. */
+  return strikeInline(h);
+}
+
+function strikeInline(h) {
+  const marker = "\uE000";
+  /* Make the fixed token prefix impossible to forge from doc text in ONE pass:
+     every literal marker becomes marker+L, while generated tokens are
+     marker+digits+semicolon. The final replacement reverses this exactly. */
+  const source = String(h).replaceAll(marker, marker + "L");
+  return strikeProtected(source, marker).replaceAll(marker + "L", marker);
+}
+
+function strikeProtected(source, marker) {
+  /* Delimiters OUTSIDE a protected node may legitimately wrap it, so merely
+     skipping nodes as regex alternatives is not enough: the lazy strike match
+     can start before one and close on `~~` inside its code text or href. Hold
+     complete code/anchor nodes and emitted tags behind collision-free indexed
+     tokens, match only the visible remainder, then restore them in one pass. */
+  const held = [];
+  const protectedNodes = /<code class="ic">[\s\S]*?<\/code>|<a [^>]*>[\s\S]*?<\/a>|<(strong|em)>([\s\S]*?)<\/\1>|<[^>]+>/g;
+  let safe = source.replace(protectedNodes, (matched, format, body) => {
+    /* Formatting nodes are boundaries AND containers: parse their visible
+       body recursively before holding the complete node. This makes
+       `**~~strike~~**` work, while an invalid crossing such as
+       `~~**x~~ y**` cannot borrow its closing delimiter from inside <strong>
+       and produce misnested DOM. */
+    const node = format ? "<" + format + ">" + strikeProtected(body, marker) + "</" + format + ">" : matched;
+    const index = held.push(node) - 1;
+    return marker + index + ";";
+  });
+  safe = safe.replace(/~~(?=\S)([\s\S]*?\S)~~/g, "<del>$1</del>");
+  return safe.replace(new RegExp(marker + "(\\d+);", "g"), (token, index) => held[Number(index)] ?? token);
 }
 
 const extLink = (href, label) =>

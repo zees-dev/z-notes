@@ -28,7 +28,7 @@ import { Trash } from "./trash.ts";
 import { Reconciler } from "./watch.ts";
 import { SSE_HEADERS, sseFrame } from "./sse.ts";
 import { BAD_JSON, TOO_LARGE, MAX_BODY_BYTES, JSON_HEADERS, fail, json, readJsonBody } from "./http.ts";
-import { DocStore, isMd } from "./docs.ts";
+import { DocStore, isDocPath } from "./docs.ts";
 import { PRIMARY_VAULT_ID, VaultRegistry, qualify, type VaultStack } from "./vaults.ts";
 import { Vault } from "./vault.ts";
 
@@ -638,7 +638,7 @@ const ROUTES: Route[] = [
     otherwise: (c) => {
       const s = c.stack!;
       const p = c.params.path;
-      if (!isMd(p)) return fail(404, "not-found", { message: `No doc at ${qualify(s.id, p)}` });
+      if (!isDocPath(p)) return fail(404, "not-found", { message: `No doc at ${qualify(s.id, p)}` });
       return fail(405, "method-not-allowed", {
         message: `${c.method} /api/docs/${qualify(s.id, s.docs.canonicalDocPath(p))}`,
       });

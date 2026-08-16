@@ -1045,7 +1045,7 @@ describe("e2e — creation is context-aware and path-aware", () => {
     }
   }, 45000);
 
-  test("a bare name gets .md; a trailing slash makes a FOLDER instead", async () => {
+  test("a bare name gets .md, an explicit extension stays exact, and a trailing slash makes a FOLDER", async () => {
     await openDoc(page, KEEPER);
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     try {
@@ -1056,6 +1056,24 @@ describe("e2e — creation is context-aware and path-aware", () => {
       await page.waitForFunction(
         () => document.getElementById("stPath")!.textContent === "notes/plain.md",
         { timeout: 10000 }
+      );
+
+      /* Any explicit leaf extension is literal. Both client and server used to
+         independently turn this into `plain.txt.md`, so the browser seam has
+         to pin the whole create → index → open chain. */
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await chordN(false);
+      await page.keyboard.type("plain.txt", { delay: 4 });
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(
+        () => document.getElementById("stPath")!.textContent === "notes/plain.txt",
+        { timeout: 10000 }
+      );
+      expect(`explicit extension exists exactly: ${existsSync(join(srv.vault, "notes/plain.txt"))}`).toBe(
+        "explicit extension exists exactly: true"
+      );
+      expect(`no .md was appended: ${existsSync(join(srv.vault, "notes/plain.txt.md"))}`).toBe(
+        "no .md was appended: false"
       );
 
       /* the same DOC-mode gesture, with a trailing slash: a folder, not a doc */
@@ -1076,6 +1094,7 @@ describe("e2e — creation is context-aware and path-aware", () => {
       );
     } finally {
       await del("notes/plain.md");
+      await del("notes/plain.txt");
       await del("notes/abc");
     }
   }, 45000);

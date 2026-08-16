@@ -33,10 +33,12 @@ frontend does not change if the implementation does.
   (so `GET /api/docs`); `api.js` resolves paths against `new URL('./', import.meta.url)`,
   so the contract survives being served from a sub-path.
 - **Encoding.** Requests and responses are `application/json; charset=utf-8` unless stated.
-  Markdown travels as a JSON string field, never as a raw body.
-- **Doc paths** are vault-relative POSIX paths without a leading slash
-  (`architecture/z-notes-design.md`). Each segment is percent-encoded in the URL; `/`
-  separators are not. Path traversal (`..`, absolute, escaping the vault) is `400`.
+  Doc source travels as the legacy `markdown` JSON string field, never as a raw body.
+- **Doc paths** are vault-relative POSIX paths without a leading slash and with an
+  explicit extension (`architecture/z-notes-design.md`, `plans/report.txt`). A doc is a
+  visible, extension-bearing valid-UTF-8 file (ADR 0019). Each segment is percent-encoded
+  in the URL; `/` separators are not. Path traversal (`..`, absolute, escaping the vault)
+  is `400`.
 - **Vaults and the `@` prefix** (ADR 0018). The server hosts one **primary vault** (id
   `vault`) and any number of **secondary vaults**. A primary-vault doc path is the bare
   path above and always has been. A secondary-vault doc path is `@<id>/<rel>`, where
@@ -109,6 +111,12 @@ The vault tree. Folders carry children; files carry metadata only, never content
 
 `slug` is what `[[wiki-links]]` resolve against. `open` is the server's remembered
 disclosure state — advisory; the client may override it locally.
+
+A bare wiki-link target resolves by unique `slug`; a terminal `.md` is optional in
+that bare spelling. A path-qualified target resolves its exact explicit-extension
+path, defaulting to `.md` only when its leaf has no extension. `./` qualifies a
+root path: if root docs `report.txt` and `report.txt.md` collide as the same bare
+slug, `[[./report.txt]]` and `[[./report.txt.md]]` resolve them exactly.
 
 *Additive:* `vaults` lists every vault, primary first then by id. `vault` and `tree` are
 unchanged and describe the **primary vault only**, so a single-vault client needs no edit.
@@ -190,13 +198,14 @@ Refusals — nothing is written by any of them:
 
 | | |
 |---|---|
-| `409 {"error":"exists"}` | the target doc or folder is already there. **`.md` is never overwritten by a create**; use `PUT /api/docs/{path}` to write an existing doc. |
+| `409 {"error":"exists"}` | the target doc or folder is already there. **A create never overwrites an existing file**; use `PUT /api/docs/{path}` to write an existing doc. |
 | `409 {"error":"exists"}` | an intermediate segment is an existing **file** (`readme.md/x.md`) — message names the blocker: `readme.md is a doc, not a folder.` |
 | `400 {"error":"bad-path"}` | the path escapes the vault, touches `.znotes/`, or carries an empty / `.` / `..` / dot-prefixed segment (`safePath`). |
 | `400 {"error":"bad-path"}` | the name carries `]` or a line break. The same guard `PATCH` applies to its destinations: such a name cannot survive the `[[link]]` a later rename would splice it into, so it must not be creatable either. |
 
-A doc path gets `.md` appended if it lacks it, so `{"path":"a/b/c"}` with `type:"doc"` creates
-`a/b/c.md` and the reply names the `.md` path.
+A doc path whose **leaf has no extension** gets `.md` appended, so
+`{"path":"a/b/c"}` creates `a/b/c.md`. An explicit extension is literal:
+`{"path":"a/b/c.txt"}` creates and replies with `a/b/c.txt`, never `a/b/c.txt.md`.
 
 #### `PATCH /api/docs/{path}` — rename / move *(SPEC §3 delta 2)*
 
@@ -206,7 +215,7 @@ A doc path gets `.md` appended if it lacks it, so `{"path":"a/b/c"}` with `type:
 
 Renames **or** moves — they are the same operation and the server tells them apart from
 the path alone. `{path}` may be a doc **or a folder**; a folder takes its whole subtree
-(including non-`.md` files) with it. The move is one `rename(2)`, so bytes are never
+(including opaque binary and extensionless files) with it. The move is one `rename(2)`, so bytes are never
 rewritten and the round-trip stays lossless.
 
 **Every `[[link]]` that resolved to a moved doc is rewritten across the whole vault, and
@@ -225,13 +234,13 @@ the move plus all the rewrites are ONE git commit** (`move: <from> → <to>`).
 `backlinksUpdated` counts rewritten **link occurrences**; `updated` lists the docs that were
 rewritten (never including the moved doc's own path unless its own text changed). A folder
 move answers `"type":"folder"` with `rev`/`bytes`/`mtime` `null` plus
-`"moved":[{"from":…,"to":…}]` — one entry per `.md` in the subtree.
+`"moved":[{"from":…,"to":…}]` — one entry per editable UTF-8 doc in the subtree.
 
 | Status | When |
 |---|---|
-| `400 bad-path` | `to` traverses out of the vault, names a `.` segment (`.znotes/`), is not `.md` for a doc, or moves a folder inside itself |
+| `400 bad-path` | `to` traverses out of the vault, names a `.` segment (`.znotes/`), lacks an extension for a doc, or moves a folder inside itself |
 | `400 bad-path` | `{path}` and `to` resolve to different vaults — `A move cannot cross vaults.` (ADR 0018) |
-| `404 not-found` | nothing at `{path}`, or it is a file that is not a `.md` doc |
+| `404 not-found` | nothing at `{path}`, or the file is hidden, extensionless or not valid UTF-8 |
 | `409 exists` | `to` is taken, or a path segment of `to` is a doc rather than a folder |
 | `500 move-failed` | the write phase failed; **every file already touched was rolled back** and the vault is exactly as it was |
 
@@ -274,7 +283,7 @@ Backlinks to a deleted doc are **not** rewritten: they become broken links, whic
 preview flags with a create-doc affordance. Rewriting them would erase the only record that
 something used to be there. Restoring the entry makes those links resolve again.
 
-`404 not-found` when there is nothing at `{path}` (or it is a non-`.md` file);
+`404 not-found` when there is nothing at `{path}` (or the file is not an indexed doc);
 `500 delete-failed` if the removal itself fails. Emits `doc-changed` with
 `"reason":"deleted"` and `"removed":true` for every doc that left the vault.
 
@@ -337,7 +346,7 @@ already carries the truth for that entry.
 Restores the exact payload to its original path, creating missing ancestor folders. It
 never overwrites: `409 restore-blocked` names the path occupying the destination (or an
 ancestor that is now a file), and the trash remains untouched. A folder restore brings its
-markdown and non-markdown payload back together. → `200` with the restored `path`, `kind`,
+editable docs and opaque payload back together. → `200` with the restored `path`, `kind`,
 doc paths, and doc metadata when the entry itself is a doc. Emits `doc-changed` with
 `"reason":"restored"` for every restored doc, then `trash-changed`.
 
@@ -480,7 +489,8 @@ results, distinguishable only by their prefix.
     "theme": "minimal",
     "density": "comfy",
     "colorScheme": "system",
-    "editor": { "autosaveSeconds": 10, "tabSize": 2, "clickToEdit": true, "homeDoc": "index.md" },
+    "editor": { "autosaveSeconds": 10, "tabSize": 2, "clickToEdit": true,
+                "confirmBeforeExit": true, "homeDoc": "index.md" },
     "trash": { "retentionDays": 7 },
     "git": { "branch": "main", "autoSync": true, "autoSyncSeconds": 60,
              "tokenMasked": "ghp_9f3kx2Qm7Lp0" },
@@ -550,7 +560,8 @@ is absorbed and stripped like `git.token` — but only when no password exists y
 *Real backend, additive:* `settings.editor.homeDoc` is the doc the client's vault/home
 button opens — a **vault-relative** path, the same shape `/api/docs/{path}` takes. An
 empty string is legal and means "no home doc": the client falls back to the first doc in
-the tree. A value with no `.md` suffix names the same doc as one with it. The server
+the tree. A value whose leaf has no extension defaults to `.md`; an explicit extension
+is literal. The server
 stores the string and nothing more; it does not check that the doc exists, because a home
 doc named before it is written is a legitimate state and the client offers to create it.
 `meta.homeDocDefault` publishes the shipped default (`"index.md"`) so the client renders
@@ -695,7 +706,7 @@ is refused if any check fails. This table is the complete list for this route:
 | `unknown-theme` / `unknown-density` / `unknown-color-scheme` | not in the matching `meta` list |
 | `bad-number` | a `meta.numbers` path that is not a positive number (message names the path and its unit) |
 | `bad-auto-sync-seconds` | the same, for `git.autoSyncSeconds` |
-| `bad-boolean` / `bad-auto-sync` | `editor.clickToEdit`, `git.autoSync`, `terminal.enabled`, `terminal.allowAiAutoRun` given a non-boolean |
+| `bad-boolean` / `bad-auto-sync` | `editor.clickToEdit`, `editor.confirmBeforeExit`, `git.autoSync`, `terminal.enabled`, `terminal.allowAiAutoRun` given a non-boolean |
 | `bad-shell` / `bad-startupcwd` | `terminal.shell` / `terminal.startupCwd` is not a string, or is a relative path (`""` is legal and means the default) |
 | `bad-branch` | `git.branch` empty, leading `-`, or not a legal ref name |
 | `bad-base-url` | `ai.baseUrl` unparseable or not `http:`/`https:` |
@@ -708,8 +719,8 @@ stored. `ai.model` and `ai.effort` are checked for TYPE only, never against a li
 ladder works over a wider scale (`none…max`) that a capable endpoint may well take, and
 the model id is whatever the configured endpoint calls it.
 
-Everything applies live. No setting requires a restart: the autosave debounce and the
-auto-lock policy are re-read by the browser, the sync debounce by the sync scheduler,
+Everything applies live. No setting requires a restart: the autosave debounce and Raw
+exit-confirmation policy are re-read by the browser, the auto-lock policy by the crypto worker, the sync debounce by the sync scheduler,
 `editor.homeDoc` by the home button (it re-labels itself from the response, no reload),
 and the AI model/effort/budgets by the relay on the next turn.
 
@@ -738,7 +749,8 @@ server is otherwise fully functional. `ahead`/`behind` are `0` until an upstream
 #### `POST /api/sync/now`
 
 Manual **Sync now**. Runs the same pipeline as the debounced auto-sync — stage the tracked
-set (`*.md`, `.znotes/settings.toml`, `.znotes/vault.pub`, `.znotes/identity.age`; never
+set (visible extension-bearing UTF-8 docs, tracked text deletions,
+`.znotes/settings.toml`, `.znotes/vault.pub`, `.znotes/identity.age`; never
 `.znotes/index.db`) → commit with a generated message → push to `git.branch` when an
 `origin` exists → on a rejected push, `pull --rebase` and push again — but starts it
 immediately instead of waiting out `git.autoSyncSeconds`.

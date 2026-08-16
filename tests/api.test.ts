@@ -1257,14 +1257,14 @@ describe("vault containment and path shape", () => {
     }
   });
 
-  test("GET /api/docs/{path} serves .md only — a stray .env in the vault is not a doc", async () => {
+  test("GET /api/docs/{path} serves explicit-extension UTF-8 files but never hidden files", async () => {
     writeFileSync(join(srv.vault, "notes.txt"), "plain text\n");
     writeFileSync(join(srv.vault, ".env"), "SECRET_KEY=abc123\n");
     try {
       const txt = await srv.api("GET", "/api/docs/notes.txt");
-      expect(txt.status).toBe(404);
-      expect(txt.body.error).toBe("not-found");
-      expect(txt.text).not.toContain("plain text");
+      expect(txt.status).toBe(200);
+      expect(txt.body.path).toBe("notes.txt");
+      expect(txt.body.markdown).toBe("plain text\n");
 
       const env = await srv.api("GET", "/api/docs/.env");
       expect([400, 404]).toContain(env.status);

@@ -5,8 +5,9 @@ entry lists banned synonyms where drift has happened or is likely.
 
 ## The vault and docs
 
-- **vault** — a directory of markdown files that IS the user's data. Also the
-  class binding disk I/O to one such root (`server/vault.ts` `Vault`).
+- **vault** — a directory whose visible, extension-bearing UTF-8 files ARE the
+  user's editable data (ADR 0019). Also the class binding disk I/O to one such
+  root (`server/vault.ts` `Vault`).
   *Banned:* "workspace", "notebook", "mount".
 - **primary vault** — the one at `$ZNOTES_VAULT`, id `vault`. Bare doc paths,
   and the only home of app-level state — settings, keyring, AI relay, terminal
@@ -24,8 +25,10 @@ entry lists banned synonyms where drift has happened or is likely.
   directory. *Banned:* "detach" (attach's opposite here is disconnect;
   "attach" stays the remote-connection verb), "mount"/"unmount", "remove" for
   the on-disk directory.
-- **doc** — a `.md` file in the vault. The unit the API addresses
-  (`/api/docs/{path}`). *Banned:* "note", "page", "document" (in code).
+- **doc** — a visible, extension-bearing, valid-UTF-8 file in the vault. A bare
+  created name defaults to `.md`; an explicit extension is literal. The unit
+  the API addresses (`/api/docs/{path}`). *Banned:* "note", "page",
+  "document" (in code).
 - **folder** — a directory in the vault as the tree shows it. *Banned:*
   "directory" in UI-facing strings.
 - **tree** — the sidebar's folder/doc hierarchy (`GET /api/docs`).
@@ -36,6 +39,8 @@ entry lists banned synonyms where drift has happened or is likely.
   (`Reconciler`). The fs watcher is only a doorbell; reconcile is the truth.
 - **wiki-link / `[[target]]`** — an in-doc link. A **bare slug** resolves only
   while unique; a **path-qualified** spelling (`[[a/b]]`) always names one doc.
+  `[[./name.ext]]` is the exact path-qualified spelling for a root doc when its
+  bare slug collides.
   Rewrites on rename are *forced, never cosmetic* (see `tests/links.test.ts`).
 
 ## Secrets (SPEC §6)
@@ -56,8 +61,8 @@ entry lists banned synonyms where drift has happened or is likely.
 - **sync** — add → commit → push of the tracked set, debounced; manual via
   `POST /api/sync/now`. Auth is a token fed through GIT_ASKPASS, stored as the
   `git.token` credential.
-- **tracked set** — docs + committed `.znotes` meta (`TRACKED_META` in
-  `git.ts`); the sqlite index is never committed.
+- **tracked set** — docs + tracked text deletions + committed `.znotes` meta
+  (`TRACKED_META` in `git.ts`); the sqlite index is never committed.
 - **attach** — connecting a vault directory to a remote repo
   (`POST /api/sync/remote`, `ZNOTES_VAULT_REPO` at boot, or the directory a
   vault **add** just created): init if needed, set `origin`, fetch, checkout.

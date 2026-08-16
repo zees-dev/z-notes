@@ -183,10 +183,28 @@ describe("phone editing regressions", () => {
       return page.$eval("#rawArea", (n) => (n as HTMLTextAreaElement).value);
     };
 
-    expect(await pressAtEnd("  - child")).toBe("  - child\n  - ");
-    expect(await pressAtEnd("    - [x] done")).toBe("    - [x] done\n    - [ ] ");
-    expect(await pressAtEnd("  7) seven")).toBe("  7) seven\n  8) ");
-    expect(await pressAtEnd("    indented prose")).toBe("    indented prose\n    ");
+    const cases = [
+      ["indented bullet", "  - child", "  - child\n  - "],
+      ["checked task", "    - [x] done", "    - [x] done\n    - [ ] "],
+      ["uppercase checked task", "* [X] done", "* [X] done\n* [ ] "],
+      ["checked task with no content gap", "- [x]done", "- [x]done\n- [ ] "],
+      ["unchecked task with no content gap", "+ [ ]todo", "+ [ ]todo\n+ [ ] "],
+      ["ordered parenthesis", "  7) seven", "  7) seven\n  8) "],
+      [
+        "ordered marker beyond Number precision",
+        "999999999999999999999. huge",
+        "999999999999999999999. huge\n1000000000000000000000. ",
+      ],
+      ["indented prose", "    indented prose", "    indented prose\n    "],
+      ["empty task exits the list", "  - [ ] ", ""],
+      ["empty task without a content gap exits the list", "- [ ]", ""],
+      ["empty ordered item exits the list", "  7) ", ""],
+    ] as const;
+    for (const [label, source, expected] of cases) {
+      expect(`${label}: ${JSON.stringify(await pressAtEnd(source))}`).toBe(
+        `${label}: ${JSON.stringify(expected)}`
+      );
+    }
 
     const saved = "- parent\n  - child\n  - ";
     await page.$eval(

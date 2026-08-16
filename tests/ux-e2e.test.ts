@@ -861,6 +861,36 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     await confirm();
   }
 
+  /** A real Chromium pointer drag. Moving through several intermediate points is
+      what makes the browser cross its native drag threshold; synthetic
+      DragEvents would prove only that a listener can be called. */
+  async function dragTreeRow(from: string, onto: string) {
+    const source = await page.$(`#tree .row.file[data-doc="${from}"]`);
+    const target = await page.$(`#tree .row[data-path="${onto}"]`);
+    if (!source || !target) throw new Error(`drag fixture missing: ${from} -> ${onto}`);
+    const a = await source.boundingBox();
+    const b = await target.boundingBox();
+    if (!a || !b) throw new Error(`drag fixture is not visible: ${from} -> ${onto}`);
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+    await sleep(100);
+    const highlighted = await target.evaluate((el) => el.classList.contains("drop-target"));
+    await page.mouse.up();
+    return highlighted;
+  }
+
+  const waitMoveToast = (from: string, to: string) =>
+    page.waitForFunction(
+      (a, b) => {
+        const text = document.getElementById("toastTxt")?.textContent || "";
+        return text.includes(a as string) && text.includes(b as string);
+      },
+      { timeout: 10000 },
+      from,
+      to
+    );
+
   beforeEach(async () => {
     await srv.api("POST", "/api/docs", { path: UNDO_DOC, type: "doc", markdown: UNDO_TEXT }).catch(() => {});
     await app.clickDoc(NAV_DOC);
@@ -940,6 +970,78 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     await confirm();
     expect(`the new doc is gone: ${!(await docsInTree()).includes(made)}`).toBe("the new doc is gone: true");
   }, 90000);
+
+  test("dragging a doc onto another doc moves it to that parent, then undo and redo move it back and forward", async () => {
+    const from = "architecture/file-drag.md";
+    const to = "projects/file-drag.md";
+    const onto = "projects/homelab.md";
+    const markdown = "# File drag\n\nbytes that must survive both directions\n";
+    await srv.api("DELETE", "/api/docs/" + encPath(from)).catch(() => {});
+    await srv.api("DELETE", "/api/docs/" + encPath(to)).catch(() => {});
+    try {
+      expect((await srv.api("POST", "/api/docs", { path: from, type: "doc", markdown })).status).toBe(201);
+      await page.waitForSelector(`#tree .row.file[data-doc="${from}"]`, { timeout: 8000 });
+      await app.clickDoc(from);
+
+      expect(`the source is a native drag source: ${await page.$eval(`#tree .row.file[data-doc="${from}"]`, (el) => (el as HTMLElement).draggable)}`).toBe(
+        "the source is a native drag source: true"
+      );
+      expect(`the same-parent drop is rejected: ${await dragTreeRow(from, "architecture/z-notes-design.md")}`).toBe(
+        "the same-parent drop is rejected: false"
+      );
+      expect(`a rejected no-op moved nothing: ${vaultHas(srv.vault, from) && !vaultHas(srv.vault, to)}`).toBe(
+        "a rejected no-op moved nothing: true"
+      );
+      expect(`the destination advertises the drop: ${await dragTreeRow(from, onto)}`).toBe(
+        "the destination advertises the drop: true"
+      );
+      await page.waitForSelector(`#tree .row.file[data-doc="${to}"]`, { timeout: 10000 });
+      await app.settled(to);
+      /* The SSE echo can re-home the pane before the initiating PATCH resolves;
+         the local completion toast is after the history entry was recorded. */
+      await waitMoveToast(from, to);
+      expect(`the old path is gone: ${!vaultHas(srv.vault, from)}`).toBe("the old path is gone: true");
+      expect(`the moved bytes survived: ${readVaultText(srv.vault, to) === markdown}`).toBe("the moved bytes survived: true");
+
+      await fileZ();
+      expect(`undo asks to move back: ${JSON.stringify(await prompt())}`).toBe(
+        `undo asks to move back: ${JSON.stringify({
+          title: "Move doc",
+          path: to,
+          ok: "Move",
+          danger: false,
+          body: "Undo — move it back to " + from + ".",
+        })}`
+      );
+      await confirm();
+      await page.waitForSelector(`#tree .row.file[data-doc="${from}"]`, { timeout: 10000 });
+      await app.settled(from);
+      expect(`undo restored the original path: ${vaultHas(srv.vault, from) && !vaultHas(srv.vault, to)}`).toBe(
+        "undo restored the original path: true"
+      );
+
+      await fileZ(true);
+      expect(`redo asks to move forward: ${JSON.stringify(await prompt())}`).toBe(
+        `redo asks to move forward: ${JSON.stringify({
+          title: "Move doc",
+          path: from,
+          ok: "Move",
+          danger: false,
+          body: "Redo — move it again to " + to + ".",
+        })}`
+      );
+      await confirm();
+      await page.waitForSelector(`#tree .row.file[data-doc="${to}"]`, { timeout: 10000 });
+      await app.settled(to);
+      expect(`redo restored the moved path: ${!vaultHas(srv.vault, from) && vaultHas(srv.vault, to)}`).toBe(
+        "redo restored the moved path: true"
+      );
+      expect(`the bytes survived redo: ${readVaultText(srv.vault, to) === markdown}`).toBe("the bytes survived redo: true");
+    } finally {
+      await srv.api("DELETE", "/api/docs/" + encPath(from)).catch(() => {});
+      await srv.api("DELETE", "/api/docs/" + encPath(to)).catch(() => {});
+    }
+  }, 120000);
 
   test("the editor keeps its own ⌘Z, even with a file undo pending", async () => {
     /* THE COLLISION THIS FEATURE COULD HAVE CAUSED. A pending file undo plus a

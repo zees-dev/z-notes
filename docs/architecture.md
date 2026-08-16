@@ -10,7 +10,8 @@ One Bun process (`server/index.ts`). It serves `app/` as plain files, the JSON
 API under `/api/*`, the SSE bus at `/events`, and an in-memory `Bun.build`
 bundle of `age-encryption` at `/vendor/age.<hash>.js` (entry:
 `server/age-entry.js`). State lives in the vault directory (`$ZNOTES_VAULT`):
-markdown files (source of truth), `.znotes/settings.toml` (committed),
+visible, extension-bearing UTF-8 files (source of truth; ADR 0019),
+`.znotes/settings.toml` (committed),
 `.znotes/index.db` (sqlite cache + credentials, never committed),
 `.znotes/identity.age` + `vault.pub` (committed keyring). Production is one k3s
 replica behind a private-CA TLS ingress (`deploy/`); the replica count is a
@@ -51,7 +52,7 @@ new module must be added there (and here) to compile through CI.
 
 | Layer | Module | Owns | Interface (import surface) |
 |---|---|---|---|
-| 0 | `vault.ts` | pure markdown/link/path facts + the `Vault` class (all disk I/O, bound to one root) + keyring | pure fns, `Vault`, armor constants |
+| 0 | `vault.ts` | pure text/link/path facts + the `Vault` class (all disk I/O, bound to one root) + keyring | pure fns, `Vault`, armor constants |
 | 0 | `db.ts` | sqlite `Index` + corruption recovery + fuzzy search | `Index`, `fuzzy`, per-consumer slices `WatchIndex` / `AiIndex` / `TerminalIndex` |
 | 0 | `http.ts` | JSON response shapes, body reading, the 8 MiB cap | `json`, `fail`, `readJsonBody`, sentinels |
 | 0 | `sse.ts` | the entire SSE wire format (encode, split, parse, response envelope) | `sseResponse`, `sseFrame`, `sseBlocks`, `parseSseFrame`, `SSE_HEADERS` |
@@ -63,7 +64,7 @@ new module must be added there (and here) to compile through CI.
 | 3 | `git.ts` | add→commit→push sync, GIT_ASKPASS auth, tracked-set discipline, attach (the one place `git init` may run — ADR 0017) | `GitSync`, `gitMessage`, `sanitizeRemote`, `validRemoteUrl` |
 | 3 | `terminal.ts` | password-gated command runner, sessions, AI-command approval | `Terminal`, `TerminalError`, `bearerOf` |
 | 4 | `ai.ts` | turn orchestration, context assembly + leak guard, the two wire dialects, proposal stack | `AI` (single export) |
-| 4 | `docs.ts` | every doc/folder/trash transaction: create, CAS-write, move + backlink rewrite + rollback, delete/restore/purge/sweep, commit | `DocStore`, `isMd` |
+| 4 | `docs.ts` | every doc/folder/trash transaction: create, CAS-write, move + backlink rewrite + rollback, delete/restore/purge/sweep, commit | `DocStore`, `isDocPath` |
 | 5 | `vaults.ts` | the vault registry: one stack per vault, the boot scan of the vaults home, add/remove, `@id/` qualification (ADR 0018) | `VaultRegistry`, `VaultStack`, `validVaultId`, `qualify` |
 | 6 | `index.ts` | composition root: wiring, route table, `/events` bus, vendor bundle, static serving, boot/shutdown | none (entrypoint) |
 
@@ -108,6 +109,11 @@ re-issued if the user says leave):
 | a Raw buffer that differs from disk | `guardRawExit` (editor.js) | ⌘E, the mode chip, a click on the pane, Esc, `openDoc`, `openSettings`, Back |
 | the settings page's unsaved draft | `guardSettingsExit` (settings.js) | the header Back button, `openDoc`, Back |
 
+The Raw gate's presentation is policy (ADR 0022):
+`editor.confirmBeforeExit=true` mounts its staged-diff question, while `false`
+keeps the same gate and pending destination but saves first and proceeds only
+after the write lands. The Settings-draft guard is separate and unaffected.
+
 Below them, Back also unwinds the layers that cover the document — the veils
 (`dismissTop`), then the assistant while it is an overlay, then Raw→Preview on
 a phone. `shell.js onPop` is the one place that order is written down.
@@ -115,7 +121,8 @@ a phone. `shell.js onPop` is the one place that order is written down.
 ## Tests as the enforcement layer
 
 The suite is black-box first: `tests/helpers.ts` boots the real server per
-test, `tests/browser.ts` drives real Chromium. Three tests enforce structure
+test, `tests/browser.ts` drives real Chromium. `markdown-e2e.test.ts` is the
+one broad Preview-dialect map (ADR 0021). Three tests enforce structure
 as source-text assertions (see `docs/style.md` gotchas): the no-crypto-import
 rule, the AI-has-no-delete rule, and the `OPS` operation set. Direct unit
 tests exist only where a seam is pure (`links.test.ts`, `armor`, `entropy`,

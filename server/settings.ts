@@ -67,6 +67,7 @@ export const NUMBERS: Record<string, NumberSpec> = {
 /** Settings that are strictly true/false, healed and validated as a group. */
 export const BOOLEANS = [
   "editor.clickToEdit",
+  "editor.confirmBeforeExit",
   "git.autoSync",
   "terminal.enabled",
   "terminal.allowAiAutoRun",
@@ -102,7 +103,13 @@ export const DEFAULTS = {
   theme: "minimal",
   density: "comfy",
   colorScheme: "system",
-  editor: { autosaveSeconds: 10, tabSize: 2, clickToEdit: true, homeDoc: HOME_DOC_DEFAULT },
+  editor: {
+    autosaveSeconds: 10,
+    tabSize: 2,
+    clickToEdit: true,
+    confirmBeforeExit: true,
+    homeDoc: HOME_DOC_DEFAULT,
+  },
   trash: { retentionDays: TRASH_RETENTION_DEFAULT_DAYS },
   git: { branch: "main", autoSync: true, autoSyncSeconds: 60 },
   /* Browser-side auto-lock policy (research §5.2 / §7.2). It lives here rather
@@ -667,7 +674,7 @@ export class Settings {
    * `../../secrets.md` in front of the home button. Heal rather than throw — a
    * bad line in a pulled settings.toml must never stop the server booting.
    * Empty is legal and means "no home doc; fall back to the first doc".
-   * (`autosaveSeconds`/`clickToEdit` are healed by healNumbers/healBooleans.)
+   * (editor numbers/switches are healed by healNumbers/healBooleans.)
    */
   private healEditor(): boolean {
     const editor = this.data.editor;
@@ -1243,6 +1250,7 @@ const KEY_DOC: Record<string, string> = {
   "editor.autosaveSeconds": "Write to disk this long after you stop typing.",
   "editor.tabSize": "Spaces inserted by Tab in Raw mode, and the width used to display literal tab bytes.",
   "editor.clickToEdit": "Clicking rendered text jumps to that line in Raw.",
+  "editor.confirmBeforeExit": "Ask before leaving edits that have not reached disk; off saves them first.",
   "editor.homeDoc":
     "Doc the vault button (top left) opens. Vault-relative path; empty means the first doc.",
   "trash.retentionDays": "Keep deleted docs this long before the scheduled permanent purge.",

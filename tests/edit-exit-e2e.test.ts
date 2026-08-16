@@ -8,9 +8,17 @@
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
-import { type Browser, type Page } from "puppeteer-core";
+import { type Browser, type HTTPRequest, type Page } from "puppeteer-core";
 import { startServer, type TestServer } from "./helpers";
-import { launchTestBrowser, newAppPage, appDriver, pressChord, type AppDriver } from "./browser";
+import {
+  launchTestBrowser,
+  newAppPage,
+  appDriver,
+  gotoSettings,
+  pressChord,
+  saveSettings,
+  type AppDriver,
+} from "./browser";
 
 const ORIGINAL = "# Alpha\n\nkeep before\nold first\nunchanged middle\nold second\nkeep after\n";
 const EDITED = "# Alpha\n\nkeep before\nnew first\nunchanged middle\nnew second\nkeep after\n";
@@ -41,6 +49,9 @@ beforeAll(async () => {
       [SHORT]: SHORT_MARKDOWN,
     },
   });
+  const defaults = await srv.get("/api/settings");
+  expect(defaults.status).toBe(200);
+  expect(defaults.body.settings.editor.confirmBeforeExit).toBe(true);
   /* Keep autosave out of this interaction test. The guard is intentionally
      silent once autosave has really landed, so a short debounce would make the
      expected modal depend on test-machine timing. */
@@ -211,6 +222,68 @@ describe("unsaved Raw exit", () => {
     await app.settled(BETA);
     expect(await serverMarkdown()).toBe(EDITED);
     expect(pageErrors).toEqual([]);
+  }, 60000);
+
+  test("turning off Ask before leaving edits saves before Preview and navigation without a prompt", async () => {
+    expect((await srv.get("/api/settings")).body.settings.editor.confirmBeforeExit).toBe(true);
+    try {
+      await gotoSettings(page);
+      await page.click("[data-sw='editor.confirmBeforeExit']");
+      expect(await saveSettings(page, { expectDirty: true })).toBe(true);
+      expect((await srv.get("/api/settings")).body.settings.editor.confirmBeforeExit).toBe(false);
+
+      /* Saving the draft applies the preference live; no reload is needed. */
+      await app.clickDoc(SHORT);
+      await enterRaw();
+      const previewBytes = "# Short\n\nauto-saved before Preview\n";
+      await typeMarkdown(previewBytes);
+
+      const click = await rawPaneWhitespacePoint();
+      await page.mouse.click(click.x, click.y);
+      await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", {
+        timeout: 10000,
+      });
+      expect(await guardOpen()).toBe(false);
+      expect(await serverMarkdown(SHORT)).toBe(previewBytes);
+
+      await enterRaw();
+      const navigationBytes = "# Short\n\nauto-saved before navigation\n";
+      await typeMarkdown(navigationBytes);
+      await page.click(`#tree .row.file[data-doc="${BETA}"]`);
+      await app.settled(BETA);
+      expect(await guardOpen()).toBe(false);
+      expect(await serverMarkdown(SHORT)).toBe(navigationBytes);
+
+      /* No prompt must not become navigate-at-any-cost. If the automatic write
+         fails, Raw and its only copy of the new bytes stay where they are. */
+      await app.clickDoc(SHORT);
+      await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 8000 });
+      const failedBytes = "# Short\n\nkeep me when the automatic save fails\n";
+      await typeMarkdown(failedBytes);
+      await page.setRequestInterception(true);
+      const refuseSave = (request: HTTPRequest) => {
+        if (request.method() === "PUT" && request.url().endsWith("/api/docs/short.md")) void request.abort();
+        else void request.continue();
+      };
+      page.on("request", refuseSave);
+      try {
+        await page.click(`#tree .row.file[data-doc="${BETA}"]`);
+        await page.waitForFunction(
+          () => document.getElementById("toast")!.textContent!.includes("your changes are still in this tab"),
+          { timeout: 10000 }
+        );
+        expect(await app.shown()).toBe(SHORT);
+        expect(await page.$eval("#rawArea", (n) => (n as HTMLTextAreaElement).value)).toBe(failedBytes);
+        expect(await serverMarkdown(SHORT)).toBe(navigationBytes);
+      } finally {
+        page.off("request", refuseSave);
+        await page.setRequestInterception(false);
+      }
+      expect(pageErrors).toEqual([]);
+    } finally {
+      const restored = await srv.api("PUT", "/api/settings", { editor: { confirmBeforeExit: true } });
+      expect(restored.status).toBe(200);
+    }
   }, 60000);
 
   test("browser Back is guarded and Discard changes replays that navigation", async () => {

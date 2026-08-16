@@ -39,7 +39,7 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { CREDENTIAL_FILE_KEYS, validBranchName } from "./settings.ts";
 import { trashGitPaths } from "./trash.ts";
-import type { Vault } from "./vault.ts";
+import { hasFileExtension, type Vault } from "./vault.ts";
 
 /* ---------- the sync contract the API answers with ---------- */
 
@@ -112,8 +112,8 @@ const TRACKED_META_DIRS = [".znotes/trash/"];
 
 const inTrackedDir = (p: string) => TRACKED_META_DIRS.some((d) => p.startsWith(d));
 
-/** Pathspecs for the tracked dirs, without the trailing slash git dislikes. */
-const TRACKED_META_DIR_SPECS = TRACKED_META_DIRS.map((d) => d.replace(/\/$/, ""));
+const isVisibleFilePath = (p: string) =>
+  hasFileExtension(p) && !p.split("/").some((seg) => seg.startsWith(".") || seg.startsWith("@"));
 
 /** Overridable ONLY so a test can watch a hung git get killed in seconds. */
 const GIT_TIMEOUT_MS = (() => {
@@ -334,6 +334,8 @@ interface GitResult {
   code: number;
   ok: boolean;
   stdout: string;
+  /** Present only for callers that explicitly need byte-exact local output. */
+  stdoutBytes?: Uint8Array;
   stderr: string;
   timedOut: boolean;
   /** the git binary itself could not be executed */
@@ -616,7 +618,7 @@ export class GitSync {
    */
   private async git(
     args: string[],
-    opts: { stdin?: string; token?: string | null; optionalLocks?: boolean } = {}
+    opts: { stdin?: string; token?: string | null; optionalLocks?: boolean; rawStdout?: boolean } = {}
   ): Promise<GitResult> {
     const token = opts.token ?? null;
     const env: Record<string, string> = {};
@@ -671,8 +673,11 @@ export class GitSync {
          git is reaped — `git()` never returns, `inflight` never clears and
          every later sync joins the hang. So the reads are raced against our own
          deadline and abandoned on expiry. */
+      const stdoutRead = opts.rawStdout
+        ? new Response(proc.stdout as ReadableStream).arrayBuffer().catch(() => new ArrayBuffer(0))
+        : new Response(proc.stdout as ReadableStream).text().catch(() => "");
       const reads = Promise.all([
-        new Response(proc.stdout as ReadableStream).text().catch(() => ""),
+        stdoutRead,
         new Response(proc.stderr as ReadableStream).text().catch(() => ""),
       ]);
       const expired = new Promise<null>((res) => {
@@ -704,7 +709,8 @@ export class GitSync {
       return {
         code,
         ok: code === 0,
-        stdout: scrub(out, token),
+        stdout: typeof out === "string" ? scrub(out, token) : "",
+        ...(out instanceof ArrayBuffer ? { stdoutBytes: new Uint8Array(out) } : {}),
         stderr: scrub(err, token),
         timedOut,
         missing: false,
@@ -801,24 +807,24 @@ export class GitSync {
       }
     }
 
-    const st = await this.git(
-      ["status", "--porcelain=v1", "-z", "-uall", "--", "*.md", ...TRACKED_META, ...TRACKED_META_DIR_SPECS],
-      { optionalLocks: false }
-    );
-    /* porcelain=v1 -z entries are `XY<space>PATH`; a rename adds a bare second
-       entry for the source, which the shape check skips. The pathspec cannot
-       express "no dot-directories", so the visibility rule that scanDocs
-       applies is re-applied here — otherwise an untracked `.obsidian/notes.md`
-       (which this app will never commit) would sit in the statusbar as a
-       pending change forever. */
-    const pending = st.ok
-      ? nulList(st.stdout).filter((e) => {
-          if (!/^[ MADRCU?!][ MADRCU?!] /.test(e)) return false;
-          const path = e.slice(3);
-          if (TRACKED_META.includes(path) || inTrackedDir(path)) return true;
-          return /\.md$/i.test(path) && !path.split("/").some((seg) => seg.startsWith("."));
-        }).length
-      : 0;
+    const st = await this.git(["status", "--porcelain=v1", "-z", "-uall", "--", "."], {
+      optionalLocks: false,
+    });
+    const managed = new Set(await this.vaultHandle.scanDocs().catch(() => []));
+    let pending = 0;
+    if (st.ok) {
+      for (const e of nulList(st.stdout)) {
+        if (!/^[ MADRCU?!][ MADRCU?!] /.test(e)) continue;
+        const path = e.slice(3);
+        if (TRACKED_META.includes(path) || inTrackedDir(path) || managed.has(path)) {
+          pending++;
+          continue;
+        }
+        if (e.slice(0, 2).includes("D") && isVisibleFilePath(path) && (await this.deletedTrackedUtf8(path))) {
+          pending++;
+        }
+      }
+    }
 
     return {
       repo: true,
@@ -873,6 +879,38 @@ export class GitSync {
   private async conflictedPaths(): Promise<string[]> {
     const r = await this.git(["diff", "--name-only", "--diff-filter=U", "-z"], { optionalLocks: false });
     return r.ok ? nulList(r.stdout) : [];
+  }
+
+  /** A missing tracked file whose regular index-or-HEAD blob is valid UTF-8.
+
+      Stage 0 is the newest durable identity when a doc was added or changed
+      but not committed before its working-tree bytes disappeared. HEAD is the
+      fallback for an ordinary or already-staged deletion. Reading the blob
+      itself avoids both diff's NUL heuristic and user `.gitattributes`, neither
+      of which defines this app's doc boundary. */
+  private async deletedTrackedUtf8(path: string): Promise<boolean> {
+    if (existsSync(resolve(this.vault, path))) return false;
+    const staged = await this.git(["ls-files", "--stage", "-z", "--", `:(literal)${path}`], {
+      optionalLocks: false,
+    });
+    let oid = staged.ok
+      ? /^100(?:644|755) ([0-9a-f]{40,64}) 0\t/.exec(staged.stdout)?.[1]
+      : undefined;
+    if (!oid) {
+      const tree = await this.git(["ls-tree", "-z", "HEAD", "--", `:(literal)${path}`], {
+        optionalLocks: false,
+      });
+      if (tree.ok) oid = /^100(?:644|755) blob ([0-9a-f]{40,64})\t/.exec(tree.stdout)?.[1];
+    }
+    if (!oid) return false;
+    const blob = await this.git(["cat-file", "blob", oid], { optionalLocks: false, rawStdout: true });
+    if (!blob.ok || !blob.stdoutBytes) return false;
+    try {
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(blob.stdoutBytes);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** The reason the vault cannot be synced right now, phrased for the user. */
@@ -1196,10 +1234,10 @@ export class GitSync {
   }
 
   /**
-   * Stage exactly the tracked set: every `.md` the vault scanner can see, plus
-   * the three `.znotes` files, plus anything already tracked that matches —
-   * the last part is what stages DELETIONS (a path gone from disk is not in the
-   * scan, so without it `git add -A` would never notice it left).
+   * Stage exactly the tracked set: every visible explicit-extension UTF-8 file
+   * the vault scanner can see, the three `.znotes` files, and tracked text-file
+   * deletions (whose working-tree bytes are gone, so the index or HEAD blob is
+   * decoded directly to recover the UTF-8 identity the live scan no longer can).
    *
    * Pathspecs go in over stdin (`--pathspec-from-file=-`), so a vault with
    * thousands of notes cannot overflow argv, and `:(literal)` means a note
@@ -1217,7 +1255,11 @@ export class GitSync {
     const tracked = await this.git(["ls-files", "-z"], { optionalLocks: false });
     const trackedSet = new Set<string>(tracked.ok ? nulList(tracked.stdout) : []);
     for (const p of trackedSet) {
-      if (/\.md$/i.test(p) || TRACKED_META.includes(p) || inTrackedDir(p)) set.add(p);
+      if (TRACKED_META.includes(p) || inTrackedDir(p)) {
+        set.add(p);
+        continue;
+      }
+      if (isVisibleFilePath(p) && (set.has(p) || (await this.deletedTrackedUtf8(p)))) set.add(p);
     }
     for (const p of TRACKED_META) {
       if (await Bun.file(resolve(this.vault, p)).exists()) set.add(p);
@@ -1227,7 +1269,7 @@ export class GitSync {
        repair path: an entry that arrived on a pull, or one whose own commit was
        skipped (mid-merge, no repo yet) would otherwise sit in `observe()`'s
        pending count forever with nothing able to stage it — the `-uall` status
-       pathspec sees these files and the `.md`-only allowlist never did. */
+       pathspec sees files that no live-doc scan can recover after deletion. */
     for (const p of await this.trashPaths()) set.add(p);
 
     /* `git add` EXITS 1 when an explicitly named pathspec is ignored, and these
@@ -1484,8 +1526,9 @@ export class GitSync {
   }
 
   /**
-   * Tracked paths carrying changes this pipeline did not just commit — an image
-   * attachment, a README, anything outside the `*.md` + TRACKED_META allowlist.
+   * Tracked paths carrying changes this pipeline did not just commit — a binary
+   * attachment, an extensionless README, anything outside the editable-doc +
+   * TRACKED_META allowlist.
    * `pull --rebase` refuses to run with those present (autostash is deliberately
    * off), and `rebase --abort` would hard-reset them away, so the rebase retry
    * must not even be attempted: say which files, and let the user decide.

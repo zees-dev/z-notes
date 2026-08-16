@@ -29,7 +29,9 @@ import { recordHistory } from "./history.js";
    "not what is on disk" means. The Raw-exit rows deliberately omit the context
    used by save conflicts; the renderer and modal shell remain shared.
 
-   What it guards is every way OUT of Raw:
+   What it guards is every way OUT of Raw when
+   `editor.confirmBeforeExit` is on. With that preference off, the same gate
+   writes first and proceeds without mounting the dialog:
 
      ⌘E / the statusbar mode chip / a click on the pane whitespace / Esc
         → `setMode("preview")`, gated in setMode itself so all four arrive
@@ -83,7 +85,8 @@ export function rawExitDiff() {
 
 /**
  * THE GATE. `true` ⇒ the caller may leave now; `false` ⇒ the dialog took over
- * and will run `proceed` itself if the user says so.
+ * and will run `proceed` itself after either the user's answer or the
+ * preference-driven save lands.
  *
  * Every caller passes a `proceed` that re-issues its own action with the
  * force/replace flag set, so the answer travels back out through the same code
@@ -99,6 +102,26 @@ export function guardRawExit(proceed, onCancel) {
     return false;
   }
   const doc = activeDoc();
+  if (!settingAt("editor.confirmBeforeExit")) {
+    /* The gate stays synchronous for every caller: false means "do not leave
+       yet", exactly as it does while the dialog owns the destination. Hold
+       that destination in the same slot while the write is in flight, then
+       replay the caller's own action only after the server confirms it. */
+    const g = { path: doc.path, proceed: proceed, onCancel: onCancel || null, automatic: true };
+    state.exitGuard = g;
+    void saveDoc(g.path).then((ok) => {
+      /* A later owner can only arise by explicit cleanup; never let this save
+         retire or navigate for somebody else's pending exit. */
+      if (state.exitGuard !== g) return;
+      state.exitGuard = null;
+      if (!ok) {
+        if (g.onCancel) g.onCancel();
+        return toast("Could not save " + g.path + " — your changes are still in this tab");
+      }
+      exitGuardProceed(g);
+    });
+    return false;
+  }
   state.exitGuard = { path: doc.path, proceed: proceed, onCancel: onCancel || null };
   $("#xgPath").textContent = doc.path;
   $("#xgBody").textContent =
@@ -371,6 +394,20 @@ export function toggleWordWrap() {
   syncWrapUI();
 }
 
+/* The renderer accepts any run of decimal digits. Number arithmetic turns a
+   long marker into scientific notation, so carry the source digits directly. */
+function incrementDecimal(value) {
+  const digits = value.split("");
+  let i = digits.length - 1;
+  while (i >= 0 && digits[i] === "9") {
+    digits[i] = "0";
+    i--;
+  }
+  if (i < 0) digits.unshift("1");
+  else digits[i] = String.fromCharCode(digits[i].charCodeAt(0) + 1);
+  return digits.join("");
+}
+
 /**
  * The prefix a markdown editor carries onto the next line.
  *
@@ -382,13 +419,13 @@ export function toggleWordWrap() {
 function markdownContinuation(value, caret) {
   const lineStart = value.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
   const before = value.slice(lineStart, caret);
-  const list = /^(?<indent>[ \t]*)(?:(?<bullet>[-*+])|(?<number>\d+)(?<delim>[.)]))(?<gap>[ \t]+)(?:\[(?<check>[ xX])\](?<checkGap>[ \t]+))?/.exec(before);
+  const list = /^(?<indent>[ \t]*)(?:(?<bullet>[-*+])|(?<number>\d+)(?<delim>[.)]))(?<gap>[ \t]+)(?:\[(?<check>[ xX])\](?<checkGap>[ \t]*))?/.exec(before);
   if (list) {
     const g = list.groups || {};
-    const marker = g.bullet || String(Number(g.number) + 1) + g.delim;
+    const marker = g.bullet || incrementDecimal(g.number) + g.delim;
     return {
       lineStart,
-      prefix: g.indent + marker + g.gap + (g.check == null ? "" : "[ ]" + g.checkGap),
+      prefix: g.indent + marker + g.gap + (g.check == null ? "" : "[ ]" + (g.checkGap || " ")),
       emptyItem: !before.slice(list[0].length).trim(),
     };
   }

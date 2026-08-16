@@ -190,6 +190,32 @@ describe("reconcile gate", () => {
     expect(got.body.rev).toBe(ev.data.rev);
   }, 20000);
 
+  test("(d2) an explicit-extension UTF-8 file is indexed externally and departs if its bytes stop being UTF-8", async () => {
+    const target = "notes/external.txt";
+    const content = "# External text\n\ncreated outside the app\n";
+
+    const createdMark = sse.mark();
+    writeFileSync(join(vault, target), content, "utf8");
+    await sse.waitFor("doc-changed", {
+      from: createdMark,
+      match: (d) => d && d.path === target && !d.removed,
+      timeout: 2500,
+    });
+    expect((await srv.doc(target)).body.markdown).toBe(content);
+    expect(flatten((await srv.get("/api/docs")).body.tree).map((n: any) => n.path)).toContain(target);
+
+    const invalidMark = sse.mark();
+    writeFileSync(join(vault, target), Buffer.from([0xff, 0xfe, 0xfd]));
+    const departed = await sse.waitFor("doc-changed", {
+      from: invalidMark,
+      match: (d) => d && d.path === target && d.removed === true,
+      timeout: 2500,
+    });
+    expect(departed.data.reason).toBe("external");
+    expect((await srv.doc(target)).status).toBe(404);
+    expect(flatten((await srv.get("/api/docs")).body.tree).map((n: any) => n.path)).not.toContain(target);
+  }, 20000);
+
   test("(e) a doc deleted externally leaves the index AND is announced", async () => {
     const target = "doomed.md";
 

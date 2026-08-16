@@ -834,7 +834,7 @@ describe("SSE", () => {
 
 describe("the tree", () => {
   test(
-    "draws one expanded row per vault, aligns sibling rows, guides its children, and collapses on click",
+    "draws one expanded row per vault, aligns and guides children, refuses a cross-vault drag, and collapses",
     async () => {
       const { srv } = await withSecondary();
       const browser: Browser = await launchTestBrowser();
@@ -875,6 +875,38 @@ describe("the tree", () => {
           return [getComputedStyle(folder).paddingLeft, getComputedStyle(file).paddingLeft];
         });
         expect(pads[0]).toBe(pads[1]);
+
+        /* A doc may be dragged only inside its own vault. The client refuses
+           before PATCH, leaves both repositories untouched, and records no
+           history entry for the attempt. */
+        let patches = 0;
+        page.on("request", (r) => {
+          if (r.method() === "PATCH" && r.url().includes("/api/docs/")) patches++;
+        });
+        const source = await page.$('#tree .row.file[data-doc="notes/alpha.md"]');
+        const target = await page.$('#tree .row.folder[data-path="@work-notes/work"]');
+        const a = await source!.boundingBox();
+        const b = await target!.boundingBox();
+        await page.mouse.move(a!.x + a!.width / 2, a!.y + a!.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(b!.x + b!.width / 2, b!.y + b!.height / 2, { steps: 12 });
+        await page.waitForFunction(
+          () => document.querySelector('#tree .row.folder[data-path="@work-notes/work"]')!.classList.contains("drop-blocked"),
+          { timeout: 3000 }
+        );
+        await page.mouse.up();
+        await page.waitForFunction(
+          () => document.getElementById("toastTxt")!.textContent === "A move cannot cross vaults",
+          { timeout: 3000 }
+        );
+        expect(patches).toBe(0);
+        expect((await srv.doc("notes/alpha.md")).status).toBe(200);
+        expect((await srv.doc("@work-notes/work/alpha.md")).status).toBe(404);
+        await page.keyboard.down("Meta");
+        await page.keyboard.press("KeyZ");
+        await page.keyboard.up("Meta");
+        await sleep(150);
+        expect(await page.evaluate(() => document.getElementById("cfVeil")!.classList.contains("show"))).toBe(false);
 
         /* clicking the vault row puts its whole subtree away */
         await page.click("#tree .row.vault");

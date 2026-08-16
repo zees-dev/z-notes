@@ -34,6 +34,10 @@ import { DEFAULTS } from "../server/settings";
 const A = "architecture/event-pipeline.md";
 const B = "architecture/z-notes-design.md";
 const C = "projects/homelab.md";
+const LINK_SOURCE = "zz-links/source.md";
+const LINK_TARGET = "zz-links/foo.txt.md";
+const ROOT_LINK_SOURCE = "zz-links/root-source.md";
+const ROOT_LINK_TARGET = "root-double.txt.md";
 
 const BASE_LEN = BASE_HISTORY_LEN;
 
@@ -43,7 +47,16 @@ let page: Page;
 let ui: AppDriver;
 
 beforeAll(async () => {
-  srv = await startServer({ seed: SEED_VAULT });
+  srv = await startServer({
+    seed: {
+      ...SEED_VAULT,
+      [LINK_SOURCE]: `# Source\n\nOpen [[${LINK_TARGET}]].\n`,
+      [LINK_TARGET]: "# Double extension target\n",
+      [ROOT_LINK_SOURCE]: `# Root source\n\nOpen [[./${ROOT_LINK_TARGET}]].\n`,
+      "root-double.txt": "# Root sibling\n",
+      [ROOT_LINK_TARGET]: "# Root double extension target\n",
+    },
+  });
   browser = await launchTestBrowser();
 }, 60000);
 
@@ -219,6 +232,28 @@ describe("routing — BACK and FORWARD walk the docs", () => {
     await settled(B);
     await backTo(A);
     expect(await shown()).toBe(A);
+  }, 60000);
+
+  test("a qualified double-extension [[wiki-link]] resolves exactly and navigates", async () => {
+    await boot("/");
+    await clickDoc(LINK_SOURCE);
+    const selector = `#doc .wl[data-link="${LINK_TARGET}"]`;
+    await page.waitForSelector(selector);
+    expect(await page.$eval(selector, (link) => link.classList.contains("broken"))).toBe(false);
+    await page.click(selector);
+    await settled(LINK_TARGET);
+    expect(await shown()).toBe(LINK_TARGET);
+  }, 60000);
+
+  test("a ./-qualified root double-extension [[wiki-link]] stays distinct from its sibling", async () => {
+    await boot("/");
+    await clickDoc(ROOT_LINK_SOURCE);
+    const selector = `#doc .wl[data-link="./${ROOT_LINK_TARGET}"]`;
+    await page.waitForSelector(selector);
+    expect(await page.$eval(selector, (link) => link.classList.contains("broken"))).toBe(false);
+    await page.click(selector);
+    await settled(ROOT_LINK_TARGET);
+    expect(await shown()).toBe(ROOT_LINK_TARGET);
   }, 60000);
 
   test("a ⌘K pick costs ONE entry — the overlay marker is recycled, not stacked", async () => {

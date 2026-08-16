@@ -9,7 +9,7 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, apiFail, dirname, toast, vaultOf } from "./ui.js";
+import { $, $$, apiFail, dirname, toast, vaultOf, withDefaultExtension } from "./ui.js";
 import { adoptVaultSync, closeCtx, loadTree, renderTree, revealFolder } from "./tree.js";
 import { closeConfirm, closeConflict, confirmDialog } from "./dialogs.js";
 import { adoptTrash, refreshTrash } from "./trash.js";
@@ -1274,7 +1274,7 @@ export function revealInTree(path) {
 export function homeTarget() {
   const raw = String(settingAt("editor.homeDoc") || "").trim();
   if (!raw) return "";
-  return /\.md$/i.test(raw) ? raw : raw + ".md";
+  return withDefaultExtension(raw);
 }
 
 /** Say where the button goes, in the tooltip and to a screen reader. */

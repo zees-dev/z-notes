@@ -30,8 +30,11 @@ export const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").s
 function tableEl(rows) {
   const w = el("div", "tblwrap");
   const head = cells(rows[0]);
-  let h = "<table><thead><tr>" + head.map((c) => "<th>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>";
-  h += rows.slice(2).map((r) => "<tr>" + cells(r).map((c) => "<td>" + esc(c) + "</td>").join("") + "</tr>").join("");
+  /* A cell is an inline-content container, like a heading or list item. Route
+     it through the same escape-first renderer so supported formatting composes
+     consistently without giving table text a separate HTML trust path. */
+  let h = "<table><thead><tr>" + head.map((c) => "<th>" + inline(c) + "</th>").join("") + "</tr></thead><tbody>";
+  h += rows.slice(2).map((r) => "<tr>" + cells(r).map((c) => "<td>" + inline(c) + "</td>").join("") + "</tr>").join("");
   h += "</tbody></table>";
   w.innerHTML = h;
   return w;

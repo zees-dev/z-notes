@@ -8,7 +8,8 @@
 
    The rules under test (vault.ts "Links" section):
    - a bare `[[slug]]` resolves only while exactly one doc carries that slug;
-   - a path-qualified `[[a/b]]` resolves iff `a/b.md` exists;
+   - a qualified target resolves its exact path first, with `.md` defaulted only
+     when the qualified leaf has no extension;
    - the planner prefers the SHORTEST spelling that still resolves;
    - links inside code fences and inline code are never rewritten;
    - links that did not resolve before the move are left alone (broken stays
@@ -16,7 +17,7 @@
    ============================================================ */
 
 import { describe, expect, test } from "bun:test";
-import { affectedTargets, planLinkRewrites } from "../server/vault";
+import { affectedTargets, planLinkRewrites, resolveWikiTarget } from "../server/vault";
 
 const plan = (
   docs: string[],
@@ -53,6 +54,15 @@ describe("planLinkRewrites", () => {
     expect(out).toEqual([{ path: "other.md", markdown: "see [[b/foo]] not [[c/foo]]\n", links: 1 }]);
   });
 
+  test("a qualified double-extension link keeps its final .md when a collision forces qualification", () => {
+    const out = plan(
+      ["a/foo.txt.md", "b/foo.txt.md", "other.md"],
+      { "a/foo.txt.md": "c/foo.txt.md" },
+      [{ path: "other.md", markdown: "see [[a/foo.txt.md]]\n" }]
+    );
+    expect(out).toEqual([{ path: "other.md", markdown: "see [[c/foo.txt.md]]\n", links: 1 }]);
+  });
+
   test("a move that CREATES a slug collision forces qualification of the survivor's links", () => {
     const out = plan(
       ["a/foo.md", "b/note.md", "other.md"],
@@ -62,6 +72,15 @@ describe("planLinkRewrites", () => {
     // after the move two docs carry slug foo — the bare spelling would go
     // ambiguous, so it is pinned to the doc it used to mean
     expect(out).toEqual([{ path: "other.md", markdown: "see [[a/foo]]\n", links: 1 }]);
+  });
+
+  test("a move creating a root double-extension collision emits an exact ./ backlink", () => {
+    const out = plan(
+      ["report.txt", "a/note.md", "other.md"],
+      { "a/note.md": "report.txt.md" },
+      [{ path: "other.md", markdown: "see [[note]]\n" }]
+    );
+    expect(out).toEqual([{ path: "other.md", markdown: "see [[./report.txt.md]]\n", links: 1 }]);
   });
 
   test("rewrites are forced, never cosmetic: a still-valid spelling is left alone", () => {
@@ -138,5 +157,17 @@ describe("affectedTargets", () => {
       ["foo", "note"]
     );
     expect(out.sort()).toEqual(["foo", "note"]);
+  });
+});
+
+describe("resolveWikiTarget", () => {
+  test("bare targets stay slug-based while ./ qualifies colliding root explicit extensions", () => {
+    const docs = ["report.txt", "report.txt.md", "plain.md"];
+    expect(resolveWikiTarget("report.txt", docs)).toBeNull();
+    expect(resolveWikiTarget("report.txt.md", docs)).toBeNull();
+    expect(resolveWikiTarget("./report.txt", docs)).toBe("report.txt");
+    expect(resolveWikiTarget("./report.txt.md", docs)).toBe("report.txt.md");
+    expect(resolveWikiTarget("plain", docs)).toBe("plain.md");
+    expect(resolveWikiTarget("plain.md", docs)).toBe("plain.md");
   });
 });

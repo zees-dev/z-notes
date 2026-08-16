@@ -104,6 +104,13 @@ function vaultRoot(vault: string): string {
 
 /* ---------- content derivation ---------- */
 
+/** A named suffix on the leaf (`a/b.txt`), not a dot somewhere in a parent. */
+export function hasFileExtension(path: string): boolean {
+  const leaf = basename(path);
+  const dot = leaf.lastIndexOf(".");
+  return dot > 0 && dot < leaf.length - 1;
+}
+
 export const slugOf = (path: string) => basename(path).replace(/\.md$/i, "");
 
 export function titleOf(markdown: string, fallback: string): string {
@@ -301,13 +308,12 @@ export function extractLinks(markdown: string): string[] {
    collision algorithm testable without a vault.
    ============================================================ */
 
-/** `./a/b.md`, `a/b`, `  a/b  ` → `a/b`. The extension is optional in a link. */
+/** `./a/b`, `/a/b`, `  a/b  ` → `a/b`; extensions remain literal. */
 function normalizeTarget(target: string): string {
   return String(target ?? "")
     .trim()
     .replace(/^\.\//, "")
-    .replace(/^\/+/, "")
-    .replace(/\.md$/i, "");
+    .replace(/^\/+/, "");
 }
 
 interface LinkIndex {
@@ -333,20 +339,42 @@ function linkIndex(paths: Iterable<string>): LinkIndex {
 
 /** The doc a `[[target]]` points at, or null when it is broken OR ambiguous. */
 function resolveTarget(target: string, idx: LinkIndex): string | null {
+  const raw = String(target ?? "").trim();
   const t = normalizeTarget(target);
   if (!t) return null;
-  if (t.includes("/")) return idx.paths.has(t + ".md") ? t + ".md" : null;
-  const hits = idx.bySlug.get(t);
+  /* `./foo` and `/foo` explicitly qualify a root path. Latch that fact before
+     normalization removes the prefix; otherwise colliding root filenames have
+     no spelling that can disambiguate them. */
+  const qualified = raw.startsWith("./") || raw.startsWith("/") || t.includes("/");
+  if (qualified) {
+    if (idx.paths.has(t)) return t;
+    if (hasFileExtension(t)) return null;
+    return idx.paths.has(t + ".md") ? t + ".md" : null;
+  }
+  const slug = t.replace(/\.md$/i, "");
+  const hits = idx.bySlug.get(slug);
   return hits && hits.length === 1 ? hits[0] : null;
+}
+
+/** Public link-resolution seam for consumers such as AI context assembly.
+    Keeping them on this function prevents the editor/link rewriter and relay
+    from quietly developing different path grammars. */
+export function resolveWikiTarget(target: string, paths: Iterable<string>): string | null {
+  return resolveTarget(target, linkIndex(paths));
 }
 
 /** The SHORTEST spelling that resolves to `dest` in `idx` — bare slug when the
     slug is unique there, the path-qualified form when it is not. */
 function preferredTarget(dest: string, idx: LinkIndex): string {
   const slug = slugOf(dest);
-  const hits = idx.bySlug.get(slug);
-  if (hits && hits.length === 1 && hits[0] === dest) return slug;
-  return dest.replace(/\.md$/i, "");
+  const withoutMarkdownSuffix = dest.replace(/\.md$/i, "");
+  const qualify = (path: string) => (path.includes("/") ? path : "./" + path);
+  /* Shortest-first, but only accept a spelling after proving it round-trips.
+     This is what distinguishes `foo.txt.md` from an existing `foo.txt`, and
+     gives colliding root docs an exact `./foo.txt.md` spelling. */
+  const candidates = [slug, qualify(withoutMarkdownSuffix), qualify(dest)];
+  for (const candidate of new Set(candidates)) if (resolveTarget(candidate, idx) === dest) return candidate;
+  return qualify(dest);
 }
 
 /* A generic code fence, using the SAME prefix class as the age probe above
@@ -578,6 +606,15 @@ export const byteLength = (text: string) => Buffer.byteLength(text, "utf8");
     written back verbatim on the first edit and destroy the original byte. */
 const UTF8 = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true });
 
+/** The one lossless UTF-8 gate for live docs and retained trash payloads. */
+export function decodeUtf8(bytes: Uint8Array): string | null {
+  try {
+    return UTF8.decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
 interface DiskDoc {
   path: string;
   markdown: string;
@@ -598,10 +635,8 @@ async function readDoc(vault: string, rel: string): Promise<DiskDoc | null> {
   if (!st.isFile()) return null;
   // NOT file.text(): Bun strips a leading UTF-8 BOM, which would break the
   // lossless round-trip for files that legitimately start with one.
-  let markdown: string;
-  try {
-    markdown = UTF8.decode(await file.bytes());
-  } catch {
+  const markdown = decodeUtf8(await file.bytes());
+  if (markdown == null) {
     // not UTF-8 → not an editable doc. Refusing it keeps the bytes on disk
     // intact; serving it would round-trip U+FFFD back over the original.
     return null;
@@ -872,29 +907,40 @@ async function removeNode(vault: string, rel: string): Promise<void> {
 /** A segment `safePath` refuses, and therefore one the scanners must not surface. */
 const hidden = (seg: string) => seg.startsWith(".") || seg.startsWith("@");
 
-/** Every .md under the vault, vault-relative, excluding hidden directories. */
-async function scanDocs(vault: string): Promise<string[]> {
-  const glob = new Bun.Glob("**/*.md");
+/**
+ * Every path that could be an editable file: an explicit extension, inside no
+ * hidden segment. UTF-8 validation is deliberately left to `readDoc`, so the
+ * reconciler can stat unchanged files before paying to read them.
+ */
+async function scanDocCandidates(vault: string): Promise<string[]> {
+  const glob = new Bun.Glob("**/*");
   const out: string[] = [];
   for await (const rel of glob.scan({ cwd: resolve(vault), onlyFiles: true, dot: false })) {
     const p = rel.split(/[\\/]/).join("/");
-    if (p.split("/").some(hidden)) continue;
+    if (p.split("/").some(hidden) || !hasFileExtension(p)) continue;
     out.push(p);
   }
   out.sort((a, b) => a.localeCompare(b));
   return out;
 }
 
+/** Every editable UTF-8 file under the vault. */
+async function scanDocs(vault: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const p of await scanDocCandidates(vault)) {
+    if (await readDoc(vault, p)) out.push(p);
+  }
+  return out;
+}
+
 /**
- * Every FILE under `rel`, vault-relative, `.md` or not, excluding hidden
+ * Every FILE under `rel`, vault-relative, editable or not, excluding hidden
  * directories.
  *
  * `moveNode`/`removeNode` are one `rename(2)` / one `rm -r`, so a folder op
- * carries its whole subtree — including the `.png` beside the note. `scanDocs`
- * cannot see those, and neither can the git pipeline's bulk `stage()`, so a
- * folder op that named only its `.md` children left the attachment deleted in
- * the worktree and alive in HEAD, permanently, with no in-app way to clear it.
- * The commit pathspec is built from this instead.
+ * carries its whole subtree — including binary and extensionless payloads that
+ * `scanDocs` intentionally cannot see. The commit pathspec is built from this
+ * wider walk instead.
  */
 async function scanTree(vault: string, rel: string): Promise<string[]> {
   const root = resolve(vault);
@@ -1089,6 +1135,9 @@ export class Vault {
 
   scanDocs(): Promise<string[]> {
     return scanDocs(this.root);
+  }
+  scanDocCandidates(): Promise<string[]> {
+    return scanDocCandidates(this.root);
   }
   scanTree(rel: string): Promise<string[]> {
     return scanTree(this.root, rel);

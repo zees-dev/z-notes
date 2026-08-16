@@ -17,6 +17,7 @@ import { rm } from "node:fs/promises";
 import {
   affectedTargets,
   buildTree,
+  hasFileExtension,
   hasSecrets,
   linkSafeTarget,
   planLinkRewrites,
@@ -34,7 +35,7 @@ import { Trash, TrashError } from "./trash.ts";
 import type { GitSync } from "./git.ts";
 import { fail, iso, json } from "./http.ts";
 
-export const isMd = (p: string) => /\.md$/i.test(p);
+export const isDocPath = (p: string) => hasFileExtension(p);
 
 interface DocStoreDeps {
   vault: Vault;
@@ -201,7 +202,7 @@ export class DocStore {
       });
     }
 
-    const file = p.replace(/\.md$/i, "") + ".md";
+    const file = hasFileExtension(p) ? p : p + ".md";
     if (await this.vault.exists(file)) return fail(409, "exists", { message: `${file} already exists.` });
     const blocker = await this.vault.blockedByFile(file);
     if (blocker) return fail(409, "exists", { message: `${blocker} is a doc, not a folder.` });
@@ -223,12 +224,9 @@ export class DocStore {
     });
   }
 
-  /** GET /api/docs/{path} — .md gate, canonical spelling, disk-derived body. */
+  /** GET /api/docs/{path} — explicit-extension gate, canonical spelling, disk-derived body. */
   async read(decoded: string): Promise<Response> {
-    // a doc is a .md file. Without this, GET hands out any file that
-    // happens to sit in the vault (.env, an ssh key) even though it is in no
-    // tree and no search result.
-    if (!isMd(decoded)) return fail(404, "not-found", { message: `No doc at ${decoded}` });
+    if (!isDocPath(decoded)) return fail(404, "not-found", { message: `No doc at ${decoded}` });
     const p = this.canonicalDocPath(decoded);
     const out = await this.docBody(p);
     return out ? json(out) : fail(404, "not-found", { message: `No doc at ${p}` });
@@ -236,7 +234,7 @@ export class DocStore {
 
   /** PUT /api/docs/{path} — compare-and-swap under the reconcile lock. */
   async putDoc(decoded: string, body: any): Promise<Response> {
-    if (!isMd(decoded)) return fail(404, "not-found", { message: `No doc at ${decoded}` });
+    if (!isDocPath(decoded)) return fail(404, "not-found", { message: `No doc at ${decoded}` });
     const p = this.canonicalDocPath(decoded);
     if (typeof body?.markdown !== "string") return fail(400, "bad-body", { message: "markdown must be a string." });
     const markdown: string = body.markdown;
@@ -292,20 +290,17 @@ export class DocStore {
 
       const kind = await this.vault.exists(rel);
       if (!kind) return fail(404, "not-found", { message: `Nothing at ${rel}` });
-      // a doc is a .md file. Anything else that happens to sit in the
-      // vault is in no tree, no search result, and is not renamable or deletable
-      // through this API either.
-      if (kind === "file" && !isMd(rel)) return fail(404, "not-found", { message: `No doc at ${rel}` });
+      if (kind === "file" && !isDocPath(rel)) return fail(404, "not-found", { message: `No doc at ${rel}` });
       const from = kind === "file" ? this.canonicalDocPath(rel) : rel;
+      // An explicit extension alone is not enough: invalid UTF-8 files stay
+      // outside the index/editor and file operations cannot claim them.
+      if (kind === "file" && !this.index.file(from)) return fail(404, "not-found", { message: `No doc at ${rel}` });
 
       const beforeDocs = await this.vault.scanDocs();
       const subtree = kind === "file" ? [from] : beforeDocs.filter((d) => d.startsWith(from + "/"));
-      /* Every FILE the op will actually touch, `.md` or not: `moveNode` is one
-         rename(2) and the trash move another, so a folder carries its images and
-         its README along. Naming only the `.md` children in the
-         commit left those deleted-in-the-worktree and alive-in-HEAD forever — the
-         bulk `stage()` is `.md`-only too, so nothing downstream could ever heal
-         it, and `dirtyOutsideAllowlist()` then wedged every future push. */
+      /* Every FILE the op will actually touch, editable or not: `moveNode` is
+         one rename(2) and the trash move another, so a folder carries binary
+         and extensionless payloads alongside the indexed UTF-8 files. */
       const payload = kind === "file" ? [from] : await this.vault.scanTree(from);
 
       return method === "DELETE"
@@ -326,7 +321,9 @@ export class DocStore {
     if (!to || !this.vault.abs(to)) {
       return fail(400, "bad-path", { message: "`to` must be a vault-relative path that stays inside the vault." });
     }
-    if (kind === "file" && !isMd(to)) return fail(400, "bad-path", { message: "A doc path must end in .md." });
+    if (kind === "file" && !isDocPath(to)) {
+      return fail(400, "bad-path", { message: "A file path must include an extension." });
+    }
     /* The no-op answers first, for a folder exactly as for a doc: `to === from`
        is not "moved inside itself", it is nothing at all, and answering 400 for
        one entity kind and 200 for the other is a contract the client cannot
@@ -364,8 +361,8 @@ export class DocStore {
        Refuse the move instead; nothing has been written yet.
 
        A folder's own destination is checked alongside its subtree's: the
-       mapping holds only the `.md` docs under it, so an EMPTY folder (or one
-       carrying only non-`.md` files) had nothing to check and could take a name
+       mapping holds only indexed UTF-8 files under it, so an EMPTY folder (or
+       one carrying only non-editable files) had nothing to check and could take a name
        `POST /api/docs` refuses to mint — a dead zone nothing can be created in
        or moved into. Empty and non-empty folders are refused identically. */
     for (const dest of kind === "dir" ? [to, ...mapping.values()] : mapping.values()) {
@@ -535,7 +532,7 @@ export class DocStore {
     const gone = kind === "file" ? [from] : subtree;
     let meta;
     try {
-      meta = await this.trash.put(from, kind === "file" ? "doc" : "folder", payload);
+      meta = await this.trash.put(from, kind === "file" ? "doc" : "folder", payload, gone);
     } catch (err) {
       // the move either happened or it did not; there is no half-trashed state
       return fail(500, "delete-failed", {
@@ -549,7 +546,7 @@ export class DocStore {
     for (const p of gone) hints.set(p, { reason: "deleted", trashId: meta.id });
     await this.recon.reconcileHeld(hints);
 
-    /* the whole subtree, not just its `.md` docs — the rename took the
+    /* the whole subtree, not just its indexed UTF-8 files — the rename took the
        attachments with it and no other git path can ever notice they left — plus
        the trash entry that now holds them, so the delete and its undo are the
        same commit and a clone can restore from it */
@@ -617,10 +614,10 @@ export class DocStore {
           message: `Could not restore ${id}: ${String((err as Error)?.message || err)}`,
         });
       }
-      const { meta, entryPaths } = restored;
+      const { meta, entryPaths, docs } = restored;
 
       const hints: ChangeHints = new Map<string, ChangeHint>();
-      for (const p of meta.docs) hints.set(p, { reason: "restored", trashId: meta.id });
+      for (const p of docs) hints.set(p, { reason: "restored", trashId: meta.id });
       await this.recon.reconcileHeld(hints);
 
       const paths = [...new Set([...meta.files, ...entryPaths])];
@@ -634,7 +631,7 @@ export class DocStore {
         path: meta.path,
         kind: meta.kind,
         deletedAt: meta.deletedAt,
-        restored: meta.docs,
+        restored: docs,
         rev: doc?.rev ?? null,
         bytes: doc?.bytes ?? null,
         mtime: doc?.mtime ?? null,

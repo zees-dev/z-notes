@@ -59,6 +59,7 @@ import { ARMOR_BEGIN,
   extractLinks,
   hasSecrets,
   redactForAi,
+  resolveWikiTarget,
   safePath, type Vault } from "./vault.ts";
 
 /* ============================================================
@@ -658,14 +659,13 @@ export class AI {
   private async linkedDocs(fromPath: string, body: string): Promise<string[]> {
     const targets = extractLinks(body).slice(0, 12);
     const files = this.deps.index.allFileMeta();
+    const byPath = new Map(files.map((file) => [file.path, file]));
+    const paths = [...byPath.keys()];
     const out: string[] = [];
     const seen = new Set<string>([fromPath]);
     for (const t of targets) {
-      const want = t.replace(/\.md$/i, "");
-      const row =
-        files.find((f) => f.path === want + ".md") ||
-        files.find((f) => f.slug.toLowerCase() === want.toLowerCase()) ||
-        files.find((f) => f.path.toLowerCase() === (want + ".md").toLowerCase());
+      const resolved = resolveWikiTarget(t, paths);
+      const row = resolved ? byPath.get(resolved) : null;
       if (!row || seen.has(row.path)) continue;
       seen.add(row.path);
       const disk = await this.deps.vault.readDoc(row.path);

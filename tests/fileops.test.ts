@@ -242,10 +242,8 @@ const SEED: SeedMap = {
   "fence/fence-target.md": MD_FENCE_TARGET,
   "fence/mixer.md": MD_MIXER,
 
-  /* 4 — folder rename. The `.png` is not decoration: the contract promises a folder
-     takes its whole subtree "including non-`.md` files", and those are the ones
-     no git path in this app can see (`scanDocs`, `stage()` and the pending
-     count are all `.md`-only), so they are exactly what a folder op can strand. */
+  /* 4 — folder rename. The `.png` is UTF-8 text with an explicit extension,
+     so it is both an indexed file and part of the folder's byte-faithful payload. */
   "oldfolder/fold-one.md": MD_FOLD_ONE,
   "oldfolder/fold-two.md": MD_FOLD_TWO,
   "oldfolder/diagram.png": "PNG-PLACEHOLDER-BYTES\n",
@@ -499,6 +497,7 @@ describe("PATCH /api/docs — folder rename moves the subtree", () => {
       .map((m: any) => `${m?.from} → ${m?.to}`)
       .sort();
     expect(movedPairs).toEqual([
+      "oldfolder/diagram.png → newfolder/diagram.png",
       "oldfolder/fold-one.md → newfolder/fold-one.md",
       "oldfolder/fold-two.md → newfolder/fold-two.md",
     ]);
@@ -583,14 +582,13 @@ describe("PATCH /api/docs — refusals", () => {
     expect(`commits added by a 409: ${(await commitCount(vault)) - before}`).toBe("commits added by a 409: 0");
   }, 30000);
 
-  test("traversal, .znotes and non-.md targets are 400 bad-path", async () => {
+  test("traversal, .znotes and extensionless targets are 400 bad-path", async () => {
     const bad: Array<[string, string]> = [
       ["parent traversal", "../escaped.md"],
       ["embedded traversal", "err/../../escaped.md"],
       ["absolute path", "/tmp/escaped.md"],
       ["app-internal dir", ".znotes/leaked.md"],
       ["app-internal nested", ".znotes/sub/leaked.md"],
-      ["not markdown", "err/src.txt"],
       ["no extension", "err/src"],
       ["empty target", ""],
     ];
@@ -1206,10 +1204,10 @@ describe("PATCH /api/docs — a no-op is a no-op for both entity kinds", () => {
 
       expectFileBytes(V, "same/a.md", "# A\n\nbody\n", "nothing moved");
 
-      /* the contract's table: DELETE of an existing NON-.md file is 404, not 204 */
-      writeFileSync(join(V, "same", "notes.txt"), "not a doc\n");
+      /* An explicit extension does not turn undecodable bytes into editable text. */
+      writeFileSync(join(V, "same", "notes.txt"), Buffer.from([0xff, 0xfe, 0xfd]));
       const d = await deleteDoc(s, "same/notes.txt");
-      expect(`DELETE a non-.md file → ${d.status} ${d.body?.error}`).toBe("DELETE a non-.md file → 404 not-found");
+      expect(`DELETE invalid UTF-8 → ${d.status} ${d.body?.error}`).toBe("DELETE invalid UTF-8 → 404 not-found");
       expect(`the non-doc survives: ${vaultHas(V, "same/notes.txt")}`).toBe("the non-doc survives: true");
     } finally {
       await s.stop();
@@ -1483,6 +1481,103 @@ describe("POST /api/docs — implicit parents, for docs and for folders", () => 
       const walk = (ns: any[]) => ns.forEach((n) => (n.type === "folder" ? walk(n.children) : flat.push(n.path)));
       walk(tree.body.tree);
       expect(`tree knows the nested doc: ${flat.includes("a/b/c.md")}`).toBe("tree knows the nested doc: true");
+    } finally {
+      await s.stop();
+    }
+  }, 60000);
+
+  test("a bare file name defaults to .md while an explicit extension is preserved", async () => {
+    const V = makeVault({ "root.md": "# root\n" });
+    orphanVaults.push(V);
+    const s = await startServer({ vault: V });
+    try {
+      const cases = [
+        ["created/bare", "created/bare.md"],
+        ["created/already.md", "created/already.md"],
+        ["created/plain.txt", "created/plain.txt"],
+        ["created/report.data.json", "created/report.data.json"],
+      ] as const;
+
+      for (const [requested, expected] of cases) {
+        const markdown = `body for ${requested}\n`;
+        const made = await s.api("POST", "/api/docs", { path: requested, type: "doc", markdown });
+        expect(`${requested} create → ${made.status} ${made.body.path}`).toBe(`${requested} create → 201 ${expected}`);
+        expectFileBytes(V, expected, markdown, `${expected} keeps the requested bytes`);
+        if (requested !== expected) {
+          expect(`${requested} was not written without its default: ${vaultHas(V, requested)}`).toBe(
+            `${requested} was not written without its default: false`
+          );
+        } else if (!/\.md$/i.test(expected)) {
+          expect(`${expected}.md was not added: ${vaultHas(V, expected + ".md")}`).toBe(
+            `${expected}.md was not added: false`
+          );
+        }
+      }
+
+      const tree = await s.get("/api/docs");
+      const flat: string[] = [];
+      const walk = (nodes: any[]) => nodes.forEach((n) => (n.type === "folder" ? walk(n.children) : flat.push(n.path)));
+      walk(tree.body.tree);
+      for (const [, expected] of cases) {
+        expect(`tree contains ${expected}: ${flat.includes(expected)}`).toBe(`tree contains ${expected}: true`);
+      }
+    } finally {
+      await s.stop();
+    }
+  }, 60000);
+
+  test("an explicit-extension UTF-8 file stays indexed through edit, move, sync, delete and restore", async () => {
+    const V = makeVault({ "root.md": "# root\n\nsee [[files/field-notes.txt]]\n" });
+    orphanVaults.push(V);
+    await initRepo(V);
+    const s = await startServer({ vault: V });
+    try {
+      const from = "files/field-notes.txt";
+      const to = "archive/field-notes.json";
+      const first = "# Field notes\n\ncreated as text\n";
+      const second = "# Field notes\n\nedited without changing the requested extension\n";
+
+      const made = await s.api("POST", "/api/docs", { path: from, type: "doc", markdown: first });
+      expect(`create explicit extension → ${made.status} ${made.body.path}`).toBe(`create explicit extension → 201 ${from}`);
+      expect(`GET explicit extension → ${(await s.doc(from)).status}`).toBe("GET explicit extension → 200");
+
+      const saved = await s.api("PUT", "/api/docs/" + encPath(from), { markdown: second, rev: made.body.rev });
+      expect(`PUT explicit extension → ${saved.status} ${saved.body.path}`).toBe(`PUT explicit extension → 200 ${from}`);
+      expectFileBytes(V, from, second, "PUT keeps the explicit-extension file byte-faithful");
+
+      const synced = await s.api("POST", "/api/sync/now", {});
+      expect(`sync explicit extension → ${synced.status} ${synced.body.state}`).toBe("sync explicit extension → 200 synced");
+      expect(`git tracks ${from}: ${(await gitOk(V, "ls-files", "--", from)).trim()}`).toBe(`git tracks ${from}: ${from}`);
+
+      const moved = await patchDoc(s, from, { to });
+      expect(`move between explicit extensions → ${moved.status} ${moved.body.path}`).toBe(
+        `move between explicit extensions → 200 ${to}`
+      );
+      expect(`old path after move → ${(await s.doc(from)).status}`).toBe("old path after move → 404");
+      const opened = await s.doc(to);
+      expect(`new path after move → ${opened.status}`).toBe("new path after move → 200");
+      expect(opened.body.markdown).toBe(second);
+      expect((await s.doc("root.md")).body.markdown).toContain("[[field-notes.json]]");
+
+      const tree = await s.get("/api/docs");
+      const flat: string[] = [];
+      const walk = (nodes: any[]) => nodes.forEach((n) => (n.type === "folder" ? walk(n.children) : flat.push(n.path)));
+      walk(tree.body.tree);
+      expect(`tree moved to ${to}: ${flat.includes(to) && !flat.includes(from)}`).toBe(`tree moved to ${to}: true`);
+
+      const deleted = await deleteDoc(s, to);
+      expect(`delete explicit extension → ${deleted.status}`).toBe("delete explicit extension → 204");
+      expect(`deleted path is gone → ${(await s.doc(to)).status}`).toBe("deleted path is gone → 404");
+      const trash = await s.get("/api/trash");
+      const entry = trash.body.entries.find((e: any) => e.path === to);
+      expect(`trash contains ${to}: ${!!entry}`).toBe(`trash contains ${to}: true`);
+
+      const restored = await s.api("POST", `/api/trash/${entry.id}/restore`, {});
+      expect(`restore explicit extension → ${restored.status} ${restored.body.path}`).toBe(
+        `restore explicit extension → 200 ${to}`
+      );
+      expect(`restore reports indexed file: ${restored.body.restored.includes(to)}`).toBe("restore reports indexed file: true");
+      expect((await s.doc(to)).body.markdown).toBe(second);
     } finally {
       await s.stop();
     }

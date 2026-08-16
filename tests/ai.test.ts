@@ -361,6 +361,33 @@ describe("ai relay — the request that goes upstream", () => {
     expect(sent.includes("what does this doc say?")).toBe(true);
   }, 30000);
 
+  test("depth-1 context resolves an explicit qualified extension exactly before the bare .md fallback", async () => {
+    const exact = "EXACTQUALIFIEDMARKER — the literal .txt target.\n";
+    const shadow = "SHADOWMARKER — must not win over the literal target.\n";
+    const missingShadow = "MISSINGSHADOWMARKER — explicit missing target must not gain .md.\n";
+    const fallback = "BAREFALLBACKMARKER — qualified bare target defaults to .md.\n";
+    const isolatedMock = await newMock();
+    const isolated = await newServer({
+      seed: {
+        "notes/main.md": "# Main\n\n[[refs/context.txt]], [[refs/missing.txt]], and [[refs/fallback]]\n",
+        "refs/context.txt": exact,
+        "refs/context.txt.md": shadow,
+        "refs/missing.txt.md": missingShadow,
+        "refs/fallback.md": fallback,
+      },
+    });
+    await configure(isolated, isolatedMock);
+
+    isolatedMock.script(reply.text("ok"));
+    await turn(isolated, { content: "follow those links", docPath: "notes/main.md" });
+    const sent = isolatedMock.streamed()[0].strings;
+
+    expect(sent.includes(exact)).toBe(true);
+    expect(sent.includes(fallback)).toBe(true);
+    expect(sent.includes(shadow)).toBe(false);
+    expect(sent.includes(missingShadow)).toBe(false);
+  }, 30000);
+
   /* The manifest is built twice now (headings / no headings) and once per turn
      rather than once per eviction pass, off two different sqlite projections —
      one with `body`, one without. The outline is what the second projection

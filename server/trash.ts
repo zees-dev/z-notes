@@ -49,8 +49,8 @@
    ============================================================ */
 
 import { dirname, resolve } from "node:path";
-import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
-import { safePath, znotesDir, type Vault } from "./vault.ts";
+import { lstat, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
+import { decodeUtf8, hasFileExtension, safePath, znotesDir, type Vault } from "./vault.ts";
 import { TRASH_RETENTION_DEFAULT_DAYS } from "./settings.ts";
 
 /** Vault-relative, POSIX, for git pathspecs and log lines. */
@@ -90,9 +90,9 @@ interface TrashMeta {
   deletedAt: string;
   /** total bytes of everything moved */
   bytes: number;
-  /** the `.md` docs that left the vault (what the SSE hints and git need) */
+  /** the editable UTF-8 files that left the vault (what SSE hints need) */
   docs: string[];
-  /** EVERY file moved, `.md` or not — a folder carries its images along */
+  /** EVERY file moved, editable or not — a folder carries its images along */
   files: string[];
 }
 
@@ -163,6 +163,23 @@ async function sizeOf(abs: string): Promise<number> {
     return (await Bun.file(abs).stat()).size;
   } catch {
     return 0;
+  }
+}
+
+/** A retained regular file reached without crossing any symlink component. */
+async function regularPayloadFile(root: string, rel: string): Promise<string | null> {
+  try {
+    if (!(await lstat(root)).isDirectory()) return null;
+    let abs = root;
+    const parts = rel.split("/");
+    for (let i = 0; i < parts.length; i++) {
+      abs = resolve(abs, parts[i]);
+      const st = await lstat(abs);
+      if (i === parts.length - 1 ? !st.isFile() : !st.isDirectory()) return null;
+    }
+    return abs;
+  } catch {
+    return null;
   }
 }
 
@@ -241,6 +258,28 @@ export class Trash {
     }
   }
 
+  /**
+   * Editable docs in the retained bytes, under today's doc grammar.
+   *
+   * Early v1 records listed only `.md` paths in `docs`, while `files` already
+   * retained the whole folder. Deriving from that payload keeps old committed
+   * trash compatible after explicit-extension UTF-8 docs became editable.
+   */
+  private async currentDocs(meta: TrashMeta): Promise<string[]> {
+    const dir = trashEntryDir(this.vault.root, meta.id)!;
+    const files = resolve(dir, "files");
+    const docs: string[] = [];
+    for (const path of meta.files) {
+      if (!hasFileExtension(path)) continue;
+      const abs = await regularPayloadFile(files, path);
+      if (!abs) continue;
+      try {
+        if (decodeUtf8(await Bun.file(abs).bytes()) != null) docs.push(path);
+      } catch {}
+    }
+    return docs.sort((a, b) => a.localeCompare(b));
+  }
+
   /** The ids on disk, newest-looking first is decided by `list()`, not here. */
   private async ids(): Promise<string[]> {
     let entries;
@@ -268,6 +307,7 @@ export class Trash {
       .catch(() => false);
     const blockedBy = await this.blocker(meta.path);
     const purgeAt = new Date(Date.parse(meta.deletedAt) + this.retentionDays() * DAY_MS).toISOString();
+    const docs = await this.currentDocs(meta);
     return {
       id: meta.id,
       path: meta.path,
@@ -275,7 +315,7 @@ export class Trash {
       kind: meta.kind,
       deletedAt: meta.deletedAt,
       bytes: meta.bytes,
-      docCount: meta.docs.length,
+      docCount: docs.length,
       fileCount: meta.files.length,
       purgeAt,
       expired: Date.parse(purgeAt) <= Date.now(),
@@ -323,9 +363,10 @@ export class Trash {
    * direction to be interrupted in. The opposite order would leave the bytes in
    * the trash with nothing on disk saying where they belong.
    *
-   * @param files every file the move carries, vault-relative (`.md` or not)
+   * @param files every file the move carries, editable or not
+   * @param docs the indexed UTF-8 files among that payload
    */
-  async put(rel: string, kind: "doc" | "folder", files: string[]): Promise<TrashMeta> {
+  async put(rel: string, kind: "doc" | "folder", files: string[], docs: string[]): Promise<TrashMeta> {
     const src = this.vault.abs(rel);
     if (!src) throw new TrashError("bad-path", `${rel} is not a vault path.`, 400);
     const id = newId();
@@ -344,7 +385,7 @@ export class Trash {
       kind,
       deletedAt: new Date().toISOString(),
       bytes,
-      docs: files.filter((f) => /\.md$/i.test(f)).sort(),
+      docs: [...docs].sort(),
       files: [...files].sort(),
     };
 
@@ -372,10 +413,9 @@ export class Trash {
    * typed 409 and the trash is untouched, so the user can rename the occupant
    * and try again with nothing lost either way.
    */
-  async restore(id: string): Promise<{ meta: TrashMeta; entryPaths: string[] }> {
-    const found = await this.entry(id);
-    if (!found) throw new TrashError("not-found", `No trash entry ${id}.`, 404);
-    const { meta } = found;
+  async restore(id: string): Promise<{ meta: TrashMeta; entryPaths: string[]; docs: string[] }> {
+    const meta = await this.readMeta(id);
+    if (!meta) throw new TrashError("not-found", `No trash entry ${id}.`, 404);
     const dir = trashEntryDir(this.vault.root, id)!;
     const payload = resolve(dir, "files", meta.path);
     if (!(await Bun.file(payload).stat().then(() => true).catch(() => false))) {
@@ -400,6 +440,7 @@ export class Trash {
 
     const dest = this.vault.abs(meta.path);
     if (!dest) throw new TrashError("bad-path", `${meta.path} is not a vault path any more.`, 400);
+    const docs = await this.currentDocs(meta);
     // node returns the TOPMOST directory it had to create, which is exactly the
     // scaffolding to remove again if the rename then fails
     const created = (await mkdir(dirname(dest), { recursive: true })) ?? null;
@@ -412,7 +453,7 @@ export class Trash {
     }
     await rm(dir, { recursive: true, force: true }).catch(() => {});
     this.log(`trash: restored ${TRASH_REL}/${id} → ${meta.path}`);
-    return { meta, entryPaths };
+    return { meta, entryPaths, docs };
   }
 
   /**

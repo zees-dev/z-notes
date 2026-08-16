@@ -9,7 +9,7 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, I, apiFail, clearStickyToast, dirname, el, esc, normTarget, relOf, syncDotClass, toast, vaultOf, vaultPrefix, vaultRootKey } from "./ui.js";
+import { $, $$, I, apiFail, clearStickyToast, dirname, el, esc, normTarget, relOf, syncDotClass, toast, vaultOf, vaultPrefix, vaultRootKey, withDefaultExtension } from "./ui.js";
 import { cells } from "./markdown.js";
 import { confirmDialog } from "./dialogs.js";
 import { refreshTrash, trashRetentionNote } from "./trash.js";
@@ -91,6 +91,98 @@ export async function loadTree() {
 
 /** The descriptor for a vault id, or null. */
 const vaultById = (id) => state.vaults.find((v) => v.id === id) || null;
+
+/* ---------- drag/drop moves ----------
+
+   The tree has one meaningful spatial drop: INTO a folder. A doc row therefore
+   means its parent folder, a folder row means itself, and a vault row means that
+   vault's root. There is deliberately no before/after drop — tree order comes
+   from the filesystem and is not state the client can rearrange. */
+let draggedDoc = null;
+
+const basename = (path) => {
+  const rel = relOf(path);
+  return rel.slice(rel.lastIndexOf("/") + 1);
+};
+
+function dropPlan(source, target, kind) {
+  const parent = kind === "doc" ? dirname(target) : target;
+  const id = vaultOf(parent);
+  const prefix = vaultPrefix(id);
+  const rel = relOf(parent);
+  const to = prefix + (rel ? rel + "/" : "") + basename(source);
+  return {
+    to,
+    sameVault: vaultOf(source) === id,
+    useful: to !== source,
+  };
+}
+
+function clearDropMarks() {
+  $$("#tree .drop-target, #tree .drop-blocked, #tree .drag-source").forEach((row) =>
+    row.classList.remove("drop-target", "drop-blocked", "drag-source")
+  );
+}
+
+function wireDragSource(row, path) {
+  row.draggable = true;
+  row.addEventListener("dragstart", (e) => {
+    draggedDoc = { path, type: "doc", refusal: null };
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", path);
+    }
+    /* Keep the browser's drag image opaque; fade only the row left in the tree. */
+    requestAnimationFrame(() => row.classList.add("drag-source"));
+  });
+  row.addEventListener("dragend", () => {
+    /* Chromium does not dispatch `drop` when the active target advertises
+       `dropEffect = none`. Keep dragend as the explanation fallback for a
+       native-cancelled cross-vault release; a normal eligible drop clears the
+       source first and therefore cannot toast twice. */
+    const refusal = draggedDoc && draggedDoc.refusal;
+    draggedDoc = null;
+    clearDropMarks();
+    if (refusal) toast(refusal);
+  });
+}
+
+function wireDropTarget(row, path, kind) {
+  const paint = (e) => {
+    if (!draggedDoc) return null;
+    const plan = dropPlan(draggedDoc.path, path, kind);
+    e.preventDefault();
+    draggedDoc.refusal = plan.sameVault ? null : "A move cannot cross vaults";
+    /* Keep a useful cross-vault target eligible for `drop`: that event is the
+       only reliable place to explain the refusal. The red target styling is
+       the invalid-state signal; the handler below still guarantees no PATCH. */
+    if (e.dataTransfer) e.dataTransfer.dropEffect = plan.useful ? "move" : "none";
+    row.classList.toggle("drop-target", plan.sameVault && plan.useful);
+    row.classList.toggle("drop-blocked", !plan.sameVault || !plan.useful);
+    return plan;
+  };
+  row.addEventListener("dragenter", paint);
+  row.addEventListener("dragover", paint);
+  row.addEventListener("dragleave", (e) => {
+    if (e.relatedTarget && row.contains(e.relatedTarget)) return;
+    row.classList.remove("drop-target", "drop-blocked");
+    if (draggedDoc) draggedDoc.refusal = null;
+  });
+  row.addEventListener("drop", (e) => {
+    const source = draggedDoc;
+    const plan = source && paint(e);
+    draggedDoc = null;
+    clearDropMarks();
+    if (!source || !plan) return;
+    e.stopPropagation();
+    if (!plan.sameVault) {
+      toast("A move cannot cross vaults");
+      return;
+    }
+    if (!plan.useful) return;
+    moveEntry({ path: source.path, type: "file" }, plan.to);
+  });
+}
 
 /**
  * A `sync-status` frame named a vault: keep its descriptor current and repaint
@@ -216,6 +308,7 @@ export function renderTree() {
       row.addEventListener("focus", () => (state.pick = { path: n.path, kind: "folder" }));
       row.addEventListener("keydown", (e) => rowKeys(e, n.path, "folder"));
       renameOnDouble(row, n.path, "folder");
+      wireDropTarget(row, n.path, "folder");
       wrap.appendChild(row);
       wrap.appendChild(rowActs(n.path, "folder", n.name));
       parent.appendChild(wrap);
@@ -238,6 +331,9 @@ export function renderTree() {
       row.addEventListener("focus", () => (state.pick = { path: n.path, kind: "doc" }));
       row.addEventListener("keydown", (e) => rowKeys(e, n.path, "doc"));
       renameOnDouble(row, n.path, "doc");
+      wireDragSource(row, n.path);
+      /* Dropping ON a doc means its parent folder; rows are never reordered. */
+      wireDropTarget(row, n.path, "doc");
       wrap.appendChild(row);
       wrap.appendChild(rowActs(n.path, "doc", n.name));
       parent.appendChild(wrap);
@@ -278,6 +374,7 @@ export function renderTree() {
       kids.classList.toggle("closed", !now);
     });
     row.addEventListener("focus", pickRoot);
+    wireDropTarget(row, rootKey, "vault");
     wrap.appendChild(row);
     host.appendChild(wrap);
     host.appendChild(kids);
@@ -483,7 +580,7 @@ function parseCreate(input, mode, parent) {
   const base = fromRoot ? "" : relOf(parent);
   if (!folder) {
     const leaf = segs[segs.length - 1];
-    segs[segs.length - 1] = /\.md$/i.test(leaf) ? leaf : leaf + ".md";
+    segs[segs.length - 1] = withDefaultExtension(leaf);
   }
   const path = prefix + (base ? base + "/" : "") + segs.join("/");
 
@@ -721,7 +818,7 @@ export async function createFromLink(name) {
   if (!t) return;
   const prefix = vaultPrefix(vaultOf(state.active || ""));
   const here = relOf(dirname(state.active || ""));
-  const path = prefix + (t.indexOf("/") >= 0 ? t : (here ? here + "/" : "") + t) + ".md";
+  const path = prefix + withDefaultExtension(t.indexOf("/") >= 0 ? t : (here ? here + "/" : "") + t);
   try {
     await api.createEntry({ path, type: "doc", markdown: "# " + t.split("/").pop() + "\n\n" });
     rememberFileOp({ kind: "create", path, type: "doc", markdown: "" });
@@ -742,13 +839,14 @@ export async function createFromLink(name) {
 /* ============================================================
    RENAME / MOVE / DELETE — IDE parity from the sidebar
 
-   ONE inline control does rename AND move, deliberately: the row turns into a
+   ONE inline control does rename AND move: the row turns into a
    text input carrying the doc's full vault-relative path, with the basename
    preselected. Type over the selection and it is a rename; edit the folder part
    and it is a move; both are the same `PATCH {to}` and the same one commit.
-   That is the whole reason there is no drag-and-drop here — a drag cannot be
-   driven from the keyboard, cannot express "into a folder that does not exist
-   yet", and would need a second, different affordance for rename anyway.
+
+   Drag/drop is the pointer shortcut for the subset it can express — moving an
+   existing doc into an existing folder. This inline path stays the keyboard
+   route and the only route that can also rename or create a destination path.
 
    The chrome and the keys are the inline-CREATE idiom, unchanged: same `.newrow`
    input, Enter commits, Esc cancels, blur cancels.
@@ -825,24 +923,34 @@ const remap = (path, from, to) =>
 export async function commitRename(node, value) {
   const kind = node.type === "folder" ? "folder" : "doc";
   state.renaming = null;
+  let to = String(value == null ? "" : value)
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  /* A bare rename keeps the doc convention; an explicit extension is exactly
+     what the user typed. In particular, never turn `report.txt` into
+     `report.txt.md`, and never alter the basename a drag carried across. */
+  if (kind === "doc" && to) {
+    to = withDefaultExtension(to);
+  }
+  return moveEntry(node, to);
+}
+
+/** The ONE client move transaction, shared by inline rename, drag/drop and the
+    inverse/forward halves of history. `noRecord` is what makes applying history
+    move the existing entry between stacks instead of recursively minting one. */
+async function moveEntry(node, to, opts) {
+  const kind = node.type === "folder" ? "folder" : "doc";
+  const from = node.path;
   /* Latched HERE, before any await: the whole move is one operation, and the
      question at the end is "is the user still where they were when they asked
      for it?". Latching later would only notice navigations that started after
      the request came back — and a click made WHILE it was in flight is exactly
      the case that must win. */
   const ours = navGate();
-  let to = String(value == null ? "" : value)
-    .trim()
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
-  if (!to || to === node.path) {
+  if (!to || to === from) {
     renderTree();
-    return;
-  }
-  if (kind === "doc") to = to.replace(/\.md$/i, "") + ".md";
-  if (to === node.path) {
-    renderTree();
-    return;
+    return false;
   }
   /* Mirror of the server's own guard, so the user hears about it before the
      round trip: `]` and line breaks break out of the `[[…]]` a rewrite would
@@ -850,16 +958,16 @@ export async function commitRename(node, value) {
   if (/[\]\r\n]/.test(to)) {
     renderTree();
     toast('A name cannot contain "]" — a [[link]] pointing at it would not survive');
-    return;
+    return false;
   }
   /* Mirror of the server's other move guard. A vault is a repository of its
      own — moving a doc out of one is a delete there and a create here, with
      two histories to match, and the field that spells the destination is not
      the place to start that. The server refuses it too. */
-  if (vaultOf(to) !== vaultOf(node.path)) {
+  if (vaultOf(to) !== vaultOf(from)) {
     renderTree();
     toast("A move cannot cross vaults");
-    return;
+    return false;
   }
 
   /* Anything still in the buffer has to reach disk first. Not only when the
@@ -867,25 +975,26 @@ export async function commitRename(node, value) {
      doc's REFERRERS, so an untouched-looking buffer can go stale under the
      rename too, and the save that noticed used to answer the 409 by throwing
      the user's typing away. */
-  const activeMoves = state.active && remap(state.active, node.path, to) !== state.active;
+  const activeMoves = state.active && remap(state.active, from, to) !== state.active;
   if (state.active && state.dirty) {
     const wrote = await saveDoc(state.active, { silent: true });
     if (!wrote) {
       renderTree();
       toast("Unsaved changes in " + state.active + " could not be written — the move was not started");
-      return;
+      return false;
     }
   }
 
   try {
-    const r = await api.moveDoc(node.path, to);
+    const r = await api.moveDoc(from, to);
+    if (!(opts && opts.noRecord)) rememberFileOp({ kind: "move", from, to, type: kind });
     /* Re-home the pane only if this move still owns navigation. If the user
        clicked another doc while the request was in flight, or the SSE `moved`
        echo already followed the doc to its new path, that newer navigation owns
        the pane — stealing it back would drop the user somewhere they left, and
        clearing state.active underneath it would blank the doc they chose. */
     const follow = activeMoves && ours();
-    const next = follow && state.active ? remap(state.active, node.path, to) : null;
+    const next = follow && state.active ? remap(state.active, from, to) : null;
     if (follow) {
       state.docs.delete(state.active);
       state.active = null;
@@ -902,18 +1011,20 @@ export async function commitRename(node, value) {
     const n = r && r.backlinksUpdated ? r.backlinksUpdated : 0;
     toast(
       (kind === "folder" ? "Moved " : "Renamed ") +
-        node.path +
+        from +
         " → " +
         to +
         (n ? " · " + n + " link" + (n === 1 ? "" : "s") + " rewritten" : "")
     );
+    return true;
   } catch (err) {
     renderTree();
     if (err && err.code === "exists") {
       toast(to + " already exists");
-      return;
+      return false;
     }
-    apiFail(err, "Could not move " + node.path);
+    apiFail(err, "Could not move " + from);
+    return false;
   }
 }
 
@@ -1055,10 +1166,11 @@ function neighbourDoc(path) {
 /* ============================================================
    FILE-OPERATION UNDO (⌘Z / ⌘⇧Z outside a text surface)
 
-   ⌘Z in the Raw textarea is the browser's own text undo and stays that way
-   (ADR 0013). Everywhere else — the tree, the preview pane, nothing focused —
-   the last thing that happened was a FILE operation, and that is what ⌘Z
-   should take back. A delete undoes to a restore; a create undoes to a delete.
+   Raw and file operations share the app-owned timeline (ADR 0014). Outside a
+   text surface — the tree, the preview pane, nothing focused — the next entry
+   may be a FILE operation, and that is what ⌘Z should take back. A delete
+   undoes to a restore; a create undoes to a delete; a move undoes through the
+   same move transaction with its paths reversed.
 
    EVERY ONE OF THESE ASKS FIRST. That is not the usual undo contract, and it
    is deliberate: a text undo is instant and reversible in the same keystroke,
@@ -1067,10 +1179,10 @@ function neighbourDoc(path) {
    people press reflexively in an editor — the cost of a mis-fired ⌘Z here is a
    doc that vanishes, and the cost of the prompt is one Return.
 
-   THE STACK IS SHALLOW ON PURPOSE (`FILE_HISTORY_MAX`). It exists to take back
-   the thing you just did, not to replay a session — and every entry is a claim
-   about the vault that a sync from another device can quietly invalidate. The
-   trash drawer is the durable route back; this is the shortcut.
+   THE STACK IS BOUNDED ON PURPOSE (`history.js`'s `MAX`). It covers a working
+   session, and every file entry is a claim about the vault that a sync from
+   another device can quietly invalidate. The trash drawer is the durable route
+   back from deletes; this is the chronological shortcut.
 
    A DELETE IS NOT REMEMBERED BY ITS TRASH ID. The id is resolved at undo time,
    from the newest trash entry that names the path, because between the delete
@@ -1179,6 +1291,9 @@ function takeFileAway(entry, done) {
     that puts a file back says the opposite of what the button does. */
 function fileOpPrompt(entry, restoring) {
   const noun = entry.type === "folder" ? "folder" : "doc";
+  if (entry.kind === "move") {
+    return { title: "Move " + noun, ok: "Move", danger: false, note: "Links that point to it will follow." };
+  }
   return restoring
     ? { title: "Restore " + noun, ok: "Restore", danger: false, note: "Put back where it was, with its contents." }
     : {
@@ -1195,6 +1310,9 @@ function fileOpPrompt(entry, restoring) {
     reached, so the sentence has to name the ACT, not the moment. */
 function fileOpBody(entry, undoing) {
   const noun = entry.type === "folder" ? "folder" : "doc";
+  if (entry.kind === "move") {
+    return undoing ? "Undo — move it back to " + entry.from + "." : "Redo — move it again to " + entry.to + ".";
+  }
   return entry.kind === "delete"
     ? undoing
       ? "Undo — put back the " + noun + " you deleted."
@@ -1221,6 +1339,26 @@ function fileOpBody(entry, undoing) {
  * offering.
  */
 export function applyFileHistory(entry, undoing) {
+  if (entry.kind === "move") {
+    const from = undoing ? entry.to : entry.from;
+    const to = undoing ? entry.from : entry.to;
+    const p = fileOpPrompt(entry, false);
+    return new Promise((resolve) => {
+      confirmDialog({
+        title: p.title,
+        path: from,
+        body: fileOpBody(entry, undoing),
+        ok: p.ok,
+        danger: p.danger,
+        note: p.note,
+        onOk: () =>
+          moveEntry({ path: from, type: entry.type === "folder" ? "folder" : "file" }, to, { noRecord: true }).then(
+            (ok) => resolve(ok !== false)
+          ),
+        onCancel: () => resolve(false),
+      });
+    });
+  }
   /* a delete undoes to a restore and redoes to a delete; a create is the
      mirror of that */
   const restoring = entry.kind === "delete" ? undoing : !undoing;

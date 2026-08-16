@@ -16,10 +16,11 @@
      - attach is non-destructive and atomic: it refuses, naming the paths,
        rather than overwrite a local file, and on any failure it rolls back
        everything it made — leaving the vault byte-identical.
-     - tracked set: EXACTLY *.md + .znotes/settings.toml (+ vault.pub /
-       identity.age) — attachments, dotfiles and non-markdown never enter it;
-       .znotes/index.db (the credential store) is ignored through the repo's
-       own .git/info/exclude, whatever the user's .gitignore says.
+     - tracked set: exactly visible, extension-bearing valid-UTF-8 docs plus
+       .znotes/settings.toml (+ vault.pub / identity.age). Hidden,
+       extensionless and invalid-UTF-8 payloads never enter it; .znotes/index.db
+       (the credential store) is ignored through the repo's own
+       .git/info/exclude, whatever the user's .gitignore says.
      - a repo the user is in the middle of — mid-merge, mid-rebase, conflicted
        index, detached HEAD — is refused outright, never resolved or committed.
      - auto-sync: debounce `git.autoSyncSeconds` (default 60, live-reloadable)
@@ -456,16 +457,15 @@ describe("git vault without a remote", () => {
     30000
   );
 
-  /* The allowlist is the whole tracked-set claim, and until now the only
-     negative case was carried by the ignore rules (index.db), not by the
-     allowlist: staging everything the scan returns would still have passed.
-     This asserts the tracked set EXACTLY, with junk of every shape present. */
+  /* The allowlist is the whole tracked-set claim: visible UTF-8 files with an
+     explicit extension are app-owned, while hidden and undecodable files are
+     still outside it. This asserts the boundary with junk of every shape. */
   test(
-    "the tracked set is exactly *.md + .znotes meta — attachments, dotfiles and non-markdown are never committed",
+    "the tracked set includes visible explicit-extension UTF-8 files, but not hidden or binary files",
     async () => {
       const { vault } = await gitVault({ seed: { "a.md": "# A\n" } });
       writeVaultFile(vault, ".DS_Store", " junk");
-      writeVaultFile(vault, "attachment.png", "PNG\r\n");
+      writeVaultFile(vault, "attachment.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff]));
       writeVaultFile(vault, "notes.txt", "not markdown\n");
       writeVaultFile(vault, "notes/alpha.md.conflict", "# conflict copy\n");
       writeVaultFile(vault, ".obsidian/workspace.md", "# hidden dir\n");
@@ -482,6 +482,8 @@ describe("git vault without a remote", () => {
         ".znotes/settings.toml",
         ".znotes/vault.pub",
         "a.md",
+        "notes.txt",
+        "notes/alpha.md.conflict",
       ]);
     },
     30000
@@ -514,6 +516,63 @@ describe("git vault without a remote", () => {
       expect(
         nameStatus.some((l) => /^(R\d+\s+inbox\.md\s+inbox-renamed\.md|A\s+inbox-renamed\.md)$/.test(l))
       ).toBe(true);
+    },
+    30000
+  );
+
+  test(
+    "deleted doc identity comes from HEAD UTF-8 bytes, not diff attributes or NUL heuristics",
+    async () => {
+      const nulDoc = new TextEncoder().encode("# NUL doc\n\nleft\0right\n");
+      const invalidBinary = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff]);
+      const { vault } = await gitVault({
+        seed: {
+          ".gitattributes": "*.txt binary\n*.png text\n",
+          "nul.txt": nulDoc,
+          "forced.txt": "# Forced binary attribute\n\nstill UTF-8\n",
+          "asset.png": invalidBinary,
+        },
+      });
+      const srv = await serverOn(vault, 2);
+      await settle(srv, debounceOf(srv));
+
+      for (const path of ["nul.txt", "forced.txt", "asset.png"]) rmSync(join(vault, path));
+
+      const now = await syncNow(srv);
+      expect(now.status).toBe(200);
+      expect(now.body.state).toBe("synced");
+
+      const tracked = await lsFiles(vault);
+      expect(tracked).not.toContain("nul.txt");
+      expect(tracked).not.toContain("forced.txt");
+      expect(tracked).toContain("asset.png");
+
+      const changed = lines(await gitOk(vault, "show", "--name-status", "--pretty=format:", "HEAD"));
+      expect(changed).toContain("D\tnul.txt");
+      expect(changed).toContain("D\tforced.txt");
+      expect(changed).not.toContain("D\tasset.png");
+      expect(lines(await gitOk(vault, "status", "--porcelain"))).toContain("D asset.png");
+    },
+    30000
+  );
+
+  test(
+    "a UTF-8 doc staged before its first commit is removed from the index when deleted on disk",
+    async () => {
+      const { vault } = await gitVault({ seed: { "base.md": "# Base\n" } });
+      writeVaultFile(vault, "staged.txt", "# Staged only\n\nvalid UTF-8\n");
+      await gitOk(vault, "add", "staged.txt");
+      rmSync(join(vault, "staged.txt"));
+
+      const srv = await serverOn(vault, 2);
+      const now = await syncNow(srv);
+      expect(now.status).toBe(200);
+      expect(now.body.state).toBe("synced");
+
+      expect(await lsFiles(vault)).not.toContain("staged.txt");
+      expect(lines(await gitOk(vault, "status", "--porcelain"))).not.toContain("A staged.txt");
+      const absent = await git(vault, "cat-file", "-e", "HEAD:staged.txt");
+      expect(absent.code).not.toBe(0);
     },
     30000
   );
@@ -1211,7 +1270,7 @@ describe("blocked rebase", () => {
     async () => {
       const { vault, bare } = await gitVault({
         origin: true,
-        seed: { ...SEED, "README.txt": "the original readme\n" },
+        seed: { ...SEED, README: "the original readme\n" },
       });
 
       const other = await otherClone(bare!);
@@ -1223,7 +1282,7 @@ describe("blocked rebase", () => {
 
       const srv = await serverOn(vault, 2);
       const edited = "the readme, edited by hand and not yet committed\n";
-      writeVaultFile(vault, "README.txt", edited);
+      writeVaultFile(vault, "README", edited);
       expect((await srv.putDoc("notes/alpha.md", "# Alpha\n\nlocal\n")).status).toBe(200);
 
       const now = await syncNow(srv);
@@ -1232,22 +1291,22 @@ describe("blocked rebase", () => {
       expect(now.body.state).toBe("error");
       /* the message is the recovery affordance: it has to name the file, and it
          may not carry an absolute path or the raw remote URL */
-      expect(now.body.message).toContain("README.txt");
+      expect(now.body.message).toContain("README");
       expect(now.body.message).not.toContain(vault);
       expect(now.body.message).not.toMatch(/^From\b/);
 
       /* the user's uncommitted work is untouched — no rebase, so no abort */
-      expect(readFileSync(join(vault, "README.txt"), "utf8")).toBe(edited);
+      expect(readFileSync(join(vault, "README"), "utf8")).toBe(edited);
       const localSubjects = lines(await gitOk(vault, "log", "--pretty=format:%s", "HEAD"));
       expect(localSubjects.some((s) => s.startsWith("sync: "))).toBe(true);
 
       /* doing what the message says clears it */
-      await gitOk(vault, "add", "README.txt");
+      await gitOk(vault, "add", "README");
       await gitOk(vault, "commit", "-m", "user: readme");
       const retry = await syncNow(srv);
       expect(retry.body.state).toBe("synced");
       expect(await showFile(bare!, "main", "notes/zulu.md")).toBe(remote);
-      expect(await showFile(bare!, "main", "README.txt")).toBe(edited);
+      expect(await showFile(bare!, "main", "README")).toBe(edited);
     },
     40000
   );

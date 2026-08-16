@@ -8,7 +8,7 @@
    ============================================================ */
 
 import { describe, test, expect, afterAll } from "bun:test";
-import { readFileSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import { lstatSync, readFileSync, writeFileSync, rmSync, symlinkSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { encPath, readVaultText, startServer, vaultHas, waitUntil, type TestServer } from "./helpers";
 
@@ -74,12 +74,14 @@ describe("real trash storage and routes", () => {
   }, 60000);
 
   test("a deleted folder restores its markdown and non-markdown payload together", async () => {
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff]);
     const s = await server({
       "project/docs/a.md": "# A\n",
       "project/docs/deep/b.md": "# B\n",
-      "project/image.bin": "not markdown\n",
+      "project/image.bin": "placeholder replaced below",
       "outside.md": "# Outside\n",
     });
+    writeFileSync(join(s.vault, "project/image.bin"), binary);
 
     expect((await del(s, "project")).status).toBe(204);
     expect(vaultHas(s.vault, "project")).toBe(false);
@@ -91,7 +93,54 @@ describe("real trash storage and routes", () => {
     expect((await restore(s, entry.id)).status).toBe(200);
     expect(readVaultText(s.vault, "project/docs/a.md")).toBe("# A\n");
     expect(readVaultText(s.vault, "project/docs/deep/b.md")).toBe("# B\n");
-    expect(readVaultText(s.vault, "project/image.bin")).toBe("not markdown\n");
+    expect(readFileSync(join(s.vault, "project/image.bin")).equals(binary)).toBe(true);
+  }, 60000);
+
+  test("a legacy folder entry rediscovers every editable doc before restore", async () => {
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff]);
+    const s = await server({
+      "legacy/a.md": "# A\n",
+      "legacy/report.txt": "# Report\n\nvalid UTF-8 stays editable\n",
+      "legacy/image.bin": "placeholder replaced below",
+      "outside.md": "# Outside\n",
+    });
+    writeFileSync(join(s.vault, "legacy/image.bin"), binary);
+    symlinkSync(join(import.meta.dir, "..", "package.json"), join(s.vault, "legacy/leak.txt"));
+    symlinkSync(join(import.meta.dir, ".."), join(s.vault, "legacy/link"));
+
+    expect((await del(s, "legacy")).status).toBe(204);
+    const current = (await s.get("/api/trash")).body.entries[0];
+    const metaPath = join(s.vault, ".znotes", "trash", current.id, "meta.json");
+    const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+    /* Before explicit-extension docs, metadata recorded only .md paths even
+       though files/ retained every byte. Recreate that committed legacy shape. */
+    meta.docs = ["legacy/a.md"];
+    expect(meta.files).toContain("legacy/leak.txt");
+    /* A hostile committed record can name a regular file THROUGH a retained
+       directory symlink even though scanTree itself records only the link. */
+    meta.files.push("legacy/link/package.json");
+    writeFileSync(metaPath, JSON.stringify(meta, null, 2) + "\n");
+
+    const legacy = (await s.get("/api/trash")).body.entries[0];
+    expect(legacy.docCount).toBe(2);
+
+    const events = await s.sse();
+    const mark = events.mark();
+    const back = await restore(s, legacy.id);
+    expect(back.status).toBe(200);
+    expect(back.body.restored).toEqual(["legacy/a.md", "legacy/report.txt"]);
+    const report = await events.waitFor("doc-changed", {
+      from: mark,
+      match: (data) => data?.path === "legacy/report.txt",
+      timeout: 8000,
+    });
+    expect(report.data.reason).toBe("restored");
+    expect(report.data.trashId).toBe(legacy.id);
+    expect((await s.doc("legacy/report.txt")).body.markdown).toContain("valid UTF-8");
+    expect(readFileSync(join(s.vault, "legacy/image.bin")).equals(binary)).toBe(true);
+    expect(lstatSync(join(s.vault, "legacy/leak.txt")).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(s.vault, "legacy/link")).isSymbolicLink()).toBe(true);
+    events.close();
   }, 60000);
 
   test("permanent delete removes the retained copy and cannot be restored", async () => {

@@ -152,7 +152,7 @@ export class Reconciler {
   }
 
   private async pass(hints?: ChangeHints): Promise<DocChange[]> {
-    const onDisk = await this.vault.scanDocs();
+    const onDisk = await this.vault.scanDocCandidates();
     const rows = new Map(this.index.allFileMeta().map((r) => [r.path, r]));
     /* Two lists, not one: the event contract fixes the ORDER of a
        `moved` pair — the old path (`removed:true` + `to`) first, THEN the new
@@ -163,7 +163,6 @@ export class Reconciler {
 
     for (const path of onDisk) {
       const prev = rows.get(path);
-      rows.delete(path);
       /* stat FIRST, read second — the order the header promises.
          The gate exists so an unchanged doc costs a stat and nothing else;
          reading before it pulled the whole corpus through JS on every pass,
@@ -171,10 +170,14 @@ export class Reconciler {
       const st = await this.vault.statDoc(path);
       if (!st) continue; // vanished between scan and stat
       // cheap gate: identical (size, mtimeMs) ⇒ nothing to hash
-      if (prev && prev.size === st.size && prev.mtimeMs === st.mtimeMs && !hints?.has(path)) continue;
+      if (prev && prev.size === st.size && prev.mtimeMs === st.mtimeMs && !hints?.has(path)) {
+        rows.delete(path);
+        continue;
+      }
 
       const doc = await this.vault.readDoc(path);
-      if (!doc) continue; // vanished between stat and read
+      if (!doc) continue; // vanished or stopped being UTF-8; an old row departs below
+      rows.delete(path);
 
       const rev = revOf(doc.markdown);
       if (prev && prev.rev === rev) {

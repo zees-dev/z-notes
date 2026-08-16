@@ -390,8 +390,9 @@ repainting the Settings Sync section.
 - `lookupLink(target, vaultId)` — every caller passes the vault of the doc
   being rendered (`vaultOf(state.active)` in the editor/preview path;
   assistant chat uses the active doc's vault, else `"vault"`). Path-qualified
-  targets check `vaultPrefix(vaultId) + t + ".md"` in `docPaths`; bare slugs
-  hit that vault's slug map. Resolution NEVER crosses vaults. Returned
+  targets check the exact explicit-extension path in `docPaths`, or default a
+  bare leaf to `.md`; bare slugs hit that vault's slug map. Resolution NEVER
+  crosses vaults. Returned
   `path`s are qualified, so `openDoc`, hrefs and `/d/` URLs work verbatim
   (`encPath` percent-encodes `@` as `%40`; `decodeDocPath` already decodes —
   cosmetic only).
@@ -602,8 +603,8 @@ untouched by construction. `bun run gates` before every commit.
 - **Per-vault app settings** (theme etc.) and per-vault terminal/homeDoc.
 - **Multi-tenancy/auth** — the perimeter is unchanged; one user, one process,
   one replica.
-- **Drag-and-drop between vaults** — no drag-and-drop exists at all (ADR-level
-  choice in tree.js); unchanged.
+- **Drag-and-drop between vaults** — refused alongside every other cross-vault
+  move. Within-vault doc drag/drop exists under ADR 0020.
 
 ## Further Notes
 

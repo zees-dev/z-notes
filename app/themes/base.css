@@ -585,6 +585,7 @@ kbd {
   transition: background .13s var(--ease), color .13s;
 }
 .row:hover { background: var(--row-hover-bg); color: var(--text); }
+.row.drag-source { opacity: .45; }
 .row .ico { flex: 0 0 auto; color: var(--muted-2); display: grid; place-items: center; transition: color .13s, transform var(--dur-2) var(--ease); }
 .row:hover .ico { color: var(--muted); }
 .row .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -616,6 +617,15 @@ kbd {
   content: ""; position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
   width: var(--row-marker-w); height: 16px; border-radius: 0 3px 3px 0; background: var(--row-marker-bg);
 }
+/* A drop is always INTO the highlighted row: folders/vaults mean themselves,
+   docs mean their parent folder. Invalid/no-op targets get a quiet danger wash
+   and CSS no-drop cue; neither state changes row geometry. These sit after
+   `.active` so an already-open destination still advertises the drop. */
+.row.drop-target {
+  background: var(--accent-soft); color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.row.drop-blocked { background: var(--danger-soft); cursor: no-drop; }
 .children { overflow: hidden; }
 .children.closed { display: none; }
 /* THE BRANCH GUIDES — the tree(1) look: every row hangs off its parent's line
@@ -1011,7 +1021,9 @@ code.ic { overflow-wrap: anywhere; word-break: normal; }
 
 .md p { margin: 0; line-height: var(--d-lh); color: var(--text-2); }
 .md strong { color: var(--text); font-weight: 640; }
-.md em { color: var(--text-2); }
+.md em { color: var(--text-2); font-style: italic; }
+.bubble em { font-style: italic; }
+.md del, .bubble del { text-decoration: line-through; }
 code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; border-radius: var(--r-sm); background: var(--code-inline-bg); color: var(--code-inline-fg); border: var(--bd-w) var(--bd-style) var(--code-inline-bd); }
 
 .md ul { margin: 0; padding: 0; list-style: none; }

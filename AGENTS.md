@@ -1,8 +1,7 @@
 # z-notes — agent map
 
-Single-user markdown notes app. Files on disk are the source of truth; the app is a
-view over them. One Bun process serves a no-build vanilla-JS frontend, a JSON/SSE
-API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
+Single-user Markdown-oriented notes app; editable files on disk are the source of truth.
+One Bun process serves a no-build frontend, JSON/SSE API, client-side (age) secrets, git sync, AI edit relay and gated terminal.
 
 ## Layout
 
@@ -20,8 +19,8 @@ API, client-side (age) secrets, git sync, an AI edit relay and a gated terminal.
   `vendor/mermaid.js` is the same deal (ADR 0010): a COMMITTED bundle written by
   `bun scripts/build-mermaid.ts`, regenerated when the pinned mermaid version
   moves. Both are generators, not build steps.
-- `docs/` — the knowledge base; see the taxonomy below. `docs/specs/done/0002-http-api-v0.md` is the
-  normative HTTP/SSE contract; `docs/specs/done/0001-z-notes-v1.md` is the product spec.
+- `docs/` — the knowledge base; [API](docs/specs/done/0002-http-api-v0.md) is
+  normative and [product](docs/specs/done/0001-z-notes-v1.md) is the product spec.
 - `tests/` — black-box by default (spawn the real server / a real Chromium).
   `helpers.ts` + `browser.ts` are the shared harness; `mock-upstream.ts` fakes the
   AI endpoint. `bun run gates` = the five acceptance suites, plus
@@ -76,7 +75,8 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   qualifies, and attach is the one place `git init` may run. 0018 makes vaults
   plural: the primary keeps today's bare paths and all app-level state,
   secondary vaults are `@id/`-prefixed stacks under the vaults home, and `@` is
-  a reserved path segment.
+  a reserved path segment. 0019 makes explicit extensions literal, 0020 puts
+  moves on history, 0021 defines Preview's tested Markdown dialect, and 0022 makes asking before a dirty Raw exit a default-on preference.
 
 ## Workflow
 
