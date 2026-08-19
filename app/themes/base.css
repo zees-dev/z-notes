@@ -1030,12 +1030,142 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
 .md li + li { margin-top: var(--d-list-gap); }
 .md li.bul, .md li.ord { display: flex; flex-wrap: wrap; gap: 0 10px; line-height: var(--d-lh); color: var(--text-2); }
 .md li.bul::before { content: ""; flex: 0 0 auto; width: var(--bullet-size); height: var(--bullet-size); border-radius: var(--bullet-radius); background: var(--bullet-bg); margin-top: calc(var(--d-lh) * .5em - 2px); }
+/* Depth reads off the bullet itself: FILLED at the top level, HOLLOW one level
+   down, and alternating from there. The ring is an inset shadow rather than a
+   border so the dot's box — and the text beside it — does not move a pixel
+   between levels. Enumerated because CSS cannot count: descendant selectors
+   mean "at least this deep", so each level overrides the one above it by
+   specificity, and past six the last one holds. Shape stays the theme's
+   (`--bullet-radius`), so a square bullet alternates square. */
+.md ul ul li.bul::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bullet-bg); }
+.md ul ul ul li.bul::before { background: var(--bullet-bg); box-shadow: none; }
+.md ul ul ul ul li.bul::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bullet-bg); }
+.md ul ul ul ul ul li.bul::before { background: var(--bullet-bg); box-shadow: none; }
+.md ul ul ul ul ul ul li.bul::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bullet-bg); }
 .md li.ord > .li-marker { flex: 0 0 auto; min-width: 2ch; text-align: right; color: var(--muted); font-family: var(--mono); }
 .md li > .tx { flex: 1 1 0; min-width: 0; }
 /* A nested source indent becomes a nested DOM list instead of another
    top-level sibling. `flex-basis:100%` puts the child hierarchy below the
    parent row even though bullet/task rows use flex for their marker. */
 .md li > ul { flex: 0 0 100%; width: 100%; padding-left: calc(var(--bullet-size) + 10px); margin-top: var(--d-list-gap); }
+
+/* ---- FOLD: the outline disclosure in Preview (ADR 0023) ----
+
+   The chevron sits in the LEFT gutter, and this is the one control in the app
+   that earns a left seat against docs/style.md's right-alignment rule:
+   DISCLOSURE READS FROM THE OUTLINE'S SPINE. It folds what is below-left of
+   it, and a heading is a full-width line — a control parked at the right edge
+   would sit nowhere near the thing it acts on, and would land a different
+   distance from it on every heading in the document.
+
+   The button is an INVISIBLE OVERLAY OF ITS OWNER (`inset: 0`) and draws
+   nothing itself; both of its pseudo-elements do the work out in the gutter.
+   That shape is deliberate and load-bearing, in three ways:
+
+     · nothing is added to the flow — the `.rowacts` bargain — so a heading and
+       a list item keep every metric they had, and the per-line rects
+       `linebreaks-e2e` measures see a document that has not moved;
+     · the button's own box is exactly its owner's box, so the walk that finds
+       the document's first text box by descending `firstElementChild` (the
+       Preview/Raw origin parity in `tests/e2e.test.ts` and `theming-e2e`)
+       lands on a rectangle identical to the one it landed on before;
+     · `pointer-events: none` hands every click on the heading straight back to
+       click-to-edit; only `::before`, the gutter pad, takes any.
+
+   The glyph is drawn in CSS rather than being an <svg> child for the second of
+   those reasons: an icon element would be a child with a box of its own, and
+   that walk would find IT.
+
+   Every chevron sits on ONE SPINE: the page gutter, at the same x for a
+   heading and for a list item four levels deep. A per-owner gutter would put a
+   nested item's chevron in the middle of the content column, one pixel from
+   the parent's bullet, where it reads as a stray mark rather than a control.
+   The indent of a list level is a CSS constant (`.md li > ul`'s padding), so
+   `--fold-depth` — the one number the renderer supplies — is all it takes to
+   reach the spine from any depth.
+
+   The pad spans from the spine all the way to the owner's left edge, and the
+   gutter half of it never crosses the pane's own padding at the narrowest
+   width in any theme (a chevron that pushed the document sideways would be a
+   horizontal scrollbar on a phone). Bridging the indent is what keeps a
+   hover-revealed target reachable: there is no dead strip between the text
+   and the control, since the pointer leaving the owner for a single pixel
+   would take the pad away before it could be pressed. */
+.md :is(h1, h2, h3), .md li { position: relative; }
+/* The FIRST line box of each owner — the strip the chevron is centred on, so a
+   heading that wraps keeps its chevron beside the line it folds from. These
+   mirror the line-heights declared for each rank above; a list item uses the
+   body line box. Local to these rules, not a theme token: nothing outside this
+   block reads it. */
+.md h1 { --fold-h: 1.2em; }
+.md h2 { --fold-h: 1.32em; }
+.md h3 { --fold-h: 1.4em; }
+.md li { --fold-h: calc(var(--d-lh) * 1em); }
+.fold {
+  position: absolute; inset: 0; pointer-events: none;
+  /* quieter than the bullets it sits beside — a control on the margin, not
+     content — in every state, folded included: the collapsed one is still on
+     screen permanently, which is clue enough without extra weight. */
+  color: color-mix(in srgb, var(--muted-2) 65%, transparent); cursor: pointer;
+  /* how far LEFT of the owner the spine is, beyond the gutter itself: one list
+     indent per nesting level. `--fold-depth` is set inline by `wireFolds` —
+     zero for a heading or a top-level item — and the multiplicand restates
+     `.md li > ul`'s padding-left. */
+  --fold-out: calc(var(--fold-depth, 0) * (var(--bullet-size) + 10px));
+  /* the CURRENT width of the pane's own gutter — the pad claims all of it, so
+     "left of the icon" folds too. Restated in the same breakpoints that step
+     `.doc`'s padding down to -md/-sm; drifting from those means a pad that
+     either stops short of the pane edge or pokes past it. */
+  --fold-gutter: var(--doc-pad-x);
+}
+.fold::before, .fold::after { content: ""; position: absolute; transition: opacity var(--dur-1); }
+/* the pad: spine to owner's left edge on the first line, and the only part of
+   this button a pointer can reach */
+.fold::before {
+  top: 0; left: calc(-1 * var(--fold-gutter) - var(--fold-out));
+  width: calc(var(--fold-gutter) + var(--fold-out)); height: var(--fold-h);
+  border-radius: var(--r-sm); pointer-events: auto;
+  transition: opacity var(--dur-1);
+}
+/* …and the mark inside it: two borders on a rotated square. EXPANDED it points
+   down at what it is holding open, and folding turns it back to the right. It
+   sits in the OUTER half of the gutter — on the spine, with clear air between
+   it and the text — rather than centred against the block's edge. */
+.fold::after {
+  top: calc(var(--fold-h) / 2 - 4px);
+  left: calc(-3 * var(--doc-pad-x-sm) / 4 - 3px - var(--fold-out));
+  width: 6px; height: 6px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transition: opacity var(--dur-1), transform var(--dur-1) var(--ease);
+}
+.folded > .fold::after { transform: rotate(-45deg); }
+.fold:focus-visible { outline: none; }
+.fold:focus-visible::before { box-shadow: var(--sh-focus); }
+
+/* Hide-until-hover is a POINTER-CAPABILITY question, not a width one, and the
+   repo's breakpoints are all `max-width` — they cannot express it. On a touch
+   screen there is no hover to reveal anything with, so a chevron gated on one
+   would simply not exist there, at any width. `@media (hover: hover)` is the
+   only thing that can ask; without it, every chevron is always visible.
+
+   What reveals it is the PAD, not the block: hovering the text is reading, and
+   reading lights nothing. The pad is invisible and paints nothing, so it can
+   afford to be permanently hoverable — moving into the gutter is the one
+   deliberate gesture this responds to, and the same gesture is what shows the
+   block's click-to-edit tint below. */
+@media (hover: hover) {
+  .md .fold::after { opacity: 0; }
+  .md .fold:hover::after, .md .fold:focus-visible::after,
+  /* …and one that is holding something closed never leaves: it is the ONLY
+     clue that content is hidden. */
+  .md .folded > .fold::after { opacity: 1; }
+}
+
+.md > .fold-hidden { display: none; }
+.md li.folded > ul { display: none; }
+/* and the folded heading says so on its own line: the section did not vanish */
+.md :is(h1, h2, h3).folded::after { content: " …"; color: var(--muted-2); font-weight: 400; }
 
 .task { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: flex-start; line-height: var(--d-lh); }
 .cb {
@@ -1231,16 +1361,23 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 /* no `p` rule: an empty note prints its name and nothing else (renderDoc) */
 .empty-doc h3 { margin: 0; font-size: 15px; color: var(--text); font-weight: var(--w-semi); }
 
-/* click-to-edit affordance */
+/* click-to-edit affordance. A block that carries a fold chevron (a heading, a
+   list) tints from its GUTTER, not from its text — hovering the text is
+   reading, and the tint arriving with the chevron makes the two affordances
+   one gesture. A paragraph and a quote have no gutter control, so text hover
+   stays their only way to say "clickable". */
 .md.editable { cursor: text; }
 .md.editable > p, .md.editable > h1, .md.editable > h2, .md.editable > h3,
 .md.editable > ul, .md.editable > blockquote { border-radius: 6px; transition: background .12s var(--ease); }
-.md.editable > p:hover, .md.editable > h1:hover, .md.editable > h2:hover,
-.md.editable > h3:hover, .md.editable > ul:hover, .md.editable > blockquote:hover {
+.md.editable > p:hover, .md.editable > blockquote:hover,
+.md.editable > :is(h1, h2, h3):has(> .fold:hover) {
   background: var(--hover-tint);
   box-shadow: -7px 0 0 var(--hover-tint), 7px 0 0 var(--hover-tint);
 }
 .md.editable .task, .md.editable li.bul { border-radius: 6px; }
+/* a list tints ROW by row: the li whose gutter the pointer is in, not the
+   whole ul — the pad says which item folds, and the tint agrees with it */
+.md.editable li:has(> .fold:hover) { background: var(--hover-tint); }
 .flash-line { animation: lineflash 1.25s var(--ease); border-radius: 6px; }
 @keyframes lineflash {
   0%, 55% { background: var(--accent-soft); box-shadow: -7px 0 0 var(--accent-soft), 7px 0 0 var(--accent-soft); }
@@ -1918,6 +2055,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   .crumbs .cr-dir { display: none; }
   .topbar .btn.primary kbd { display: none; }
   .doc { padding-left: var(--doc-pad-x-md); padding-right: var(--doc-pad-x-md); }
+  .fold { --fold-gutter: var(--doc-pad-x-md); } /* the pad tracks the gutter */
 }
 
 /* ---- the nav controls, keyed to --w-dock (see .only-drawer in §4) ---- */
@@ -2043,6 +2181,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      transition also animated this padding accidentally, leaving the caret with
      nowhere to scroll while the keyboard was already covering it. */
   .doc { padding: 22px var(--doc-pad-x-sm) calc(34vh + var(--kb, 0px)); transition: none; }
+  .fold { --fold-gutter: var(--doc-pad-x-sm); } /* the pad tracks the gutter */
   /* 10vh, not the 34vh above: `--sheet-h` is most of the viewport now, and the
      old sum was 112vh of empty scroll under every note whenever the assistant
      was up. The term that matters is the sheet itself — this is the slack that

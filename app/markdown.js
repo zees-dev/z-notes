@@ -8,6 +8,7 @@
 "use strict";
 
 import { $, I, copyText, el, esc, hl, inline } from "./ui.js";
+import { state } from "./state.js";
 import { markDirty, saveDoc, updateMeta } from "./editor.js";
 import { secretEl } from "./secrets.js";
 import { mermaidEl } from "./mermaid.js";
@@ -286,4 +287,233 @@ export function renderPreview(doc, host) {
   }
 
   host.appendChild(md);
+  wireFolds(doc, md);
+}
+
+/* ============================================================
+   FOLDS — Preview's outline disclosure (ADR 0023)
+
+   A POST-PASS over the finished `.md`, never a second rendering path. The flat
+   block structure this file emits is load-bearing — the `.md > …` selectors,
+   the per-line rects `linebreaks-e2e` measures, the children snapshot it takes
+   — so nothing is wrapped in a `<section>` and no node moves. A fold only ever
+   adds a class. That is the same bargain mermaid's Source toggle strikes with
+   ADR 0015's "Preview is a view over the file": what is on screen changes, what
+   the file says does not, and one click puts it back.
+
+   Keys are CONTENT plus ordinal, never a line number. A line number is
+   invalidated by every edit above it; "the second `## Today` in this document"
+   survives a paragraph being typed three screens up, which is the whole point
+   of a fold that outlives a save. It is the trick `fenceOrd` already uses to
+   tell two identical armor blocks apart. Editing a heading's text drops its
+   fold and the section renders open — the honest reading, and the alternative
+   was writing an id into the user's file.
+   ============================================================ */
+
+const FOLD_STORE = "znotes.folds";
+/* How many documents' fold state is worth remembering. This is a convenience,
+   not a document: the cap keeps a years-old vault from carrying an unbounded
+   blob in localStorage, and a renamed doc simply ages out rather than being
+   chased through the rename. */
+const FOLD_DOCS = 50;
+const HEADING = /^H[123]$/;
+let foldsLoaded = false;
+
+/** The fold set for `path`, loading the whole store on first ask. */
+function foldSet(path) {
+  if (!foldsLoaded) {
+    foldsLoaded = true;
+    try {
+      const stored = JSON.parse(localStorage.getItem(FOLD_STORE) || "{}");
+      for (const p of Object.keys(stored)) if (Array.isArray(stored[p])) state.folds.set(p, new Set(stored[p]));
+    } catch (_) {
+      /* private mode, or a shape some later version wrote: an unreadable cache
+         means every section renders OPEN, which is the safe direction to fail */
+    }
+  }
+  let set = state.folds.get(path);
+  if (!set) state.folds.set(path, (set = new Set()));
+  return set;
+}
+
+/** Write-through. Map iteration order IS recency — the touched path is
+    re-inserted last — so the cap drops the document nobody has folded in
+    longest rather than an arbitrary one. */
+function persistFolds(path) {
+  const set = state.folds.get(path);
+  state.folds.delete(path);
+  if (set && set.size) state.folds.set(path, set);
+  /* Every doc that has merely been OPENED has an entry here, because that is
+     how it was asked what it was folded at. An empty one is not a memory of
+     anything, and it must not take a slot from a document that really is
+     folded — nor a line in localStorage. */
+  for (const [p, s] of state.folds) if (!s.size) state.folds.delete(p);
+  while (state.folds.size > FOLD_DOCS) state.folds.delete(state.folds.keys().next().value);
+  const out = {};
+  for (const [p, s] of state.folds) out[p] = [...s];
+  try {
+    localStorage.setItem(FOLD_STORE, JSON.stringify(out));
+  } catch (_) {
+    /* the fold survives this session in state.folds either way */
+  }
+}
+
+/** a list item's OWN text, without the sub-list hanging under it */
+const itemText = (li) => {
+  const tx = li.querySelector(":scope > .tx");
+  return ((tx ? tx.textContent : li.textContent) || "").trim();
+};
+
+function foldKey(node, ords) {
+  const base = HEADING.test(node.tagName)
+    ? "h" + node.tagName[1] + ":" + node.textContent.trim()
+    : "li:" + itemText(node);
+  const ord = ords.get(base) || 0;
+  ords.set(base, ord + 1);
+  return base + ":" + ord;
+}
+
+/**
+ * Re-apply every fold in `set` to `md`, from scratch.
+ *
+ * From scratch, not incrementally: folds NEST, and the range of an outer
+ * heading contains the inner one's chevron. Recomputing the whole sheet after
+ * each toggle is what makes unfolding an h2 leave an h3 inside it still folded
+ * — the incremental alternative is a diff between two sets of sibling ranges,
+ * for a document that is a few hundred blocks long at most.
+ */
+function paintFolds(md, set) {
+  for (const node of md.querySelectorAll("[data-fold]")) {
+    const on = set.has(node.dataset.fold);
+    node.classList.toggle("folded", on);
+    const btn = node.querySelector(":scope > .fold");
+    if (!btn) continue;
+    btn.setAttribute("aria-expanded", on ? "false" : "true");
+    btn.setAttribute("aria-label", (on ? "Expand " : "Collapse ") + (HEADING.test(node.tagName) ? "section" : "list"));
+  }
+  /* A folded heading hides its own RANGE: every following sibling up to the
+     next heading of the same or higher rank. The `.bgap` spacers go with it —
+     a blank line belongs to the section it sits in, and leaving them behind
+     would fold a section down to a stack of empty line boxes. Each folded
+     heading is applied on its own pass, so the ranges simply overlap and
+     nesting composes without anyone having to model it. */
+  for (const kid of md.children) kid.classList.remove("fold-hidden");
+  for (const kid of md.children) {
+    if (!HEADING.test(kid.tagName) || !kid.classList.contains("folded")) continue;
+    const rank = +kid.tagName[1];
+    for (let n = kid.nextElementSibling; n; n = n.nextElementSibling) {
+      if (HEADING.test(n.tagName) && +n.tagName[1] <= rank) break;
+      n.classList.add("fold-hidden");
+    }
+  }
+}
+
+function toggleFold(doc, md, node) {
+  const set = foldSet(doc.path);
+  const key = node.dataset.fold;
+  if (set.has(key)) set.delete(key);
+  else set.add(key);
+  persistFolds(doc.path);
+  /* repainted in place rather than re-rendered — the same way a tree folder
+     opens. A rebuild here would cost the scroll position, every revealed
+     secret and every drawn diagram, to change one class */
+  paintFolds(md, set);
+}
+
+/**
+ * Hang a chevron on every h1–h3 and every list item that has a sub-list, then
+ * apply whatever this document was left folded at.
+ *
+ * The button is EMPTY and carries no icon element. It overlays its owner
+ * exactly (`inset: 0` in base.css) and draws itself entirely in pseudo-
+ * elements out in the gutter — because the blocks here are measured by code
+ * that descends `firstElementChild` looking for the document's first text box
+ * (the Preview/Raw origin parity in `tests/e2e.test.ts` and `theming-e2e`),
+ * and an icon child would be what that walk found. An empty overlay is a box
+ * identical to the one it is standing in front of, so the walk lands where it
+ * always landed.
+ *
+ * Being a <button> also puts it outside click-to-edit's reach —
+ * `previewClickToEdit` skips buttons — so the chevron folds without the pane
+ * flipping to Raw underneath it, while the text beside it still opens Raw:
+ * only the gutter pad takes a pointer at all.
+ */
+function wireFolds(doc, md) {
+  const ords = new Map();
+  for (const node of md.querySelectorAll("h1, h2, h3, li")) {
+    if (node.tagName === "LI" && !node.querySelector(":scope > ul")) continue;
+    node.dataset.fold = foldKey(node, ords);
+    const btn = el("button", "fold");
+    btn.type = "button";
+    /* every chevron sits on ONE SPINE in the page gutter (see base.css). CSS
+       knows the width of a list indent but not how many of them stand between
+       this item and the margin — that count is the one number it needs. */
+    let depth = 0;
+    for (let p = node.parentElement; p && p !== md; p = p.parentElement) if (p.tagName === "UL") depth++;
+    if (depth > 1) btn.style.setProperty("--fold-depth", depth - 1);
+    btn.addEventListener("click", () => toggleFold(doc, md, node));
+    node.appendChild(btn);
+  }
+  paintFolds(md, foldSet(doc.path));
+}
+
+/** the block `revealLine` would scroll to — the last [data-line] at or above
+    `lineNo`. Restated here because a line inside a folded range has to be
+    found by the same rule that is about to look for it. */
+function blockForLine(md, lineNo) {
+  let best = null;
+  for (const b of md.querySelectorAll("[data-line]")) {
+    const l = parseInt(b.dataset.line, 10);
+    if (l <= lineNo && (!best || l >= parseInt(best.dataset.line, 10))) best = b;
+  }
+  return best;
+}
+
+/** what has to be unfolded for `node` to be on screen, or null if nothing has */
+function foldHiding(md, node) {
+  const range = node.closest(".fold-hidden");
+  if (range) {
+    /* A folded heading above the hidden block covers it only if its range
+       actually REACHES it: any heading in between of the same or higher rank
+       ended that range already. So the walk keeps the best rank seen so far,
+       and only a folded heading that outranks everything it reaches past is
+       the hider — without this, a jump would unfold every folded section it
+       merely passed on the way up, and persist the damage. An outer fold over
+       the true hider surfaces on the next pass. */
+    let best = 4; /* one past h3 — nothing outranked yet */
+    for (let p = range.previousElementSibling; p; p = p.previousElementSibling) {
+      if (!HEADING.test(p.tagName)) continue;
+      const rank = +p.tagName[1];
+      if (rank < best && p.classList.contains("folded")) return p;
+      if (rank < best) best = rank;
+    }
+    return null;
+  }
+  for (let p = node.parentElement; p && p !== md; p = p.parentElement)
+    if (p.tagName === "LI" && p.classList.contains("folded")) return p;
+  return null;
+}
+
+/**
+ * Unfold whatever is hiding source line `lineNo`, so a jump-to-line can land on
+ * it. The analogue of `revealFolder` force-opening a row's ancestors: someone
+ * asked to be taken to a line, and a fold is the app's own view state — not an
+ * answer to that request.
+ */
+export function ensureLineVisible(doc, lineNo) {
+  const md = $("#doc .md");
+  if (!md || !doc) return;
+  /* bounded rather than `while (true)`: each pass unfolds exactly one thing and
+     the nesting is finite, but a loop that repaints the DOM does not get to
+     depend on that being true of a document it has never seen */
+  for (let pass = 0; pass < 64; pass++) {
+    const target = blockForLine(md, lineNo);
+    if (!target) return;
+    const hider = foldHiding(md, target);
+    if (!hider) return;
+    const set = foldSet(doc.path);
+    set.delete(hider.dataset.fold);
+    persistFolds(doc.path);
+    paintFolds(md, set);
+  }
 }

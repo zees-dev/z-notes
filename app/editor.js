@@ -10,7 +10,7 @@
 import * as api from "./api.js";
 import { state } from "./state.js";
 import { $, $$, I, activeDoc, apiFail, copyText, countWords, el, esc, toast } from "./ui.js";
-import { renderPreview } from "./markdown.js";
+import { ensureLineVisible, renderPreview } from "./markdown.js";
 import { commitRename, focusQuiet } from "./tree.js";
 import { changedLineDiff, conflictDialog, orphanDialog, renderDiff } from "./dialogs.js";
 import { flushSecretEdits, vault } from "./secrets.js";
@@ -1133,6 +1133,10 @@ function revealLine(lineNo) {
     focusRaw({ caret: lineOffset(activeDoc().markdown, lineNo), line: lineNo, anchor: 140 });
     return;
   }
+  /* A collapsed section is not an answer to "take me to line N": unfold
+     whatever is covering the line before going looking for it (ADR 0023), the
+     way revealing a tree row force-opens the folders above it. */
+  ensureLineVisible(activeDoc(), lineNo);
   const blocks = $$("#doc [data-line]");
   let best = null;
   blocks.forEach((b) => {
@@ -1141,7 +1145,11 @@ function revealLine(lineNo) {
   });
   if (!best) return;
   const sc = $("#scroll");
-  sc.scrollTop = Math.max(0, best.offsetTop - 110);
+  /* rects, not offsetTop: a foldable block is `position: relative` for its
+     chevron (ADR 0023), so a nested list item's offsetParent is its parent
+     item, not the scroller — offsetTop would put a search hit inside a
+     sub-list back at the top of the document */
+  sc.scrollTop = Math.max(0, sc.scrollTop + best.getBoundingClientRect().top - sc.getBoundingClientRect().top - 110);
   best.classList.remove("flash-line");
   void best.offsetWidth;
   best.classList.add("flash-line");

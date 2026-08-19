@@ -43,6 +43,15 @@ entry lists banned synonyms where drift has happened or is likely.
   bare slug collides.
   Rewrites on rename are *forced, never cosmetic* (see `tests/links.test.ts`).
 
+## Preview
+
+- **fold** — Preview's outline disclosure (ADR 0023): hiding a heading's
+  section or a list item's sub-list, as a pure view state. A **fold key** is
+  content plus ordinal (`h2:Today:0`), never a line number; the **chevron** is
+  the gutter control that toggles it. *Banned:* "collapse"/"expand" as the noun
+  or the state (they survive only in the chevron's aria-label), "outline mode"
+  (there is no mode — folding is Preview).
+
 ## Secrets (SPEC §6)
 
 - **secret block / age fence** — a fenced ` ```age ` block whose body is age
