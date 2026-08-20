@@ -27,11 +27,16 @@
    Pipeline (auto: debounced; manual: immediate — the same code):
      refuse to run at all if the vault is mid-merge/rebase/cherry-pick/revert,
      has a conflicted index, or is on a detached HEAD →
-     add (tracked set only) → commit → push → on non-fast-forward:
+     add (tracked set only) → commit → fetch → merge --ff-only when origin is
+     strictly ahead → push → on non-fast-forward:
      pull --rebase → push again → on conflict: rebase --abort, state "error".
    The app never resolves a conflict and never destroys either side: it only
-   ever aborts a rebase IT started, and it refuses to rebase at all while the
-   working tree carries changes it did not just commit.
+   ever aborts a rebase IT started, it refuses to rebase at all while the
+   working tree carries changes it did not just commit, and the only merge it
+   performs is a fast-forward git will refuse rather than overwrite anything.
+   Sync is BIDIRECTIONAL on one switch: `git.autoSync` arms the write-side
+   debounce AND the upstream poll (`armPoll`), which is the only thing here that
+   asks the remote whether it has moved.
    ============================================================ */
 
 import { chmodSync, existsSync, realpathSync, renameSync } from "node:fs";
@@ -360,7 +365,8 @@ interface GitSyncDeps {
   log?: (line: string) => void;
 }
 
-type Trigger = "boot" | "auto" | "manual";
+/** "poll" is the upstream loop below; it only ever fires while auto-sync is on. */
+type Trigger = "boot" | "auto" | "manual" | "poll";
 
 interface Observation {
   repo: boolean;
@@ -400,6 +406,12 @@ export class GitSync {
   private lastAttachFailure: string | null = null;
 
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** the upstream poll, deliberately NOT `timer`: the debounce is re-armed and
+      cancelled by every write and by trigger(), and sharing one slot would let
+      a save silently switch the poll off (or a poll swallow a pending commit) */
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  /** the last upstream tip a poll triggered the pipeline for — see poll() */
+  private lastPollSha: string | null = null;
   private inflight: Promise<void> | null = null;
   private again = false;
   /** Serialises every WRITER of the git index — the sync pipeline and every
@@ -459,6 +471,7 @@ export class GitSync {
   /** One observation at boot so the statusbar is truthful before any edit. */
   async start(): Promise<SyncStatus> {
     await this.refresh();
+    this.armPoll();
     return this.current;
   }
 
@@ -466,6 +479,8 @@ export class GitSync {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
     // never leave a git child behind on SIGTERM — ALL of them, because a
     // read-only refresh can overlap a push and a single slot would lose one
     for (const c of [...this.children]) {
@@ -517,11 +532,77 @@ export class GitSync {
     (this.timer as any)?.unref?.();
   }
 
+  /**
+   * The other half of `schedule()`: the debounce watches OUR writes, this
+   * watches the remote's. Without it nothing in this server ever asked upstream
+   * whether it had moved — `behind` was stale by construction and a note
+   * written on another device arrived only when a local push happened to be
+   * rejected. Self-rescheduling rather than an interval, so a slow tick can
+   * never stack on itself, and unref'd so a pending poll cannot hold the
+   * process open at exit.
+   */
+  private armPoll(): void {
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
+    if (this.stopped || !this.autoSyncOn()) return;
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+      this.poll()
+        .catch(() => {})
+        .finally(() => this.armPoll());
+    }, this.autoSyncMs());
+    (this.pollTimer as any)?.unref?.();
+  }
+
+  /**
+   * One tick: has origin's branch moved away from the remote-tracking ref we
+   * already have? `ls-remote` answers that with no object transfer at all.
+   *
+   * Every skip is SILENT and leaves the published state alone — a remote that
+   * cannot be reached is offline, not an error, and a background poll that
+   * latched the statusbar red would make a laptop on a train look broken.
+   */
+  private async poll(): Promise<void> {
+    if (this.stopped || this.inflight) return;
+    /* the CACHED snapshot, never a fresh observation: a vault with no repo or
+       no origin must cost nothing per tick, forever */
+    if (this.current.state === "offline" || !this.current.remote) return;
+
+    const branch = this.branchSetting();
+    const token = this.deps.settings.credential("git.token");
+    const ls = await this.git([...this.transportOpts(), "ls-remote", "--heads", "origin", branch], { token });
+    if (!ls.ok) return;
+    /* the EXACT refname, not the first line: ls-remote's pattern matches tail
+       components, so `a/main` answers a query for `main` — and sorts first */
+    const wanted = `refs/heads/${branch}`;
+    const remoteSha =
+      ls.stdout
+        .split("\n")
+        .map((l) => l.split(/\s+/))
+        .find(([, ref]) => ref === wanted)?.[0] ?? "";
+    if (!remoteSha) return; // the branch does not exist upstream yet
+    const have = await this.git(["rev-parse", `refs/remotes/origin/${branch}`], { optionalLocks: false });
+    // a MISSING local ref counts as a mismatch: the branch is upstream and we
+    // have never fetched it
+    if (have.ok && have.stdout.trim() === remoteSha) return;
+    /* one trigger per observed upstream SHA. A pass that converged makes the
+       equality check above end the story; a pass that could NOT converge (a
+       blocked fast-forward, a branch-mismatch refusal) would otherwise be
+       re-run — and re-flap the statusbar — every tick until the user acts.
+       The retry paths for a tip we already tried are the user's "Sync now",
+       any local write, or the upstream moving again. */
+    if (remoteSha === this.lastPollSha) return;
+    this.lastPollSha = remoteSha;
+    await this.trigger("poll").catch(() => {});
+  }
+
   /** PUT /api/settings changed something — re-evaluate the pending timer. */
   applySettings(): void {
     const on = this.autoSyncOn();
     const was = this.autoSyncWas;
     this.autoSyncWas = on;
+    // the switch AND the cadence are live-reloadable for the poll as well
+    this.armPoll();
     if (!on) {
       if (this.timer) clearTimeout(this.timer);
       this.timer = null;
@@ -949,10 +1030,13 @@ export class GitSync {
          can no longer see (a conflict resolved in the vault, a network that
          healed enough for read-only git) used to LATCH — refresh() republished
          it untouched, and only a write or a manual Sync now could clear it, so
-         the statusbar stayed red over a repo that was fine. Push failures are
-         not observable read-only, so an error with commits still ahead is kept
-         rather than painted over; a clean, unblocked repo is not an error. */
-      if (this.current.state === "error" && obs.ahead > 0) {
+         the statusbar stayed red over a repo that was fine. Neither a push nor
+         a pull failure is observable read-only, so an error is kept while there
+         are commits still ahead (a push that has not landed) OR behind (a pull
+         that could not be taken — a refused fast-forward stages nothing, so
+         `ahead` alone would let it self-clear on the very next refresh); a
+         clean, unblocked, level repo is not an error. */
+      if (this.current.state === "error" && (obs.ahead > 0 || obs.behind > 0)) {
         this.publish({ ...this.current, branch: obs.branch, remote: obs.remote, ahead: obs.ahead, behind: obs.behind });
         return;
       }
@@ -1067,6 +1151,13 @@ export class GitSync {
           obs.remote,
           `the vault is on branch "${obs.branch}" but git.branch is "${configured}" — committed locally, not pushed`
         );
+        return;
+      }
+      /* PULL BEFORE PUSH — the same pass, so every guard above (writeGuards,
+         the canaries, single-flight, the writer lock) covers it too. */
+      const pulled = await this.pull(obs, token);
+      if (!pulled.ok) {
+        this.fail(obs.branch, obs.remote, pulled.message);
         return;
       }
       const pushed = await this.pushWithRebaseRetry(obs, token);
@@ -1540,6 +1631,68 @@ export class GitSync {
       .filter((e) => /^[ MADRCU?!][ MADRCU?!] /.test(e))
       .map((e) => e.slice(3))
       .filter(Boolean);
+  }
+
+  /**
+   * Take whatever origin has that we do not, and NEVER more than that.
+   *
+   * The only merge this app performs is `--ff-only`: it cannot write a conflict
+   * marker, cannot invent a merge commit, and git refuses it outright rather
+   * than overwrite a working-tree file it has no copy of — so the worst case is
+   * a named refusal, not a lost edit. DIVERGENCE (ahead AND behind) is
+   * deliberately left to the push below: its rejection runs the rebase retry,
+   * which is the one shape that keeps history linear, and which already refuses
+   * to start while the tree carries changes this pipeline did not just commit.
+   *
+   * `obs` is updated in place because the recomputed pair — fresh as of the
+   * fetch — is what decides fast-forward vs divergence here, and stale counts
+   * from before the fetch would send a diverged vault down the wrong arm.
+   */
+  private async pull(obs: Observation, token: string | null): Promise<{ ok: true } | { ok: false; message: string }> {
+    const fetched = await this.git([...this.transportOpts(), "fetch", "origin", obs.branch], { token });
+    if (!fetched.ok) {
+      /* a branch that is not upstream YET is not a failure — an empty remote is
+         seeded by the push below, which creates it with --set-upstream (attach
+         case B, and every fresh bare in the tests). Matching git's prose is the
+         same bargain the push rejection above makes, and LC_ALL=C is set. */
+      if (/couldn't find remote ref|no matching remote head/i.test(fetched.stderr + fetched.stdout)) {
+        return { ok: true };
+      }
+      return {
+        ok: false,
+        message: gitMessage(fetched.stderr, fetched.stdout, `git fetch failed (exit ${fetched.code})`),
+      };
+    }
+
+    /* counted against the remote-tracking ref rather than `@{upstream}`: it is
+       the ref the merge below would move onto, and it is fresh as of the fetch
+       that just ran, while an upstream is only configured once something has
+       been pushed */
+    const tracking = `refs/remotes/origin/${obs.branch}`;
+    const rl = await this.git(["rev-list", "--left-right", "--count", `HEAD...${tracking}`], {
+      optionalLocks: false,
+    });
+    if (!rl.ok) return { ok: true }; // nothing upstream to be behind of
+    const [a, b] = rl.stdout.trim().split(/\s+/);
+    obs.ahead = Number(a) || 0;
+    obs.behind = Number(b) || 0;
+    if (!obs.behind || obs.ahead) return { ok: true };
+
+    const merged = await this.git(["merge", "--ff-only", tracking]);
+    if (!merged.ok) {
+      /* everything the app owns is committed by now, so anything still dirty is
+         the user's — and it is what git is protecting */
+      const dirty = await this.dirtyOutsideAllowlist();
+      const why = dirty.length
+        ? `uncommitted changes in ${listPaths(dirty)}`
+        : gitMessage(merged.stderr, merged.stdout, `git merge --ff-only failed (exit ${merged.code})`);
+      return {
+        ok: false,
+        message: `origin has ${obs.behind} commit(s) this vault does not, but ${why} block the fast-forward — commit, move or remove them in the vault repo, then Sync now`,
+      };
+    }
+    obs.behind = 0;
+    return { ok: true };
   }
 
   /**

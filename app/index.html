@@ -466,10 +466,6 @@
               <div class="ctl"><input class="inp mono" id="gitBranch" data-draft="git.branch" aria-label="Branch"></div>
             </div>
             <div class="field">
-              <div class="lab"><b>Auto-sync</b><span>Push after each autosave, pull on focus.</span></div>
-              <div class="ctl"><button class="sw" data-sw="git.autoSync"></button></div>
-            </div>
-            <div class="field">
               <div class="lab"><b>Auto-sync interval</b><span>Commits once changes have settled for this long.</span></div>
               <div class="ctl num">
                 <input class="inp w-sm mono" data-num="git.autoSyncSeconds" aria-label="Auto-sync seconds">
@@ -479,9 +475,19 @@
             <!-- the card's footer: what sync last did, quietly, on the left;
                  the actions on the right where a thumb reaches (docs/style.md).
                  Disconnect appears only while there IS a remote to disconnect
-                 from — settings.js hides it otherwise. -->
+                 from — settings.js hides it otherwise.
+                 AUTO-SYNC SITS HERE, not two rows up: the switch and the
+                 button are one control in two moods — "keep this vault in
+                 step" and "do it now" — and with rows between them they read
+                 as two unrelated features. `.field.inline` keeps the page's
+                 label/control pair without the full row's stretch; the
+                 sentence it used to show is the row's title. -->
             <div class="vault-acts">
               <span class="sync-line" id="syncLine"><span id="syncLineTxt">—</span></span>
+              <div class="field inline" title="Push after each autosave, pull when upstream changes.">
+                <div class="lab"><b>Auto-sync</b></div>
+                <div class="ctl"><button class="sw" data-sw="git.autoSync" aria-label="Auto-sync"></button></div>
+              </div>
               <button class="btn" type="button" id="gitSyncNow">Sync now</button>
               <button class="btn danger" type="button" id="gitDisconnect" hidden>Disconnect…</button>
             </div>

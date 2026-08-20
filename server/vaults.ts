@@ -507,7 +507,9 @@ export class VaultRegistry {
 
       /* putRoute rather than a bare write, exactly as the primary's attach
          route does it: it opens with reloadIfChanged(), which is what adopts a
-         settings.toml that just arrived in the checkout. */
+         settings.toml that just arrived in the checkout. LOAD-BEARING side
+         effect: its applyGit() fan-out is also what arms this vault's upstream
+         poll (ADR 0026) — nothing else on this path calls start(). */
       const saved = await stack.settings.putRoute({ git: { branch: attached.branch } });
       if (saved.status !== 200) {
         process.stderr.write(

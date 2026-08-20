@@ -1930,9 +1930,18 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .vault-hd .mono { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* the on-disk root, spelled out: it is what Disconnect promises stays put */
 .vault-root { font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); margin-top: 2px; }
-/* status left, actions right, one row (docs/style.md: buttons right-aligned) */
-.vault-acts { display: flex; align-items: center; gap: 7px; margin-top: 10px; }
+/* status left, actions right, one row (docs/style.md: buttons right-aligned).
+   Wraps rather than squeezing: the auto-sync switch shares this row now, and
+   at 360px four items past the status line do not fit on one line. */
+.vault-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; row-gap: 8px; margin-top: 10px; }
 .vault-acts .btn { flex: 0 0 auto; }
+/* THE AUTO-SYNC SWITCH, in the action row beside "Sync now" — a `.field` so it
+   keeps the page's label/control pair (and so a refused save still parks its
+   message on it), stripped of the row stretch and, below, of the mobile
+   full-width rule that would put the switch on a line of its own. */
+.field.inline { flex: 0 0 auto; align-items: center; gap: 8px; padding: 0; margin-right: 2px; }
+.field.inline .lab { flex: 0 0 auto; }
+.field.inline .lab b { font-size: 12.5px; font-weight: 500; color: var(--text-2); }
 /* a REQUIRED field's mark, on the label it belongs to (docs/style.md): only
    fields the operation cannot proceed without wear one. `display:inline`
    beats the block the generic `.lab span` hint rule would force on it. */
@@ -2223,6 +2232,9 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   .field { flex-wrap: wrap; gap: 8px; }
   .field .ctl { width: 100%; }
   .field .ctl .inp { width: 100%; }
+  /* …except the one that is an action-row item, not a row (see `.field.inline`) */
+  .field.inline { flex-wrap: nowrap; gap: 8px; }
+  .field.inline .ctl { width: auto; }
   .msgs { padding: 14px 12px; }
 
   .veil.top { padding: 10px 10px 0; align-items: start; }

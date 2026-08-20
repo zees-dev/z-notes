@@ -17,8 +17,9 @@
        panel is the bottom of the stack. The draft survives every path through
        it, because closing the panel is a CSS collapse and not an unmount.
      · CONTEXT MENU. A create lands in the folder that was right-clicked, not
-       wherever the tree cursor happened to be; the menu closes on Esc and on a
-       click away; and it flips at the viewport edges instead of spilling.
+       wherever the tree cursor happened to be; a vault row offers the one verb
+       that is its own, Sync; the menu closes on Esc and on a click away; and it
+       flips at the viewport edges instead of spilling.
      · HOME. The button goes where `editor.homeDoc` says, follows that setting
        when it changes, does something sensible when it names nothing, and
        leaves a history entry Back can return through.
@@ -1746,6 +1747,47 @@ describe("ux — the sidebar context menu", () => {
     );
     const at = String(await created.jsonValue());
     expect(`created on disk at ${at}: ${vaultHas(srv.vault, at)}`).toBe(`created on disk at ${at}: true`);
+  }, 90000);
+
+  /* The vault row's own verb. Sync used to live only in Settings, four rows
+     into a card, which is a long way to go for something the sidebar already
+     reports the outcome of — the row carries the dot. */
+  test("a vault's menu offers Sync, and it syncs that vault", async () => {
+    let syncs = 0;
+    const countSync = (r: HTTPRequest) => {
+      if (r.method() === "POST" && r.url().endsWith("/api/vaults/vault/sync")) syncs++;
+    };
+    page.on("request", countSync);
+    try {
+      await rightClick("#tree .row.vault");
+      expect(`menu items: ${JSON.stringify(await menuLabels())}`).toBe(
+        'menu items: ["Sync","New doc","New folder"]'
+      );
+      /* the keyboard route builds the menu from the same `ctxTarget`, and the
+         vault id it now carries comes off the row either way */
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => (document.getElementById("ctxMenu") as HTMLElement).hidden, { timeout: 5000 });
+      await page.evaluate(() => (document.querySelector("#tree .row.vault") as HTMLElement).focus());
+      await page.keyboard.down("Shift");
+      await page.keyboard.press("F10");
+      await page.keyboard.up("Shift");
+      await page.waitForFunction(() => !(document.getElementById("ctxMenu") as HTMLElement).hidden, { timeout: 5000 });
+      expect(`⇧F10 on the vault row: ${JSON.stringify(await menuLabels())}`).toBe(
+        '⇧F10 on the vault row: ["Sync","New doc","New folder"]'
+      );
+
+      await clickMenuItem("Sync");
+      await page.waitForFunction(() => (document.getElementById("ctxMenu") as HTMLElement).hidden, { timeout: 5000 });
+      /* the outcome, not the mechanism: this vault has no remote, so the sync
+         answers "offline" — what is measured is that it RAN and said so */
+      await page.waitForFunction(
+        () => document.getElementById("toast")!.classList.contains("show") && !!document.getElementById("toastTxt")!.textContent,
+        { timeout: 8000 }
+      );
+      expect(`it went to the vault's own sync route, once: ${syncs}`).toBe("it went to the vault's own sync route, once: 1");
+    } finally {
+      page.off("request", countSync);
+    }
   }, 90000);
 
   test("Esc closes it and gives focus back; a click away closes it too", async () => {

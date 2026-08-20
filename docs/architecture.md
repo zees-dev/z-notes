@@ -61,7 +61,7 @@ new module must be added there (and here) to compile through CI.
 | 1 | `ai-edits.ts` | the pure edit engine: anchors, `propose_edits` parse/validate/apply, diffs | `parseEdits`, `applyEditToText`, `buildDiff`, `findAnchor` |
 | 2 | `trash.ts` | retained-delete storage + retention policy | `Trash`, `TrashError`, `isTrashId`, `trashGitPaths` |
 | 2 | `ai-endpoint.ts` | capability probe, degradation ladder, endpoint status/announce | `AiEndpoint` |
-| 3 | `git.ts` | add→commit→push sync, GIT_ASKPASS auth, tracked-set discipline, attach (the one place `git init` may run — ADR 0017) | `GitSync`, `gitMessage`, `sanitizeRemote`, `validRemoteUrl` |
+| 3 | `git.ts` | add→commit→fetch→ff-only→push sync + the upstream poll (ADR 0026), GIT_ASKPASS auth, tracked-set discipline, attach (the one place `git init` may run — ADR 0017) | `GitSync`, `gitMessage`, `sanitizeRemote`, `validRemoteUrl` |
 | 3 | `terminal.ts` | password-gated command runner, sessions, AI-command approval | `Terminal`, `TerminalError`, `bearerOf` |
 | 4 | `ai.ts` | turn orchestration, context assembly + leak guard, the two wire dialects, proposal stack | `AI` (single export) |
 | 4 | `docs.ts` | every doc/folder/trash transaction: create, CAS-write, move + backlink rewrite + rollback, delete/restore/purge/sweep, commit | `DocStore`, `isDocPath` |

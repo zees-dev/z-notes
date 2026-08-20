@@ -1560,8 +1560,36 @@ export function ctxTarget(node) {
   if (!row) return { kind: "root", path: "", parent: "" };
   const kind = row.dataset.kind;
   const path = row.dataset.path;
-  if (kind === "vault") return { kind, path: "", parent: path };
+  /* the vault ID rides along: it is the only thing on a vault row that is not
+     derivable from the path — the primary's root key is "" */
+  if (kind === "vault") return { kind, path: "", parent: path, vault: row.dataset.vault };
   return { kind, path, parent: kind === "folder" ? path : dirname(path) };
+}
+
+/**
+ * That vault's pipeline, now — the same pull, commit and push "Sync now" runs,
+ * and the same route for the primary as for any other vault (the registry
+ * resolves `vault` to it).
+ *
+ * Nothing is painted here: the sync publishes `sync-status` on its way through,
+ * and `adoptVaultSync` turns that into the row's own dot. Only the outcome has
+ * to be said out loud, in the wording the Settings card uses.
+ */
+async function syncVault(id) {
+  const v = vaultById(id);
+  const who = (v && v.label) || id;
+  try {
+    const s = await api.syncVault(id);
+    toast(
+      s.state === "error"
+        ? who + " — sync failed · " + s.message
+        : s.state === "offline"
+        ? who + " — not syncing · " + s.message
+        : who + " — synced · " + s.message
+    );
+  } catch (err) {
+    apiFail(err, "Could not sync " + who);
+  }
 }
 
 /** Human name for the folder a create would land in. */
@@ -1570,6 +1598,10 @@ const ctxWhere = (t) => (t.parent ? "in " + t.parent : "at the vault root");
 function ctxItems(t) {
   const items = [];
   if (t.kind === "doc") items.push({ label: "Open", icon: I.doc, run: () => openDoc(t.path) });
+  /* the one thing a vault row can be asked to DO. It lives here because the
+     alternative is a trip to Settings for something that is a verb — and this
+     row already carries the dot that answers "did it work". */
+  if (t.kind === "vault") items.push({ label: "Sync", icon: I.sync, run: () => syncVault(t.vault) });
   items.push({ label: "New doc", hint: ctxWhere(t), icon: I.file, run: () => startCreate("doc", t.parent) });
   items.push({ label: "New folder", hint: ctxWhere(t), icon: I.folder, run: () => startCreate("folder", t.parent) });
   /* rename/move and delete already exist as row actions and as F2/Del on the

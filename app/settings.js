@@ -371,6 +371,10 @@ const TOKEN_HELP =
   '(Metadata: Read is added automatically).\nClassic token — the "repo" scope.\n' +
   "Nothing else: sync only ever fetches and pushes.";
 
+/** What one switch now buys, in both directions — the primary's card says
+    exactly this (index.html), and it is the whole of what `git.autoSync` does. */
+const AUTO_SYNC_HELP = "Push after each autosave, pull when upstream changes.";
+
 /** The `GET /api/vaults` list this panel is painted from — deliberately NOT
     `state.vaults`, which comes from `GET /api/docs` and carries each vault's
     TREE but not the `git` section that is the whole of what this panel edits. */
@@ -560,7 +564,16 @@ function vaultBlock(v) {
   sw.addEventListener("click", () =>
     draft ? sw.classList.toggle("on") : putVaultGit(v.id, { autoSync: !git.autoSync }, "autoSync")
   );
-  box.appendChild(vaultField("autoSync", "Auto-sync", "Push after each autosave, pull on focus.", sw));
+  /* CONNECTED, this row belongs in the footer beside that card's "Sync now" —
+     the same pairing the primary's card makes, for the same reason. The draft
+     has no footer to sit in, so there it stays a field and keeps the sentence
+     visible; connected, the sentence is the row's title. */
+  const autoField = vaultField("autoSync", "Auto-sync", draft ? AUTO_SYNC_HELP : "", sw);
+  if (draft) box.appendChild(autoField);
+  else {
+    autoField.classList.add("inline");
+    autoField.title = AUTO_SYNC_HELP;
+  }
 
   const secs = el("input", "inp w-sm mono");
   secs.value = draft ? "60" : git.autoSyncSeconds == null ? "" : String(git.autoSyncSeconds);
@@ -666,6 +679,7 @@ function vaultBlock(v) {
     const dropBtn = el("button", "btn danger", "Disconnect…");
     dropBtn.type = "button";
     dropBtn.addEventListener("click", () => askDisconnectVault(v));
+    acts.appendChild(autoField);
     acts.appendChild(syncBtn);
     acts.appendChild(dropBtn);
     box.appendChild(acts);

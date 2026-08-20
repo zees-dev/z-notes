@@ -135,6 +135,16 @@ async function bareRepo(name: string, seed: SeedMap = {}): Promise<Bare> {
 /** parses fine, can never be reached, and fails in milliseconds */
 const unreachableUrl = () => `file://${join(tempDir("znotes-gone-"), "not-a-repo.git")}`;
 
+/** a second working copy of a bare, standing in for "the other device" */
+async function otherClone(bare: string): Promise<string> {
+  const dir = tempDir("znotes-other-");
+  await gitOk(dir, "clone", bare, ".");
+  await gitOk(dir, "config", "user.name", "other device");
+  await gitOk(dir, "config", "user.email", "other@z-notes.invalid");
+  await gitOk(dir, "config", "commit.gpgsign", "false");
+  return dir;
+}
+
 /** a primary vault that is already a repo pushing to `bare` */
 async function primaryWithOrigin(bare: Bare, seed: SeedMap = PRIMARY_SEED): Promise<string> {
   const vault = tempVault(seed);
@@ -367,6 +377,52 @@ describe("per-vault settings", () => {
       expect(bad.body.error).toBe("bad-body");
       expectErrorShape(bad.text, "error", "message");
       expect((await srv.get("/api/settings")).body.settings.theme).not.toBe("modern");
+    },
+    120000
+  );
+});
+
+/* ==================================================================
+   3b. per-vault upstream poll — isolation in the other direction
+   ================================================================== */
+
+describe("per-vault auto-pull", () => {
+  test(
+    "a secondary polls its OWN upstream on its own cadence, and the primary is untouched",
+    async () => {
+      const primaryBare = await bareRepo("primary-notes");
+      const vault = await primaryWithOrigin(primaryBare);
+      const { srv, id, dir, bare } = await withSecondary({ vault });
+
+      /* only the secondary is fast, so what is measured is its own loop — the
+         primary's cadence is the 60 s default and cannot fire inside this test */
+      expect((await srv.api("PUT", `/api/vaults/${id}/settings`, { git: { autoSyncSeconds: 2 } })).status).toBe(200);
+      expect((await srv.api("POST", `/api/vaults/${id}/sync`)).status).toBe(200);
+
+      const other = await otherClone(bare.dir);
+      const markdown = "# Delta\n\npushed to the secondary's own remote\n";
+      await Bun.write(join(other, "work/delta.md"), markdown);
+      await gitOk(other, "add", "work/delta.md");
+      await gitOk(other, "commit", "-m", "other: delta");
+      await gitOk(other, "push", "origin", "main");
+
+      /* nobody asked this server for anything: the secondary's poll is the only
+         thing that can notice */
+      await waitUntil(async () => existsSync(join(dir, "work/delta.md")), {
+        timeout: 20000,
+        interval: 150,
+        label: "the secondary's auto-pulled note",
+      });
+      expect(readFileSync(join(dir, "work/delta.md"), "utf8")).toBe(markdown);
+
+      /* it arrives addressed through its own prefix, and nowhere near the primary */
+      const doc = await waitUntil(async () => {
+        const r = await srv.doc(`@${id}/work/delta.md`);
+        return r.status === 200 ? r : null;
+      }, { timeout: 10000, interval: 150, label: "the pulled doc through @id/" });
+      expect(doc.body.markdown).toBe(markdown);
+      expect(existsSync(join(vault, "work/delta.md"))).toBe(false);
+      expect(treePaths((await srv.get("/api/docs")).body.tree)).not.toContain("work/delta.md");
     },
     120000
   );

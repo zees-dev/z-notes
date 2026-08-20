@@ -26,6 +26,12 @@
      - auto-sync: debounce `git.autoSyncSeconds` (default 60, live-reloadable)
        after writes settle → add → commit "sync: <ISO> · <n> file(s): …" →
        push to `git.branch` iff a remote named origin exists.
+     - the same switch pulls. `git.autoSync` arms an upstream poll on the same
+       `git.autoSyncSeconds` cadence: origin moves → the vault takes it with a
+       fast-forward, on disk and in the index, within the cadence. Divergence
+       still goes through the rebase retry (never a merge commit), and a
+       fast-forward git REFUSES is an error naming the file that stands until
+       its cause does.
      - POST /api/sync/now runs the same pipeline now and answers with the
        resulting sync-status object.
      - push rejected → pull --rebase → push; real conflict → rebase aborted
@@ -963,7 +969,10 @@ describe("token custody", () => {
            in `ps`, which is exactly why it has to travel in env instead */
         const argv = shim.read();
         expect(argv.length).toBeGreaterThan(0);
-        expect(argv.some((l) => /(^| )push( |$)/.test(l))).toBe(true);
+        /* a transport command really ran with the token armed — the pipeline
+           now FETCHES before it pushes, and against a dead remote that is where
+           it stops, so the push half never gets its turn */
+        expect(argv.some((l) => /(^| )(fetch|push|ls-remote)( |$)/.test(l))).toBe(true);
         expect(argv.filter((l) => l.includes(TOKEN))).toEqual([]);
 
         const gitConfig = readFileSync(join(vault, ".git", "config"), "utf8");
@@ -1987,5 +1996,258 @@ describe("boot provisioning", () => {
       expect(readFileSync(join(vault, "first.md"), "utf8")).toBe(markdown);
     },
     40000
+  );
+});
+
+/* ==================================================================
+   17. upstream pull — the other direction of the same switch
+
+   Nothing above this section ever fetches: `behind` was stale by construction
+   and another device's note arrived only when a local push happened to be
+   rejected. `git.autoSync` now arms an upstream poll as well as the write-side
+   debounce, and the pipeline pulls before it pushes — with the same refusals
+   the push half has, and the same promise that neither side is destroyed.
+   ================================================================== */
+
+/** the other device commits `markdown` at `path` and pushes it to the bare */
+async function pushFromOther(bare: string, path: string, markdown: string): Promise<void> {
+  const other = await otherClone(bare);
+  await Bun.write(join(other, path), markdown);
+  await gitOk(other, "add", path);
+  await gitOk(other, "commit", "-m", `other: ${path}`);
+  await gitOk(other, "push", "origin", "main");
+}
+
+describe("auto-pull", () => {
+  test(
+    "a note pushed from the other device lands on disk, in the tree and on /events within the cadence",
+    async () => {
+      const { vault, bare } = await gitVault({ origin: true });
+      const srv = await serverOn(vault, 2);
+      const sse = await srv.sse();
+
+      try {
+        await sse.waitFor("hello", { timeout: 5000 });
+        await settle(srv, debounceOf(srv));
+        const mark = sse.mark();
+
+        const markdown = "# Delta\n\nwritten on the other device\n";
+        await pushFromOther(bare!, "notes/delta.md", markdown);
+
+        /* nobody touched this server: the poll is the only thing that can
+           notice, and the fast-forward is the only thing that can apply it */
+        await waitUntil(async () => existsSync(join(vault, "notes/delta.md")), {
+          timeout: 20000,
+          interval: 150,
+          label: "the auto-pulled note on disk",
+        });
+        expect(readFileSync(join(vault, "notes/delta.md"), "utf8")).toBe(markdown);
+
+        /* a pulled file is an external edit like any other — indexed, and
+           announced to every open client */
+        await sse.waitFor("doc-changed", {
+          from: mark,
+          match: (d) => String(d?.path) === "notes/delta.md",
+          timeout: 10000,
+        });
+        expect((await srv.doc("notes/delta.md")).body.markdown).toBe(markdown);
+        expect(await docPaths(srv)).toContain("notes/delta.md");
+
+        /* and `behind` is truthful again rather than stale at 0 forever */
+        const st = await waitForState(srv, "synced", 20000);
+        expect(st.ahead).toBe(0);
+        expect(st.behind).toBe(0);
+        expect((await gitOk(vault, "rev-parse", "HEAD")).trim()).toBe(
+          (await gitOk(bare!, "rev-parse", "main")).trim()
+        );
+      } finally {
+        sse.close();
+      }
+    },
+    60000
+  );
+
+  test(
+    "auto-sync off means no poll and no pull at all, and Sync now still pulls",
+    async () => {
+      const { vault, bare } = await gitVault({ origin: true });
+      const srv = await serverOn(vault, 2);
+      /* quiesced while the switch is still on, so the manual sync below has
+         nothing of its own to push and is a pure pull */
+      await settle(srv, debounceOf(srv));
+      expect((await srv.api("PUT", "/api/settings", { git: { autoSync: false } })).status).toBe(200);
+
+      const markdown = "# Delta\n\npushed while auto-sync is off\n";
+      await pushFromOther(bare!, "notes/delta.md", markdown);
+
+      /* two whole cadences and change: one poll would have been enough */
+      await sleep(debounceOf(srv) * 2 + 1500);
+      expect(existsSync(join(vault, "notes/delta.md"))).toBe(false);
+
+      /* "Sync now" is explicit and always both directions */
+      const now = await syncNow(srv);
+      expect(now.status).toBe(200);
+      expectStatusShape(now.body);
+      expect(now.body.state).toBe("synced");
+      expect(now.body.behind).toBe(0);
+      expect(readFileSync(join(vault, "notes/delta.md"), "utf8")).toBe(markdown);
+    },
+    60000
+  );
+
+  test(
+    "a decoy branch that tail-matches the configured one cannot blind the poll",
+    async () => {
+      const { vault, bare } = await gitVault({ origin: true });
+      const srv = await serverOn(vault, 2);
+      await settle(srv, debounceOf(srv));
+
+      /* `ls-remote --heads origin main` pattern-matches tail components, so
+         refs/heads/a/main answers the query too — and sorts FIRST. A poll that
+         took the first line's SHA locked onto the decoy's tip and never saw
+         another push to main again. */
+      const other = await otherClone(bare!);
+      await gitOk(other, "branch", "a/main");
+      await gitOk(other, "push", "origin", "a/main");
+
+      const first = "# One\n\nthe first real push\n";
+      await pushFromOther(bare!, "notes/one.md", first);
+      await waitUntil(async () => existsSync(join(vault, "notes/one.md")), {
+        timeout: 20000,
+        interval: 150,
+        label: "the first note on disk",
+      });
+
+      const second = "# Two\n\nthe second real push\n";
+      await pushFromOther(bare!, "notes/two.md", second);
+      await waitUntil(async () => existsSync(join(vault, "notes/two.md")), {
+        timeout: 20000,
+        interval: 150,
+        label: "the second note on disk",
+      });
+      expect(readFileSync(join(vault, "notes/two.md"), "utf8")).toBe(second);
+    },
+    60000
+  );
+});
+
+describe("manual sync pulls", () => {
+  /* the cadence is deliberately long here, so what is measured is the manual
+     sync's own pull rather than a poll that happened to fire first */
+  test(
+    "POST /api/sync/now takes what origin gained since the last sync",
+    async () => {
+      const { vault, bare } = await gitVault({ origin: true });
+      const srv = await serverOn(vault, 30);
+      /* one quiescing pass first: the boot-written settings.toml is a tracked
+         file, and committing it here is what makes the sync below a pure pull
+         (nothing ahead) rather than the push-rejection path measured above */
+      expect((await syncNow(srv)).body.state).toBe("synced");
+
+      const markdown = "# Delta\n\nwaiting on origin for the manual sync\n";
+      await pushFromOther(bare!, "notes/delta.md", markdown);
+
+      const now = await syncNow(srv);
+      expect(now.status).toBe(200);
+      expectStatusShape(now.body);
+      expect(now.body.state).toBe("synced");
+      expect(now.body.ahead).toBe(0);
+      expect(now.body.behind).toBe(0);
+      expect(readFileSync(join(vault, "notes/delta.md"), "utf8")).toBe(markdown);
+      expect((await srv.doc("notes/delta.md")).body.markdown).toBe(markdown);
+    },
+    60000
+  );
+
+  test(
+    "both sides committed: one sync carries both, in linear history, with no markers",
+    async () => {
+      const { vault, bare } = await gitVault({ origin: true });
+      const remoteMarkdown = "# Delta\n\ncommitted on the other device\n";
+      await pushFromOther(bare!, "notes/delta.md", remoteMarkdown);
+
+      const srv = await serverOn(vault, 30);
+      const localMarkdown = "# Beta\n\ncommitted on this device\n";
+      expect((await srv.putDoc("notes/beta.md", localMarkdown)).status).toBe(200);
+
+      const now = await syncNow(srv);
+      expect(now.status).toBe(200);
+      expect(now.body.state).toBe("synced");
+      expect(now.body.ahead).toBe(0);
+      expect(now.body.behind).toBe(0);
+
+      /* both sides survived, on both sides */
+      expect(readFileSync(join(vault, "notes/delta.md"), "utf8")).toBe(remoteMarkdown);
+      expect(readFileSync(join(vault, "notes/beta.md"), "utf8")).toBe(localMarkdown);
+      expect(await showFile(bare!, "main", "notes/delta.md")).toBe(remoteMarkdown);
+      expect(await showFile(bare!, "main", "notes/beta.md")).toBe(localMarkdown);
+
+      /* divergence goes through the rebase, never a merge commit — a pull that
+         merged would show up here, on either side */
+      expect(lines(await gitOk(vault, "rev-list", "--merges", "HEAD"))).toEqual([]);
+      expect(lines(await gitOk(bare!, "rev-list", "--merges", "main"))).toEqual([]);
+      expect((await gitOk(vault, "rev-parse", "HEAD")).trim()).toBe(
+        (await gitOk(bare!, "rev-parse", "main")).trim()
+      );
+      expect(readFileSync(join(vault, "notes/beta.md"), "utf8")).not.toContain("<<<<<<<");
+      expect(lines(await gitOk(vault, "status", "--porcelain")).filter((l) => /^(UU|AA|DD)/.test(l))).toEqual([]);
+    },
+    60000
+  );
+});
+
+describe("blocked fast-forward", () => {
+  /* the pull half of "the app never destroys either side": git refuses to
+     fast-forward over a local file it has no copy of, and that refusal has to
+     reach the user NAMED — and has to stay put until they act on it. */
+  test(
+    "an incoming commit that would overwrite an uncommitted local file is refused, and the error does not self-clear",
+    async () => {
+      const { vault, bare } = await gitVault({
+        origin: true,
+        seed: { ...SEED, README: "the original readme\n" },
+      });
+      const srv = await serverOn(vault, 2);
+      /* quiesced first, so this vault has nothing of its own ahead and the pull
+         below is a fast-forward rather than the rebase retry */
+      await settle(srv, debounceOf(srv));
+
+      const remoteMarkdown = "the readme, rewritten on the other device\n";
+      await pushFromOther(bare!, "README", remoteMarkdown);
+
+      /* outside the tracked set, so the pipeline never commits it away: exactly
+         the file whose only copy is the working tree's */
+      const edited = "the readme, edited by hand and not yet committed\n";
+      writeVaultFile(vault, "README", edited);
+
+      const now = await syncNow(srv);
+      expect(now.status).toBe(200);
+      expectStatusShape(now.body);
+      expect(now.body.state).toBe("error");
+      expect(now.body.message).toContain("README");
+      expect(now.body.message).not.toContain(vault);
+
+      /* both sides intact, and no merge was left half-done */
+      expect(readFileSync(join(vault, "README"), "utf8")).toBe(edited);
+      expect(readFileSync(join(vault, "README"), "utf8")).not.toContain("<<<<<<<");
+      expect(await showFile(bare!, "main", "README")).toBe(remoteMarkdown);
+      expect(existsSync(join(vault, ".git", "MERGE_HEAD"))).toBe(false);
+
+      /* a failed pull commits nothing, so `ahead` alone would let this go green
+         on the very next poll of the statusbar */
+      await sleep(1500);
+      const st = await status(srv);
+      expect(st.status).toBe(200);
+      expect(st.body.state).toBe("error");
+      expect(st.body.behind).toBeGreaterThan(0);
+
+      /* doing what the message says — here, dropping the hand edit — clears it */
+      await gitOk(vault, "checkout", "--", "README");
+      const retry = await syncNow(srv);
+      expect(retry.body.state).toBe("synced");
+      expect(retry.body.behind).toBe(0);
+      expect(readFileSync(join(vault, "README"), "utf8")).toBe(remoteMarkdown);
+    },
+    60000
   );
 });
