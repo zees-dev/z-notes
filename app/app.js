@@ -577,16 +577,6 @@ function wire() {
     return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable);
   };
 
-  /* Is there anything on screen that ⌘C would actually copy? A collapsed range
-     is what you get from merely clicking into text, and `toString()` catches
-     the case where a range spans only element boundaries and carries no text.
-     Cheap enough to run on a keystroke, and it is the whole guard: get this
-     wrong in the permissive direction and ⌘C stops copying. */
-  const hasSelection = () => {
-    const s = window.getSelection ? window.getSelection() : null;
-    return !!s && !s.isCollapsed && String(s).length > 0;
-  };
-
   document.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
     if (e.key === "Escape") {
@@ -671,24 +661,6 @@ function wire() {
       openSettings();
       return;
     }
-    /* ⌘C IS COPY. It reaches the chat toggle only when the copy it would
-       shadow is provably a no-op: nothing selected anywhere on the page, and
-       focus outside every text surface (raw editor, composer, palette, settings
-       fields, the terminal line — `typing()` covers all of them by tag, and the
-       terminal input additionally stops this listener from ever seeing its
-       keys). In every other case we return WITHOUT preventDefault, so the
-       browser's own copy runs untouched. Shift/Alt variants are left alone too:
-       ⌘⇧C and ⌥⌘C belong to the browser.
-       Note `mod` is `metaKey || ctrlKey`, which is deliberate — Ctrl+C is copy
-       on Linux/Windows, so the same guard is exactly right there. The
-       terminal's own Ctrl+C cancel lives on #termInput and stops propagation,
-       and would be behind `typing()` regardless. */
-    if (mod && (e.key === "c" || e.key === "C") && !e.shiftKey && !e.altKey) {
-      if (typing() || hasSelection()) return;
-      e.preventDefault();
-      toggleChat();
-      return;
-    }
     /* ⌘Z / ⌘⇧Z ARE UNDO. This app only gets them where the browser has no
        text to undo — which is everywhere outside a text surface, and is
        exactly where the last thing that happened was a FILE operation (a
@@ -729,6 +701,18 @@ function wire() {
       return;
     }
     if (mod && (e.key === "j" || e.key === "J")) {
+      e.preventDefault();
+      toggleChat();
+      return;
+    }
+    /* ⌥C is the second door to the same panel, and unlike the ⌘C it replaced it
+       owes the browser nothing: copy keeps that chord in every state, so there
+       is no selection or focus test standing between this and the toggle.
+       `e.code` first because macOS resolves ⌥C to "ç" — `e.key` is the dead-key
+       output, never the letter. Swallowing the keydown costs the ç composition
+       app-wide, the same trade ⌥N takes for ñ: a chord that dies wherever a
+       note is actually being written is not a chord. */
+    if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && (e.code === "KeyC" || e.key === "c" || e.key === "C")) {
       e.preventDefault();
       toggleChat();
       return;

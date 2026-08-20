@@ -76,7 +76,7 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   plural: the primary keeps today's bare paths and all app-level state,
   secondary vaults are `@id/`-prefixed stacks under the vaults home, and `@` is
   a reserved path segment. 0019 makes explicit extensions literal, 0020 puts
-  moves on history, 0021 defines Preview's tested Markdown dialect, 0022 makes asking before a dirty Raw exit a default-on preference, 0023 folds Preview's sections without touching a byte, and 0024 drags a folder with its subtree.
+  moves on history, 0021 defines Preview's tested Markdown dialect, 0022 makes asking before a dirty Raw exit a default-on preference, 0023 folds Preview's sections without touching a byte, 0024 drags a folder with its subtree, and 0025 moves the chat panel's second chord to ⌥C so ⌘C is always copy.
 
 ## Workflow
 

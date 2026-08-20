@@ -44,6 +44,7 @@ import {
   gotoSettings,
   leaveSettings as exitSettings,
   onSettings as isOnSettings,
+  pressChord,
   saveSettings,
   waitSettings as waitForSettings,
   type AppDriver,
@@ -300,7 +301,11 @@ describe("ux — the mode affordance is statusbar text", () => {
    1b. THE CHORDS THAT SHARE A KEY WITH SOMETHING ELSE
 
    ⌘/ and ⌘, are two doors to one routed page. ⌘C is the interesting one: it is
-   COPY, and this app only gets to have it when the copy would do nothing.
+   COPY, and the app no longer takes it in any state (ADR 0025 moved the chat
+   toggle to ⌥C). These tests outlived that move because the claim they make is
+   the one that matters either way — copy still copies — and the state that used
+   to hand the chord to the app, nothing selected and nothing focused, is the
+   one worth pinning now that nothing should.
 
    HOW THE ⌘C ASSERTIONS ARE MEASURED. `page.keyboard.press` cannot test this.
    Measured on this machine's headless shell: Meta+C through puppeteer's
@@ -316,7 +321,7 @@ describe("ux — the mode affordance is statusbar text", () => {
    prevented → a `copy` event and the selection on the clipboard.
    ============================================================ */
 
-describe("ux — ⌘/ and ⌘, open Settings; ⌘C toggles chat only when it is not COPY", () => {
+describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays COPY", () => {
   const chatOpenNow = () => page.evaluate(() => document.getElementById("app")!.classList.contains("chat-open"));
 
   /** the real clipboard, once the permission is granted for this origin */
@@ -377,12 +382,12 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌘C toggles chat only when it is 
     expect(`⌘, → route: ${await onSettings()} url: ${await app.urlPath()}`).toBe("⌘, → route: true url: /settings");
   }, 60000);
 
-  test("⌘C with nothing focused and nothing selected toggles the chat panel — and copies nothing", async () => {
+  test("⌘C with nothing focused and nothing selected leaves the chat panel alone", async () => {
+    /* THE STATE THE OLD BINDING LIVED IN. Nothing selected, focus outside every
+       field — ⌘C used to reach the toggle here and nowhere else, so this is the
+       one place a leftover binding would still show. */
     const cdp = await clipboardSession();
-    await setClip("UNTOUCHED");
     await app.clickDoc(NAV_DOC);
-    /* clickDoc leaves the pick on a sidebar row, not in a field, and nothing is
-       selected — the exact state in which ⌘C means nothing to the browser */
     await page.evaluate(() => {
       (document.activeElement as HTMLElement | null)?.blur();
       getSelection()?.removeAllRanges();
@@ -390,13 +395,88 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌘C toggles chat only when it is 
     const before = await chatOpenNow();
 
     await cmdC(cdp);
-    expect(`chat toggled: ${before} → ${await chatOpenNow()}`).toBe(`chat toggled: ${before} → ${!before}`);
-    expect(`copies the browser performed: ${await copies()}`).toBe("copies the browser performed: 0");
-    expect(`clipboard: ${await clip()}`).toBe("clipboard: UNTOUCHED");
+    expect(`chat stayed put: ${before} → ${await chatOpenNow()}`).toBe(`chat stayed put: ${before} → ${before}`);
+  }, 60000);
 
-    /* …and back, so it is a toggle and not a one-way trip */
-    await cmdC(cdp);
-    expect(`chat toggled back: ${await chatOpenNow()}`).toBe(`chat toggled back: ${before}`);
+  test("⌥C toggles the chat panel, and again with a live selection and a focused field", async () => {
+    /* Drive to a KNOWN state through the button rather than reading whatever
+       the previous test left — every assertion below is absolute, so a panel
+       that was already open cannot make a dead chord look like a live one. */
+    const setChat = async (want: boolean) => {
+      await page.evaluate((w) => {
+        const a = document.getElementById("app")!;
+        if (a.classList.contains("chat-open") !== w) (document.getElementById("chatBtn") as HTMLElement).click();
+      }, want);
+      await page.waitForFunction(
+        (w) => document.getElementById("app")!.classList.contains("chat-open") === w,
+        { timeout: 5000 },
+        want
+      );
+    };
+    const altC = async () => {
+      await pressChord(page, "KeyC", "Alt");
+      await sleep(180);
+    };
+
+    await app.clickDoc(NAV_DOC);
+    await page.waitForSelector("#doc p", { timeout: 5000 });
+    await setChat(false);
+    await page.evaluate(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      getSelection()?.removeAllRanges();
+    });
+
+    await altC();
+    expect(`⌥C opened it: ${await chatOpenNow()}`).toBe("⌥C opened it: true");
+    await altC();
+    expect(`⌥C closed it again: ${await chatOpenNow()}`).toBe("⌥C closed it again: false");
+
+    /* UNCONDITIONAL is the whole point of the move: the two states that used to
+       hand ⌘C back to the browser must not hold ⌥C back. */
+    await page.evaluate(() => {
+      const r = document.createRange();
+      r.selectNodeContents(document.querySelector("#doc p")!);
+      const s = getSelection()!;
+      s.removeAllRanges();
+      s.addRange(r);
+    });
+    await altC();
+    expect(`⌥C with a live selection: ${await chatOpenNow()}`).toBe("⌥C with a live selection: true");
+
+    /* …and from a focused field that is NOT the composer. The composer and the
+       terminal line stop keydown propagation outright — they own every key they
+       are given — so no document chord reaches out of them, ⌘J included; that
+       parity is asserted below rather than assumed. The palette's input is an
+       ordinary field and is the honest test of "a focused field does not hold
+       ⌥C back", which is one of the two states the old ⌘C guard refused. */
+    await setChat(false);
+    await app.chord("KeyK");
+    await page.waitForFunction(() => document.activeElement?.tagName === "INPUT", { timeout: 5000 });
+    await altC();
+    expect(`⌥C from a focused field: ${await chatOpenNow()}`).toBe("⌥C from a focused field: true");
+
+    /* the composer keeps its own keys — and must not have composed a ç doing it */
+    const focused = await page.evaluate(() => {
+      const c = document.getElementById("composer") as HTMLTextAreaElement;
+      c.value = "";
+      c.focus();
+      return document.activeElement === c;
+    });
+    expect(`the composer really has focus: ${focused}`).toBe("the composer really has focus: true");
+    await altC();
+    expect(`⌥C inside the composer left the panel open: ${await chatOpenNow()}`).toBe(
+      "⌥C inside the composer left the panel open: true"
+    );
+    expect(`and it composed no ç: ${JSON.stringify(await page.evaluate(() => (document.getElementById("composer") as HTMLTextAreaElement).value))}`).toBe(
+      'and it composed no ç: ""'
+    );
+    /* PARITY, the reason the line above is not a bug: ⌘J does not get out of
+       the composer either, so ⌥C is not the odd one out. */
+    await app.chord("KeyJ");
+    await sleep(180);
+    expect(`⌘J inside the composer left it open too: ${await chatOpenNow()}`).toBe(
+      "⌘J inside the composer left it open too: true"
+    );
   }, 60000);
 
   test("⌘C with text selected in the doc COPIES and leaves the chat alone", async () => {
