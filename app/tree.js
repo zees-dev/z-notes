@@ -97,8 +97,15 @@ const vaultById = (id) => state.vaults.find((v) => v.id === id) || null;
    The tree has one meaningful spatial drop: INTO a folder. A doc row therefore
    means its parent folder, a folder row means itself, and a vault row means that
    vault's root. There is deliberately no before/after drop — tree order comes
-   from the filesystem and is not state the client can rearrange. */
-let draggedDoc = null;
+   from the filesystem and is not state the client can rearrange.
+
+   A doc row and a FOLDER row are both drag sources: the server's move is one
+   `rename(2)`, so a folder travels with everything under it. A vault row is a
+   destination only — it is a repository, not an entry that can be somewhere
+   else. */
+let dragged = null;
+/** The one pending hover-to-expand timer, and the row it is counting for. */
+let dwell = null;
 
 const basename = (path) => {
   const rel = relOf(path);
@@ -114,51 +121,104 @@ function dropPlan(source, target, kind) {
   return {
     to,
     sameVault: vaultOf(source) === id,
+    /* Mirror of the server's descendant guard: a folder carries its subtree,
+       so nothing inside it is a place it can go — its own row and its own docs
+       included. Said here so the user hears it on hover instead of after a
+       round trip that ends in a 400. */
+    inside: parent === source || parent.indexOf(source + "/") === 0,
     useful: to !== source,
   };
 }
 
+/** The one sentence a blocked target owes the user, or null when it is fine. */
+const refusalFor = (plan) =>
+  !plan.sameVault ? "A move cannot cross vaults" : plan.inside ? "A folder cannot be moved inside itself" : null;
+
+/** Drop the pending expand — for one row, or (no argument) for the whole drag. */
+function clearDwell(row) {
+  if (!dwell || (row && dwell.row !== row)) return;
+  clearTimeout(dwell.timer);
+  dwell = null;
+}
+
 function clearDropMarks() {
+  clearDwell();
   $$("#tree .drop-target, #tree .drop-blocked, #tree .drag-source").forEach((row) =>
     row.classList.remove("drop-target", "drop-blocked", "drag-source")
   );
 }
 
-function wireDragSource(row, path) {
+function wireDragSource(row, path, kind) {
   row.draggable = true;
   row.addEventListener("dragstart", (e) => {
-    draggedDoc = { path, type: "doc", refusal: null };
+    dragged = { path, type: kind, refusal: null };
+    let ghost = null;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/plain", path);
+      /* The automatic drag image is the row at sidebar width — the indent and
+         the branch guides overlapping it come along. Snapshot a chip of icon +
+         name instead. It must be in the document, painted, when the browser
+         reads it, so it leaves on the next frame, not now. */
+      ghost = el("div", "drag-ghost");
+      ghost.appendChild(row.querySelector(".ico").cloneNode(true));
+      ghost.appendChild(row.querySelector(".lbl").cloneNode(true));
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, 14, 14);
     }
-    /* Keep the browser's drag image opaque; fade only the row left in the tree. */
-    requestAnimationFrame(() => row.classList.add("drag-source"));
+    /* One frame later: the snapshot is taken, and fading the source row can no
+       longer bleed into it. */
+    requestAnimationFrame(() => {
+      if (ghost) ghost.remove();
+      row.classList.add("drag-source");
+    });
   });
   row.addEventListener("dragend", () => {
     /* Chromium does not dispatch `drop` when the active target advertises
        `dropEffect = none`. Keep dragend as the explanation fallback for a
        native-cancelled cross-vault release; a normal eligible drop clears the
        source first and therefore cannot toast twice. */
-    const refusal = draggedDoc && draggedDoc.refusal;
-    draggedDoc = null;
+    const refusal = dragged && dragged.refusal;
+    dragged = null;
     clearDropMarks();
     if (refusal) toast(refusal);
   });
 }
 
-function wireDropTarget(row, path, kind) {
+function wireDropTarget(row, path, kind, kids) {
+  /* Hovering a closed destination opens it, so a drag can reach children that
+     were not on screen when it started. The expansion is the two class toggles
+     the click handler does, WRITTEN IN PLACE: a `renderTree()` here would
+     replace the element the pointer is over and Chromium cancels the drag with
+     it — the same reason a sync frame repaints one dot instead of the tree. */
+  const armDwell = () => {
+    if (dwell && dwell.row === row) return;
+    clearDwell();
+    dwell = {
+      row,
+      timer: setTimeout(() => {
+        dwell = null;
+        if (kind === "vault") state.vaultOpen.set(row.dataset.vault, true);
+        else state.folderOpen.set(path, true);
+        row.classList.add("open");
+        kids.classList.remove("closed");
+      }, 600),
+    };
+  };
   const paint = (e) => {
-    if (!draggedDoc) return null;
-    const plan = dropPlan(draggedDoc.path, path, kind);
+    if (!dragged) return null;
+    const plan = dropPlan(dragged.path, path, kind);
     e.preventDefault();
-    draggedDoc.refusal = plan.sameVault ? null : "A move cannot cross vaults";
-    /* Keep a useful cross-vault target eligible for `drop`: that event is the
+    const refusal = refusalFor(plan);
+    dragged.refusal = refusal;
+    /* Keep a useful but refused target eligible for `drop`: that event is the
        only reliable place to explain the refusal. The red target styling is
        the invalid-state signal; the handler below still guarantees no PATCH. */
     if (e.dataTransfer) e.dataTransfer.dropEffect = plan.useful ? "move" : "none";
-    row.classList.toggle("drop-target", plan.sameVault && plan.useful);
-    row.classList.toggle("drop-blocked", !plan.sameVault || !plan.useful);
+    row.classList.toggle("drop-target", !refusal && plan.useful);
+    row.classList.toggle("drop-blocked", !!refusal || !plan.useful);
+    if (!refusal && plan.useful && kids && kids.classList.contains("closed")) armDwell();
+    else clearDwell(row);
     return plan;
   };
   row.addEventListener("dragenter", paint);
@@ -166,21 +226,25 @@ function wireDropTarget(row, path, kind) {
   row.addEventListener("dragleave", (e) => {
     if (e.relatedTarget && row.contains(e.relatedTarget)) return;
     row.classList.remove("drop-target", "drop-blocked");
-    if (draggedDoc) draggedDoc.refusal = null;
+    /* Only this row's timer: the next target's `dragenter` has already armed
+       its own by the time this fires. */
+    clearDwell(row);
+    if (dragged) dragged.refusal = null;
   });
   row.addEventListener("drop", (e) => {
-    const source = draggedDoc;
+    const source = dragged;
     const plan = source && paint(e);
-    draggedDoc = null;
+    dragged = null;
     clearDropMarks();
     if (!source || !plan) return;
     e.stopPropagation();
-    if (!plan.sameVault) {
-      toast("A move cannot cross vaults");
+    const refusal = refusalFor(plan);
+    if (refusal) {
+      toast(refusal);
       return;
     }
     if (!plan.useful) return;
-    moveEntry({ path: source.path, type: "file" }, plan.to);
+    moveEntry({ path: source.path, type: source.type === "folder" ? "folder" : "file" }, plan.to);
   });
 }
 
@@ -211,6 +275,12 @@ export function adoptVaultSync(s) {
 
 export function renderTree() {
   const host = $("#tree");
+  /* An armed hover-expand holds the row and children box it counted for, and
+     the rebuild below detaches both. Chromium ends the drag with the detached
+     source, but the timer would still fire: class toggles on orphaned nodes,
+     plus a `folderOpen` write for a row that now renders closed — leaving the
+     next click on that folder a visible no-op. */
+  clearDwell();
   /* WHICH ROW HAD THE KEYBOARD, so the rebuild below can give it back.
      `renderTree` replaces every row, and it runs for reasons the user did not
      ask for — a `doc-changed` from another device, a sync landing, a vault
@@ -308,7 +378,8 @@ export function renderTree() {
       row.addEventListener("focus", () => (state.pick = { path: n.path, kind: "folder" }));
       row.addEventListener("keydown", (e) => rowKeys(e, n.path, "folder"));
       renameOnDouble(row, n.path, "folder");
-      wireDropTarget(row, n.path, "folder");
+      wireDragSource(row, n.path, "folder");
+      wireDropTarget(row, n.path, "folder", kids);
       wrap.appendChild(row);
       wrap.appendChild(rowActs(n.path, "folder", n.name));
       parent.appendChild(wrap);
@@ -331,9 +402,9 @@ export function renderTree() {
       row.addEventListener("focus", () => (state.pick = { path: n.path, kind: "doc" }));
       row.addEventListener("keydown", (e) => rowKeys(e, n.path, "doc"));
       renameOnDouble(row, n.path, "doc");
-      wireDragSource(row, n.path);
+      wireDragSource(row, n.path, "doc");
       /* Dropping ON a doc means its parent folder; rows are never reordered. */
-      wireDropTarget(row, n.path, "doc");
+      wireDropTarget(row, n.path, "doc", null);
       wrap.appendChild(row);
       wrap.appendChild(rowActs(n.path, "doc", n.name));
       parent.appendChild(wrap);
@@ -374,7 +445,7 @@ export function renderTree() {
       kids.classList.toggle("closed", !now);
     });
     row.addEventListener("focus", pickRoot);
-    wireDropTarget(row, rootKey, "vault");
+    wireDropTarget(row, rootKey, "vault", kids);
     wrap.appendChild(row);
     host.appendChild(wrap);
     host.appendChild(kids);

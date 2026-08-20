@@ -25,7 +25,7 @@
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
-import { type Browser, type Page } from "puppeteer-core";
+import { type Browser, type HTTPRequest, type Page } from "puppeteer-core";
 import {
   startServer,
   sleep,
@@ -863,21 +863,40 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
 
   /** A real Chromium pointer drag. Moving through several intermediate points is
       what makes the browser cross its native drag threshold; synthetic
-      DragEvents would prove only that a listener can be called. */
-  async function dragTreeRow(from: string, onto: string) {
-    const source = await page.$(`#tree .row.file[data-doc="${from}"]`);
-    const target = await page.$(`#tree .row[data-path="${onto}"]`);
-    if (!source || !target) throw new Error(`drag fixture missing: ${from} -> ${onto}`);
-    const a = await source.boundingBox();
-    const b = await target.boundingBox();
-    if (!a || !b) throw new Error(`drag fixture is not visible: ${from} -> ${onto}`);
-    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+      DragEvents would prove only that a listener can be called.
+
+      `dwell` parks the pointer over another row on the way, long enough for
+      hover-to-expand to fire — so the destination row is looked up AFTER it,
+      because it may not have been on screen when the drag started. */
+  async function dragTreeRow(from: string, onto: string, opts: { dwell?: string; dwellMs?: number } = {}) {
+    const center = async (path: string) => {
+      const row = await page.$(`#tree .row[data-path="${path}"]`);
+      const box = row && (await row.boundingBox());
+      if (!box) throw new Error(`drag fixture missing or not visible: ${path}`);
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+    const a = await center(from);
+    await page.mouse.move(a.x, a.y);
     await page.mouse.down();
-    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+    let expanded = false;
+    if (opts.dwell) {
+      const d = await center(opts.dwell);
+      await page.mouse.move(d.x, d.y, { steps: 12 });
+      await sleep(opts.dwellMs ?? 900);
+      expanded = await page.$eval(
+        `#tree .row[data-path="${opts.dwell}"]`,
+        (el) => !(el.parentElement!.nextElementSibling as HTMLElement).classList.contains("closed")
+      );
+    }
+    const b = await center(onto);
+    await page.mouse.move(b.x, b.y, { steps: 12 });
     await sleep(100);
-    const highlighted = await target.evaluate((el) => el.classList.contains("drop-target"));
+    const marks = await page.$eval(`#tree .row[data-path="${onto}"]`, (el) => ({
+      target: el.classList.contains("drop-target"),
+      blocked: el.classList.contains("drop-blocked"),
+    }));
     await page.mouse.up();
-    return highlighted;
+    return { ...marks, expanded };
   }
 
   const waitMoveToast = (from: string, to: string) =>
@@ -986,13 +1005,13 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
       expect(`the source is a native drag source: ${await page.$eval(`#tree .row.file[data-doc="${from}"]`, (el) => (el as HTMLElement).draggable)}`).toBe(
         "the source is a native drag source: true"
       );
-      expect(`the same-parent drop is rejected: ${await dragTreeRow(from, "architecture/z-notes-design.md")}`).toBe(
+      expect(`the same-parent drop is rejected: ${(await dragTreeRow(from, "architecture/z-notes-design.md")).target}`).toBe(
         "the same-parent drop is rejected: false"
       );
       expect(`a rejected no-op moved nothing: ${vaultHas(srv.vault, from) && !vaultHas(srv.vault, to)}`).toBe(
         "a rejected no-op moved nothing: true"
       );
-      expect(`the destination advertises the drop: ${await dragTreeRow(from, onto)}`).toBe(
+      expect(`the destination advertises the drop: ${(await dragTreeRow(from, onto)).target}`).toBe(
         "the destination advertises the drop: true"
       );
       await page.waitForSelector(`#tree .row.file[data-doc="${to}"]`, { timeout: 10000 });
@@ -1040,6 +1059,121 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     } finally {
       await srv.api("DELETE", "/api/docs/" + encPath(from)).catch(() => {});
       await srv.api("DELETE", "/api/docs/" + encPath(to)).catch(() => {});
+    }
+  }, 120000);
+
+  test("a folder drags with its subtree, into a collapsed destination the dwell opened, and undo and redo move it back and forward", async () => {
+    const src = "dragfolder";
+    const dest = "dragdest";
+    const leaf = src + "/leaf.md";
+    const moved = dest + "/" + leaf;
+    const anchor = dest + "/anchor.md";
+    const markdown = "# Leaf\n\nsubtree bytes that must survive both directions\n";
+    const clean = async () => {
+      for (const p of [moved, leaf, anchor, dest + "/" + src, src, dest]) {
+        await srv.api("DELETE", "/api/docs/" + encPath(p)).catch(() => {});
+      }
+    };
+    await clean();
+    try {
+      expect((await srv.api("POST", "/api/docs", { path: leaf, type: "doc", markdown })).status).toBe(201);
+      expect((await srv.api("POST", "/api/docs", { path: anchor, type: "doc", markdown: "# Anchor\n" })).status).toBe(201);
+      await page.waitForSelector(`#tree .row.folder[data-path="${src}"]`, { timeout: 8000 });
+      await page.waitForSelector(`#tree .row.file[data-doc="${anchor}"]`, { timeout: 8000 });
+
+      expect(`a folder row is a native drag source: ${await page.$eval(`#tree .row.folder[data-path="${src}"]`, (el) => (el as HTMLElement).draggable)}`).toBe(
+        "a folder row is a native drag source: true"
+      );
+
+      /* Close the destination, so the only way to reach the child row inside it
+         is the dwell — a drop on a `display:none` row has no box to aim at. */
+      await page.click(`#tree .row.folder[data-path="${dest}"]`);
+      expect(`the destination starts closed: ${await page.$eval(`#tree .row.folder[data-path="${dest}"]`, (el) => (el.parentElement!.nextElementSibling as HTMLElement).classList.contains("closed"))}`).toBe(
+        "the destination starts closed: true"
+      );
+
+      const marks = await dragTreeRow(src, anchor, { dwell: dest });
+      expect(`hovering the closed destination opened it mid-drag: ${marks.expanded}`).toBe(
+        "hovering the closed destination opened it mid-drag: true"
+      );
+      expect(`the revealed child advertises the drop: ${marks.target}`).toBe("the revealed child advertises the drop: true");
+
+      await page.waitForSelector(`#tree .row.file[data-doc="${moved}"]`, { timeout: 10000 });
+      await waitMoveToast(src, dest + "/" + src);
+      expect(`the folder left its old place: ${!vaultHas(srv.vault, leaf)}`).toBe("the folder left its old place: true");
+      /* the subtree's bytes at the new path — a folder move that re-created the
+         tree empty would satisfy every assertion above */
+      expect(`the subtree travelled with it: ${readVaultText(srv.vault, moved) === markdown}`).toBe(
+        "the subtree travelled with it: true"
+      );
+
+      await fileZ();
+      expect(`undo asks to move the folder back: ${JSON.stringify(await prompt())}`).toBe(
+        `undo asks to move the folder back: ${JSON.stringify({
+          title: "Move folder",
+          path: dest + "/" + src,
+          ok: "Move",
+          danger: false,
+          body: "Undo — move it back to " + src + ".",
+        })}`
+      );
+      await confirm();
+      await page.waitForSelector(`#tree .row.file[data-doc="${leaf}"]`, { timeout: 10000 });
+      expect(`undo restored the subtree: ${readVaultText(srv.vault, leaf) === markdown && !vaultHas(srv.vault, moved)}`).toBe(
+        "undo restored the subtree: true"
+      );
+
+      await fileZ(true);
+      expect(`redo asks to move it forward: ${(await prompt()).body}`).toBe(
+        "redo asks to move it forward: Redo — move it again to " + dest + "/" + src + "."
+      );
+      await confirm();
+      await page.waitForSelector(`#tree .row.file[data-doc="${moved}"]`, { timeout: 10000 });
+      expect(`redo moved the subtree forward again: ${readVaultText(srv.vault, moved) === markdown && !vaultHas(srv.vault, leaf)}`).toBe(
+        "redo moved the subtree forward again: true"
+      );
+    } finally {
+      await clean();
+    }
+  }, 150000);
+
+  test("a folder dropped inside itself is refused in the tree, without a request and without a timeline entry", async () => {
+    const src = "dragself";
+    const inner = src + "/inner/leaf.md";
+    const clean = async () => {
+      for (const p of [inner, src + "/inner", src]) await srv.api("DELETE", "/api/docs/" + encPath(p)).catch(() => {});
+    };
+    await clean();
+    let patches = 0;
+    const countPatch = (r: HTTPRequest) => {
+      if (r.method() === "PATCH" && r.url().includes("/api/docs/")) patches++;
+    };
+    page.on("request", countPatch);
+    try {
+      expect((await srv.api("POST", "/api/docs", { path: inner, type: "doc", markdown: "# Inner\n" })).status).toBe(201);
+      await page.waitForSelector(`#tree .row.file[data-doc="${inner}"]`, { timeout: 8000 });
+
+      /* The doc row means its parent folder, which is inside the folder being
+         dragged — the same refusal as dropping the folder on its own row. */
+      const marks = await dragTreeRow(src, inner);
+      expect(`the descendant is painted blocked, not eligible: ${marks.blocked} / ${marks.target}`).toBe(
+        "the descendant is painted blocked, not eligible: true / false"
+      );
+      await page.waitForFunction(
+        () => document.getElementById("toastTxt")!.textContent === "A folder cannot be moved inside itself",
+        { timeout: 3000 }
+      );
+      expect(`the refusal sent no move: ${patches}`).toBe("the refusal sent no move: 0");
+      expect(`the subtree is untouched: ${readVaultText(srv.vault, inner) === "# Inner\n"}`).toBe(
+        "the subtree is untouched: true"
+      );
+
+      /* a refused drag is not an operation, so there is nothing to take back */
+      await fileZ();
+      expect(`⌘Z found nothing on the timeline: ${await confirmUp()}`).toBe("⌘Z found nothing on the timeline: false");
+    } finally {
+      page.off("request", countPatch);
+      await clean();
     }
   }, 120000);
 

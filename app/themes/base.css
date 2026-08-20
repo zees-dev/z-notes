@@ -586,6 +586,19 @@ kbd {
 }
 .row:hover { background: var(--row-hover-bg); color: var(--text); }
 .row.drag-source { opacity: .45; }
+/* What the pointer carries: `setDragImage` reads this chip during the one
+   frame it exists, parked outside the viewport — `display:none` would give
+   the browser nothing to paint. Offscreen, so no layout it could disturb. */
+.drag-ghost {
+  position: fixed; top: -100px; left: -100px;
+  display: flex; align-items: center; gap: 7px;
+  max-width: 240px; padding: 4px 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  box-shadow: var(--sh-2);
+  font-size: 13.5px; font-weight: 500; color: var(--text);
+}
+.drag-ghost .ico { flex: 0 0 auto; color: var(--muted); display: grid; place-items: center; }
+.drag-ghost .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .ico { flex: 0 0 auto; color: var(--muted-2); display: grid; place-items: center; transition: color .13s, transform var(--dur-2) var(--ease); }
 .row:hover .ico { color: var(--muted); }
 .row .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
