@@ -641,8 +641,12 @@ describe("a fold hides its own range and stops there", () => {
 describe("the chevron hides while the section is open and stays while it is closed", () => {
   test("the GUTTER reveals; the text does not; collapsed stays put", async () => {
     await fresh();
-    /* the harness's own premise — the headless shell reports a hovering
-       pointer, which is what makes the readings below different at all */
+    /* The premise this test rests on, and it is PINNED AT LAUNCH rather than
+       inherited: whether a headless browser claims a hovering pointer depends
+       on the machine it runs on, so this assumption held on a Mac and failed on
+       the Linux CI runner until `launchTestBrowser` fixed the pointer profile
+       for every suite. Asserted anyway — it is the premise that makes every
+       reading below mean anything, and it must fail loudly if it ever slips. */
     expect(`the test browser hovers: ${await page.evaluate(() => matchMedia("(hover: hover)").matches)}`).toBe(
       "the test browser hovers: true"
     );
@@ -679,6 +683,7 @@ describe("the chevron hides while the section is open and stays while it is clos
     await page.mouse.move(4, 4);
     await sleep(160);
     expect(`collapsed, pointer away: ${await chevOpacity(H_BRAVO)}`).toBe("collapsed, pointer away: 1");
+
   }, 90000);
 
   test("a touch screen, which cannot hover at all, sees every chevron", async () => {

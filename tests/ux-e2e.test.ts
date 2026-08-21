@@ -980,11 +980,37 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     return { ...marks, expanded };
   }
 
+  /* EVERY toast this page has shown, not whichever one it is showing NOW.
+     A toast lives 1.9s and the next one overwrites the same element, so
+     sampling it is a race against both the clock and whatever the SSE echo
+     says next — one the slower CI runner lost while the settle below was still
+     running, failing a move that had in fact completed. Recording them removes
+     the timing from the assertion entirely. */
+  const armToasts = () =>
+    page.evaluate(() => {
+      const w = window as unknown as { __toastLog?: string[] };
+      if (!w.__toastLog) {
+        w.__toastLog = [];
+        const el = document.getElementById("toastTxt");
+        if (el) {
+          const log = w.__toastLog;
+          new MutationObserver(() => log.push(el.textContent || "")).observe(el, {
+            childList: true,
+            characterData: true,
+            subtree: true,
+          });
+        }
+      }
+      w.__toastLog.length = 0;
+    });
+
   const waitMoveToast = (from: string, to: string) =>
     page.waitForFunction(
       (a, b) => {
-        const text = document.getElementById("toastTxt")?.textContent || "";
-        return text.includes(a as string) && text.includes(b as string);
+        const w = window as unknown as { __toastLog?: string[] };
+        const seen = w.__toastLog || [];
+        const live = document.getElementById("toastTxt")?.textContent || "";
+        return [...seen, live].some((t) => t.includes(a as string) && t.includes(b as string));
       },
       { timeout: 10000 },
       from,
@@ -995,6 +1021,9 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     await srv.api("POST", "/api/docs", { path: UNDO_DOC, type: "doc", markdown: UNDO_TEXT }).catch(() => {});
     await app.clickDoc(NAV_DOC);
     await page.waitForFunction(() => !!document.querySelector("#tree .row.file"), { timeout: 5000 });
+    /* re-armed per test: the observer survives SPA navigation but not a reload,
+       and every test wants an empty log rather than the last one's */
+    await armToasts();
   });
 
   test("a delete undoes to a restore — with the file's contents, not an empty file", async () => {

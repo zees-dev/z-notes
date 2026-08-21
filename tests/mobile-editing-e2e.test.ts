@@ -147,21 +147,50 @@ describe("phone editing regressions", () => {
   }, 30000);
 
   test("Preview uses circular bullet markers instead of dash rules", async () => {
+    /* Every bullet is a CIRCLE — square, fully rounded, drawn by CSS and not by
+       a background image, which is the claim this test exists for.
+       Depth decides whether that circle is FILLED or a RING, alternating so a
+       nested list is readable at a glance (base.css `.md ul ul li.bul::before`).
+       The ring is painted with an inset box-shadow over a transparent
+       background, so "no background colour" is the nested bullet working, not a
+       marker that failed to draw — asserting a filled colour at every depth is
+       what made this fail once nesting gained its own look.
+
+       NESTED is `- [x] parent` (line 2) · `  - [ ] child` (3) ·
+       `    - [ ] grandchild` (4) · `  - sibling` (5) · `- last` (6). */
     await app.boot("/d/" + LIST_DOC);
-    const marker = await page.$eval('.md li.bul[data-line="5"]', (n) => {
-      const s = getComputedStyle(n, "::before");
-      return {
-        width: s.width,
-        height: s.height,
-        radius: s.borderRadius,
-        image: s.backgroundImage,
-        color: s.backgroundColor,
-      };
-    });
-    expect(marker.width).toBe(marker.height);
-    expect(marker.radius).toBe("50%");
-    expect(marker.image).toBe("none");
-    expect(marker.color).not.toBe("rgba(0, 0, 0, 0)");
+    const read = (line: number) =>
+      page.$eval(`.md li.bul[data-line="${line}"]`, (n) => {
+        const s = getComputedStyle(n, "::before");
+        return {
+          width: s.width,
+          height: s.height,
+          radius: s.borderRadius,
+          image: s.backgroundImage,
+          color: s.backgroundColor,
+          ring: s.boxShadow,
+        };
+      });
+
+    const top = await read(6); // `- last`, depth 1
+    const nested = await read(5); // `  - sibling`, depth 2
+
+    for (const [what, m] of [
+      ["top-level", top],
+      ["nested", nested],
+    ] as const) {
+      expect(`${what} is square: ${m.width === m.height}`).toBe(`${what} is square: true`);
+      expect(`${what} radius: ${m.radius}`).toBe(`${what} radius: 50%`);
+      expect(`${what} image: ${m.image}`).toBe(`${what} image: none`);
+      /* neither depth may render as nothing at all */
+      expect(`${what} is drawn: ${m.color !== "rgba(0, 0, 0, 0)" || m.ring !== "none"}`).toBe(`${what} is drawn: true`);
+    }
+
+    /* …and the two depths are drawn DIFFERENTLY: filled, then hollow */
+    expect(`top-level is filled: ${top.color !== "rgba(0, 0, 0, 0)"}`).toBe("top-level is filled: true");
+    expect(`nested is hollow: ${nested.color === "rgba(0, 0, 0, 0)" && nested.ring !== "none"}`).toBe(
+      "nested is hollow: true"
+    );
   }, 30000);
 
   test("Enter keeps indentation and continues bullets, checklists and ordered markers", async () => {

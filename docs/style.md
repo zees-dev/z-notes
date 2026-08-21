@@ -64,12 +64,31 @@ scar": many comments cite the bug that forced the shape
 - While iterating run single files; run `bun run gates` before every commit;
   run the full suite for cross-cutting changes. A full-suite run on a machine
   that sleeps mid-run produces mass browser timeouts — rerun, don't debug.
+- **Never assert a fact about the MACHINE and call it a fact about the app.**
+  A headless browser's answer to `(hover: hover)` differs between a Mac and a
+  Linux CI runner, so a `@media (hover: hover)` rule was measured under one
+  answer locally and the other in CI — green here, red there, forever.
+  `launchTestBrowser` now pins the pointer profile for every suite; anything
+  else environmental (locale, timezone, device pixel ratio, colour scheme) gets
+  pinned the same way rather than assumed. Note CDP's
+  `Emulation.setEmulatedMedia` does **not** cover `hover`.
+- **Do not sample a surface that expires.** A toast lives 1.9s and the next one
+  overwrites it, so waiting on `#toastTxt` is a race that a slower machine
+  loses on work that in fact succeeded. Record what the page showed (a
+  `MutationObserver` log) and assert against the record.
 
 ## Gotchas (read before sweeping the repo)
 
 - **`tests/api.test.ts` contains NUL bytes.** `grep`/`rg` silently skip it as
   binary. Any repo-wide sweep must use `grep -a` or a python/bun script, or
   you will "prove" a symbol is unused while that file imports it.
+- **CI pins a Bun version (`BUN_VERSION` in the workflow) and your machine
+  probably runs a newer one.** They disagree on more than speed: Bun 1.4's TOML
+  parser rejects a redefined table where 1.3 accepted it, which flipped a
+  terminal-password test from green to red with no code change — and, worse,
+  meant that on 1.3 it had been passing while exercising nothing, because the
+  unparseable file it built was discarded for defaults. A fixture that feeds a
+  PARSER should assert that its own input parses.
 - **Three tests assert on source text**, not behavior: `secrets.test.ts`
   (no `age-encryption` import in `server/`), `fileops.test.ts` (no
   rename/delete identifiers in the `ai*.ts` modules; the `OPS` set literal in

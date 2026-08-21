@@ -968,7 +968,20 @@ describe("terminal — the password never comes back out", () => {
     /* a synced settings.toml — the shape an attacker who can write a note has */
     const tomlPath = join(vault, SETTINGS_REL);
     const before = existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : "";
-    Bun.write(tomlPath, before + `\n[terminal]\npassword = "${OTHER_PASSWORD}"\n`);
+    /* Injected INTO the [terminal] table the file already has, not appended as
+       a SECOND one. Two `[terminal]` headers is not valid TOML — Bun 1.4 says
+       "Cannot redefine table" where 1.3 accepted it — and an unparseable file
+       is discarded wholesale for defaults, so nothing was absorbed, nothing was
+       stripped, and this test passed only on the older parser while asserting
+       something it had stopped exercising. One table with a password line in it
+       is also the shape a synced settings.toml actually arrives in. */
+    const injected = before.includes("[terminal]")
+      ? before.replace("[terminal]\n", `[terminal]\npassword = "${OTHER_PASSWORD}"\n`)
+      : before + `\n[terminal]\npassword = "${OTHER_PASSWORD}"\n`;
+    await Bun.write(tomlPath, injected);
+    expect(`the injection parses as TOML: ${(() => { try { Bun.TOML.parse(injected); return true; } catch { return false; } })()}`).toBe(
+      "the injection parses as TOML: true"
+    );
 
     const rebooted = await newServer({ vault });
     const attacker = await rebooted.api("POST", "/api/terminal/unlock", { password: OTHER_PASSWORD });

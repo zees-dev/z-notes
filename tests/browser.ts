@@ -45,12 +45,30 @@ export const BASE_HISTORY_LEN = 2;
  * The headless shell, with the flags every suite here runs it under.
  * `executablePath` overrides the discovered binary — secrets-e2e needs a build
  * whose clipboard permission can be granted.
+ *
+ * THE POINTER PROFILE IS PINNED, and it has to be. Whether a headless browser
+ * answers `(hover: hover)` is a property of the machine it runs on, not of the
+ * app: the shell on a Mac says yes and the one on a Linux CI runner says no. So
+ * `@media (hover: hover)` rules — the fold chevron's reveal (ADR 0023) — were
+ * measured under one answer locally and the other in CI, and the suite failed
+ * there on a rule that has nothing to do with the operating system. CDP's
+ * `Emulation.setEmulatedMedia` does NOT cover `hover`; this blink setting does.
+ * `2` is HoverType::kHover and `4` is PointerType::kFine.
+ *
+ * Device emulation still overrides it, so a test that wants the other answer
+ * asks the way it always did — a touch viewport (`hasTouch`/`isMobile`).
  */
 export function launchTestBrowser(executablePath?: string): Promise<Browser> {
   return puppeteer.launch({
     executablePath: executablePath || findChromium(),
     headless: true,
-    args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--window-size=1440,900"],
+    args: [
+      "--no-sandbox",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--window-size=1440,900",
+      "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
+    ],
   });
 }
 
