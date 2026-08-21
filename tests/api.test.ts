@@ -571,6 +571,122 @@ describe("GET /api/search", () => {
     expect(r.body.results).toEqual([]);
   });
 
+  /* ---------- regex (ADR 0028) ----------
+
+     One box, two languages. `/pattern/flags` says which it is without a second
+     parameter — so a regex survives a URL and a curl — and `mode=regex` reads a
+     bare pattern as one, which is what the palette's toggle sends. `mode` comes
+     back on every answer, because the chips are painted from what the server
+     ACTUALLY ran, not from what the client guessed. */
+  const rx = async (q: string, extra = "") =>
+    (await srv.get("/api/search?q=" + encodeURIComponent(q) + "&limit=50" + extra)).body;
+
+  test("a /slashed/ query is a regex, and says so", async () => {
+    const b = await rx("/QUOKK[A]/");
+    expect(b.mode).toBe("regex");
+    const hit = b.results.find((x: any) => x.kind === "line" && x.path === "projects/homelab.md");
+    expect(hit).toBeTruthy();
+    expect(hit.text).toBe(MD_HOMELAB.split("\n")[hit.line].trim());
+    /* the offsets still paint exactly the matched span */
+    expect(hit.matches.map((i: number) => hit.text[i]).join("")).toBe("QUOKKA");
+  });
+
+  test("an unslashed query is still fuzzy, and says that too", async () => {
+    const b = await rx("quokka");
+    expect(b.mode).toBe("fuzzy");
+    expect(b.results.length).toBeGreaterThan(0);
+  });
+
+  test("mode=regex reads a bare pattern as one — the toggle's wire form", async () => {
+    const b = await rx("QUOKK[A]", "&mode=regex");
+    expect(b.mode).toBe("regex");
+    expect(b.results.some((x: any) => x.kind === "line" && x.path === "projects/homelab.md")).toBe(true);
+    /* and the same text WITHOUT the parameter is a literal, so it finds nothing */
+    const literal = await rx("QUOKK[A]");
+    expect(literal.mode).toBe("fuzzy");
+    expect(literal.results.some((x: any) => x.kind === "line" && x.text.includes("QUOKKA"))).toBe(false);
+  });
+
+  test("^ anchors to the start of the line as DISPLAYED, indentation and all", async () => {
+    /* the pre-filter that rejects a document before scanning its lines has to
+       agree with the per-line pass about where a line starts. Asked of the raw
+       body instead, `/^- \[/` missed every indented list item in the vault —
+       the document was thrown away before its lines were ever tried. */
+    const big = await startServer({
+      seed: { "a.md": "# Doc\n\n  - [ ] indented task\n\tTABBED line\nflush line\n" },
+    });
+    try {
+      const q = async (pattern: string) =>
+        (await big.get("/api/search?q=" + encodeURIComponent(pattern) + "&limit=50")).body.results
+          .filter((x: any) => x.kind === "line")
+          .map((x: any) => x.text);
+
+      expect(await q("/^- \\[/")).toEqual(["- [ ] indented task"]);
+      expect(await q("/^TABBED/")).toEqual(["TABBED line"]);
+      expect(await q("/^flush/")).toEqual(["flush line"]);
+      /* …and the anchor still MEANS something: mid-line text does not match it */
+      expect(await q("/^indented/")).toEqual([]);
+      expect((await q("/line$/")).sort()).toEqual(["TABBED line", "flush line"]);
+    } finally {
+      await big.stop();
+    }
+  });
+
+  test("a pattern that will not compile is a result, not a 500 — the box is mid-typing", async () => {
+    const b = await rx("/[/");
+    expect(b.mode).toBe("regex");
+    expect(b.results).toEqual([]);
+    expect(typeof b.invalid).toBe("string");
+    expect(b.invalid.length).toBeGreaterThan(0);
+    /* and nothing about the refusal leaks a path or a stack */
+    expect(b.invalid).not.toContain("/");
+  });
+
+  test("case-insensitivity is the i flag's job, and an unknown flag is refused", async () => {
+    /* the vault spells it QUOKKA, so the lowercase pattern must miss it */
+    const exact = await rx("/quokka/");
+    expect(exact.results.some((x: any) => x.kind === "line" && x.text.includes("QUOKKA"))).toBe(false);
+    const insensitive = await rx("/quokka/i");
+    expect(insensitive.results.some((x: any) => x.kind === "line" && x.text.includes("QUOKKA"))).toBe(true);
+    /* a tail that is not a flag set means the slashes were never a pattern —
+       `/etc/hosts` is a path people search for, not a regex with a flag called
+       "hosts", so it stays literal instead of complaining about a flag nobody
+       typed */
+    const notFlags = await rx("/quokka/z");
+    expect(notFlags.mode).toBe("fuzzy");
+    expect(notFlags.invalid).toBeUndefined();
+  });
+
+  test("a path-shaped query stays literal, and mode=fuzzy forces even a real pattern to", async () => {
+    const big = await startServer({ seed: { "p.md": "# P\n\nsee /etc/hosts for that\nand /usr/bin/env too\n" } });
+    try {
+      const q = async (query: string, extra = "") =>
+        (await big.get("/api/search?q=" + encodeURIComponent(query) + "&limit=50" + extra)).body;
+
+      /* the case that made ordinary text unsearchable: read as a regex, this
+         is pattern `etc` with a flag set called `hosts` */
+      const path = await q("/etc/hosts");
+      expect(path.mode).toBe("fuzzy");
+      expect(path.results.some((x: any) => String(x.text).includes("/etc/hosts"))).toBe(true);
+
+      /* and the escape hatch for text that IS shaped like a pattern, so the
+         palette's fuzzy chip never has to rewrite what someone typed */
+      expect((await q("/etc/", "&mode=fuzzy")).mode).toBe("fuzzy");
+      expect((await q("/etc/")).mode).toBe("regex");
+    } finally {
+      await big.stop();
+    }
+  });
+
+  test("g and y are stripped, so a pattern cannot carry lastIndex across documents", async () => {
+    /* with a leaked `g`, the second document scanned would resume mid-string
+       and drop hits; every doc must answer independently */
+    const b = await rx("/e/g");
+    expect(b.mode).toBe("regex");
+    const paths = new Set(b.results.map((x: any) => x.path));
+    expect(paths.size).toBeGreaterThan(1);
+  });
+
   /**
    * The seeded vault has fewer than 24 docs, so the default limit and the cap
    * are invisible to every test above — including for empty `q`, where the contract

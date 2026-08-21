@@ -27,7 +27,7 @@
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import { Index, type SearchHit } from "./db.ts";
+import { Index, type SearchAnswer, type SearchHit, type SearchMode } from "./db.ts";
 import { GitSync, sanitizeRemote, validRemoteUrl } from "./git.ts";
 import { Settings, type SettingsFanout } from "./settings.ts";
 import { Trash, isTrashId } from "./trash.ts";
@@ -289,16 +289,28 @@ export class VaultRegistry {
   }
 
   /** `GET /api/search` across every stack: qualify, merge, re-sort, clamp. */
-  search(q: string, limit: number): SearchHit[] {
-    if (!this.secondary.size) return this.primary.index.search(q, limit);
+  search(q: string, limit: number, forced?: string | null): SearchAnswer {
+    if (!this.secondary.size) return this.primary.index.search(q, limit, forced);
     const out: SearchHit[] = [];
+    /* the mode and the refusal are properties of the QUERY, not of a vault, so
+       every stack answers with the same pair and whichever lands last is the
+       same answer — while a partial ANYWHERE makes the whole answer partial */
+    let mode: SearchMode = "fuzzy";
+    let invalid: string | null = null;
+    let partial = false;
     for (const stack of this.stacks()) {
-      for (const hit of stack.index.search(q, limit)) {
+      const answer = stack.index.search(q, limit, forced);
+      mode = answer.mode;
+      invalid = answer.invalid;
+      partial = partial || answer.partial;
+      for (const hit of answer.results) {
         out.push(stack.id === PRIMARY_VAULT_ID ? hit : { ...hit, path: qualify(stack.id, hit.path) });
       }
     }
-    out.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-    return out.slice(0, limit);
+    /* the same tie-break the single-vault sort uses, so a merged answer orders
+       identically to an unmerged one */
+    out.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path) || (a.line ?? -1) - (b.line ?? -1));
+    return { results: out.slice(0, limit), mode, invalid, partial };
   }
 
   /**

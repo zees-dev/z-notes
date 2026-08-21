@@ -701,6 +701,84 @@ describe("e2e — editing", () => {
 });
 
 describe("e2e — ⌘K palette", () => {
+  /* The mode chips REPORT as much as they control (ADR 0028): a `/regex/`
+     query is a regex whoever did or did not click anything, so the chip that
+     lights is the one that describes the search actually being run. */
+  async function palType(text: string) {
+    await page.evaluate(() => {
+      const i = document.getElementById("palInput") as HTMLInputElement;
+      i.value = "";
+      i.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.focus("#palInput");
+    await page.keyboard.type(text);
+    await sleep(320); // the palette's own 90ms debounce, plus the round trip
+  }
+  const litChip = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll(".pal-mode")].filter((n) => n.classList.contains("on")).map((n) => n.textContent).join(",")
+    );
+
+  test("the mode chip follows what is actually being searched", async () => {
+    await chord("KeyK");
+    await page.waitForFunction(() => document.getElementById("palVeil")!.classList.contains("show"), { timeout: 5000 });
+
+    await palType("quokka");
+    expect(`plain text → ${await litChip()}`).toBe("plain text → fuzzy");
+
+    /* nobody touched the chips — the slashes did it */
+    await palType("/QUOKK[A]/");
+    expect(`/slashed/ → ${await litChip()}`).toBe("/slashed/ → regex");
+    expect(
+      await page.evaluate(() =>
+        [...document.querySelectorAll("#palList .pal-item")].some((n) => (n.textContent ?? "").includes("QUOKKA"))
+      )
+    ).toBe(true);
+
+    /* and taking the slashes off gives the plain query back, unstuck */
+    await palType("quokka");
+    expect(`unwrapped → ${await litChip()}`).toBe("unwrapped → fuzzy");
+
+    /* clicking regex reads the BARE query as a pattern */
+    await palType("QUOKK[A]");
+    expect(`bare, fuzzy → ${await litChip()}`).toBe("bare, fuzzy → fuzzy");
+    await page.click("#palRegex");
+    await sleep(320);
+    expect(`bare, toggled → ${await litChip()}`).toBe("bare, toggled → regex");
+    expect(
+      await page.evaluate(() =>
+        [...document.querySelectorAll("#palList .pal-item")].some((n) => (n.textContent ?? "").includes("QUOKKA"))
+      )
+    ).toBe(true);
+
+    /* clicking FUZZY on a slashed query searches it literally — and leaves the
+       text alone. Rewriting the box to strip the slashes was the other option
+       and it silently ate characters (`/x/i` came back as `x`). */
+    await palType("/QUOKK[A]/");
+    expect(`slashed → ${await litChip()}`).toBe("slashed → regex");
+    await page.click("#palFuzzy");
+    await sleep(320);
+    expect(`clicked fuzzy → ${await litChip()}`).toBe("clicked fuzzy → fuzzy");
+    expect(await page.evaluate(() => (document.getElementById("palInput") as HTMLInputElement).value)).toBe(
+      "/QUOKK[A]/"
+    );
+
+    /* …and the NEXT slashed query someone types still detects itself */
+    await palType("/QUOKK[A]/");
+    expect(`typed again → ${await litChip()}`).toBe("typed again → regex");
+
+    /* a half-typed pattern explains itself instead of claiming nothing matched */
+    await palType("/[/");
+    expect(await page.evaluate(() => document.querySelector("#palList .pal-empty")?.textContent ?? "")).toContain(
+      "Not a pattern yet"
+    );
+
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.getElementById("palVeil")!.classList.contains("show"), { timeout: 5000 });
+    /* leave the toggle as we found it for the tests below */
+    await page.evaluate(() => (document.getElementById("palFuzzy") as HTMLButtonElement).click());
+  }, 60000);
+
   test("⌘K searches doc content and opens the hit", async () => {
     await chord("KeyK");
     await page.waitForFunction(() => document.getElementById("palVeil")!.classList.contains("show"), {

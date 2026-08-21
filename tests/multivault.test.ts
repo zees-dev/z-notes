@@ -496,6 +496,37 @@ describe("search", () => {
     },
     90000
   );
+
+  test(
+    "a regex reaches every vault too, and the mode survives the merge",
+    async () => {
+      const { srv, id } = await withSecondary();
+
+      expect(
+        (await srv.api("POST", "/api/docs", { path: "log.md", markdown: "# L\n\nERROR 500 primary\n" })).status
+      ).toBe(201);
+      expect(
+        (await srv.api("POST", "/api/docs", { path: `@${id}/log.md`, markdown: "# L\n\nERROR 404 secondary\n" }))
+          .status
+      ).toBe(201);
+
+      const r = await srv.get("/api/search?q=" + encodeURIComponent("/ERROR \\d+/") + "&limit=24");
+      expect(r.status).toBe(200);
+      /* the mode is a property of the QUERY, so the merge must not lose it or
+         let one vault's answer overwrite it with something else */
+      expect(r.body.mode).toBe("regex");
+      const paths = new Set<string>(r.body.results.filter((h: any) => h.kind === "line").map((h: any) => h.path));
+      expect(paths.has("log.md")).toBe(true);
+      expect(paths.has(`@${id}/log.md`)).toBe(true);
+
+      /* and a refusal is the whole query's, not one vault's */
+      const bad = await srv.get("/api/search?q=" + encodeURIComponent("/[/") + "&limit=24");
+      expect(bad.status).toBe(200);
+      expect(bad.body.results).toEqual([]);
+      expect(typeof bad.body.invalid).toBe("string");
+    },
+    90000
+  );
 });
 
 /* ==================================================================

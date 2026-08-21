@@ -471,6 +471,21 @@ and the match indices are the server's job so every client highlights identicall
 `line` is 0-based. `matches` are character offsets into `text`. `limit` defaults to 24.
 An empty `q` returns every doc as `kind:"doc"`, unscored, path-ordered.
 
+*Additive (ADR 0028):* the same box also takes a **regular expression**. A query of the form
+`/pattern/flags` is read as one — so a regex survives a URL, a bookmark and a `curl` with no
+second parameter — and `&mode=regex` reads a **bare** pattern as one, which is what the
+palette's toggle sends. Flags are `imsu`; `g` and `y` are stripped, and `m` is always on, so
+`^` and `$` mean the ends of a **line** — the line as returned, i.e. trimmed, so `^` sits
+after any indentation. The slash form only applies when the tail is a valid flag set:
+`/etc/hosts` is a literal query, not pattern `etc` with flags `hosts`. `&mode=fuzzy` forces
+the literal reading of a query that is shaped like a pattern. Every response carries
+`"mode": "fuzzy" | "regex"` — the mode the server actually ran, which is what a client paints
+its toggle from. A pattern that will not compile is **not** an error: the response is `200`
+with `"results": []` and `"invalid": "<reason>"`, because a box being typed into holds an
+incomplete pattern most of the time. A sweep cut short by the server's time budget adds
+`"partial": true`; the results present are real, just not all of them. `matches` keeps its
+meaning in both modes — the character offsets to highlight in `text`.
+
 *Additive:* the query **fans out across every vault**. Each vault searches its own index,
 hits from a secondary vault carry a qualified `path` (`"@work-notes/inbox.md"`), and the
 merged list is re-sorted by `score` descending then `path` before `limit` is applied — so

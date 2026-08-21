@@ -550,9 +550,15 @@ function markUp(text, idx, window_) {
 function renderPal() {
   const list = $("#palList");
   list.innerHTML = "";
-  $("#palCount").textContent = palResults.length ? palResults.length + " result" + (palResults.length > 1 ? "s" : "") : "";
+  $("#palCount").textContent =
+    (palResults.length ? palResults.length + " result" + (palResults.length > 1 ? "s" : "") : "") +
+    (palPartial ? (palResults.length ? " · " : "") + "partial" : "");
   if (!palResults.length) {
-    list.appendChild(el("div", "pal-empty", "No docs or lines match that."));
+    /* a pattern mid-typing is not a failed search — say what is wrong with it
+       and let the next keystroke fix it, rather than "nothing matched" */
+    list.appendChild(
+      palInvalid ? el("div", "pal-empty bad", "Not a pattern yet — " + palInvalid) : el("div", "pal-empty", "No docs or lines match that.")
+    );
     return;
   }
   palResults.forEach((r, i) => {
@@ -578,12 +584,68 @@ function renderPal() {
   });
 }
 
+/* ---------- search mode (ADR 0028) ----------
+
+   Two ways to say the same thing, and they must never disagree on screen. A
+   `/pattern/flags` query is self-describing, so it WINS: while the box holds
+   one, the search is a regex whatever the chips last said, and the chips say
+   so. Anything else is the toggle's to decide. The server is still the one
+   that reads the query — the chips are painted from the mode it answers with,
+   never from a guess made here. */
+const SLASHED = /^\/(.*)\/[a-z]*$/s;
+/** what the CHIPS were last told to mean — never overwritten by a detected
+    mode, or unwrapping `/foo/` back to `foo` would leave regex silently on */
+let palToggle = "fuzzy";
+/** "read THIS query literally, slashes and all" — set by clicking the fuzzy
+    chip, cleared by the next edit, so it never outlives the query it was for */
+let palForceFuzzy = false;
+let palInvalid = null;
+/** the server ran out of budget before it ran out of vault — say so rather
+    than letting a truncated sweep look like the whole answer */
+let palPartial = false;
+
+function paintPalModes(mode) {
+  $("#palFuzzy").classList.toggle("on", mode !== "regex");
+  $("#palRegex").classList.toggle("on", mode === "regex");
+  const foot = $("#palFoot");
+  if (foot) foot.textContent = "GET /api/search · " + mode;
+}
+
+/**
+ * A chip was clicked. Clicking `fuzzy` while the box holds `/…/` has to mean
+ * something, and what it means is "search that text literally" — so the query
+ * is sent with `mode=fuzzy` rather than rewritten. Unwrapping it to `foo` was
+ * the other option and it silently ate characters: `/x/i` came back as `x`.
+ *
+ * The intent lasts until the query changes. That way the next `/…/` someone
+ * TYPES still lights the regex chip by itself, which is the whole point of the
+ * slash form, while the click still wins over the query it was aimed at.
+ */
+export function palSetMode(mode) {
+  /* a keystroke from moments ago still has a query armed; let it land after
+     this one and it would repaint the chips from the mode we just left */
+  clearTimeout(palT);
+  palToggle = mode;
+  palForceFuzzy = mode === "fuzzy";
+  paintPalModes(mode);
+  palQuery($("#palInput").value.trim());
+  $("#palInput").focus();
+}
+
 async function palQuery(q) {
   if (palAbort) palAbort.abort();
   palAbort = new AbortController();
   try {
-    const r = await api.search(q, { signal: palAbort.signal });
+    /* only FORCE the mode where the query does not already say it, or where the
+       user has just said otherwise about this exact query */
+    const forced = palForceFuzzy ? "fuzzy" : palToggle === "regex" && !SLASHED.test(q) ? "regex" : null;
+    const r = await api.search(q, { mode: forced, signal: palAbort.signal });
     palResults = r.results;
+    palInvalid = r.invalid || null;
+    palPartial = !!r.partial;
+    /* painted from the mode the SERVER answered with — the one that actually
+       produced these results */
+    paintPalModes(r.mode || "fuzzy");
     palSel = 0;
     renderPal();
     $("#palList").scrollTop = 0;
@@ -613,6 +675,13 @@ export function openPal() {
   $("#palVeil").classList.add("show");
   const inp = $("#palInput");
   inp.value = "";
+  /* the palette opens the way it was left LAST time in one respect only — the
+     chip — and forgets everything about the query that is now gone */
+  palForceFuzzy = false;
+  palInvalid = null;
+  palPartial = false;
+  clearTimeout(palT);
+  paintPalModes(palToggle);
   palQuery("");
   setTimeout(() => inp.focus(), 40);
 }
@@ -626,6 +695,9 @@ export function closePal() {
     wiring only registers it. */
 export function palInputChanged(e) {
   const q = e.target.value.trim();
+  /* a new query is a new question: the "read this literally" the fuzzy chip
+     set was about the old one, and must not outlive it */
+  palForceFuzzy = false;
   clearTimeout(palT);
   palT = setTimeout(() => palQuery(q), 90);
 }

@@ -1020,7 +1020,14 @@
   <div class="modal pal" role="dialog" aria-label="Search vault">
     <div class="pal-in">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
-      <input id="palInput" placeholder="Search docs and content…" aria-label="Search docs and content" autocomplete="off" spellcheck="false">
+      <input id="palInput" placeholder="Search docs and content… or /regex/" aria-label="Search docs and content" autocomplete="off" spellcheck="false">
+      <!-- The mode, shown and set in one control: a `/pattern/flags` query IS a
+           regex and lights the chip by itself, so this reports what the search
+           is doing as much as it decides it (ADR 0028). -->
+      <div class="pal-modes" role="group" aria-label="Search mode">
+        <button type="button" class="pal-mode on" id="palFuzzy" data-mode="fuzzy" title="Fuzzy match — letters in order, gaps allowed">fuzzy</button>
+        <button type="button" class="pal-mode" id="palRegex" data-mode="regex" title="Regular expression — or wrap the query in /slashes/">regex</button>
+      </div>
       <span class="count" id="palCount"></span>
     </div>
     <div class="pal-list" id="palList" role="listbox" aria-label="Results"></div>
@@ -1028,7 +1035,7 @@
       <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
       <span><kbd>⏎</kbd> open</span>
       <span><kbd>Esc</kbd> close</span>
-      <span class="hide-xs" style="margin-left:auto">GET /api/search · fuzzy</span>
+      <span class="hide-xs" style="margin-left:auto" id="palFoot">GET /api/search · fuzzy</span>
     </div>
   </div>
 </div>

@@ -106,6 +106,35 @@ describe("leak canary", () => {
     }
   });
 
+  /* A REGEX is a second way into the same index (ADR 0028), and it can ask for
+     shapes a subsequence never could — "any run of base64", "every line". The
+     redaction is what protects this, not the matcher, so the proof is that a
+     pattern which matches EVERYTHING still comes back with only the prose. */
+  test("…and a regex cannot reach it either, however greedy the pattern", async () => {
+    const patterns = [
+      "/AGE ENCRYPTED/",
+      "/BEGIN|END/",
+      "/YWdlLWVuY3J5/",
+      "/[A-Za-z0-9+/=]{24,}/",
+      "/-{5}/",
+      "/.*/",
+      "/^.*$/",
+      "/\\S+/",
+      "/age/i",
+    ];
+    for (const p of patterns) {
+      const r = await srv.get("/api/search?q=" + encodeURIComponent(p) + "&limit=100");
+      expect(`${p} → ${r.status} ${r.body.mode}`).toBe(`${p} → 200 regex`);
+      const results = JSON.stringify(r.body.results);
+      for (const token of ARMOR_TOKENS) {
+        expect(`${p} leaks ${token}: ${contains(results, token)}`).toBe(`${p} leaks ${token}: false`);
+      }
+    }
+    /* and the catch-all really did match — an empty answer would prove nothing */
+    const all = await srv.get("/api/search?q=" + encodeURIComponent("/.*/") + "&limit=100");
+    expect(`catch-all matched something: ${all.body.results.length > 0}`).toBe("catch-all matched something: true");
+  });
+
   test("armor never appears in a /api/search response", async () => {
     /* query the armor itself, plus queries a user would plausibly type */
     const queries = [

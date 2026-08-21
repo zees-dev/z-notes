@@ -23,7 +23,7 @@ import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, confl
 import { refreshTrash, toggleTrash } from "./trash.js";
 import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, flushTextRun, initWordWrap, keepRawCaretVisible, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, startHeaderRename, syncModeUI, toggleWordWrap, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
 import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
-import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, renderChat, sendMessage, startNewSession } from "./chat.js";
+import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, palSetMode, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
 import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
@@ -482,6 +482,7 @@ function wire() {
 
   /* palette */
   $("#palInput").addEventListener("input", palInputChanged);
+  $$(".pal-mode").forEach((b) => b.addEventListener("click", () => palSetMode(b.dataset.mode)));
   $("#palInput").addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();

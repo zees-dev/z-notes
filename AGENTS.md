@@ -76,7 +76,7 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   plural: the primary keeps today's bare paths and all app-level state,
   secondary vaults are `@id/`-prefixed stacks under the vaults home, and `@` is
   a reserved path segment. 0019 makes explicit extensions literal, 0020 puts
-  moves on history, 0021 defines Preview's tested Markdown dialect, 0022 makes asking before a dirty Raw exit a default-on preference, 0023 folds Preview's sections without touching a byte, 0024 drags a folder with its subtree, 0025 moves the chat panel's second chord to ⌥C so ⌘C is always copy, 0026 makes sync bidirectional on the one auto-sync switch — upstream is polled, taken fast-forward-only, and "Sync" is a verb on the vault row — and 0027 makes a mode switch keep the source line you were on, measured rather than multiplied, so click-to-edit does not move the document.
+  moves on history, 0021 defines Preview's tested Markdown dialect, 0022 makes asking before a dirty Raw exit a default-on preference, 0023 folds Preview's sections without touching a byte, 0024 drags a folder with its subtree, 0025 moves the chat panel's second chord to ⌥C so ⌘C is always copy, 0026 makes sync bidirectional on the one auto-sync switch — upstream is polled, taken fast-forward-only, and "Sync" is a verb on the vault row — 0027 makes a mode switch keep the source line you were on, measured rather than multiplied, so click-to-edit does not move the document, and 0028 gives the one search box a second language — `/pattern/flags` (or `mode=regex`) is a regex, the palette's chips report which mode actually ran, and a document is rejected whole before its lines are scored.
 
 ## Workflow
 

@@ -1965,6 +1965,17 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .pal-in input { flex: 1 1 auto; min-width: 0; border: 0; outline: 0; background: none; font-size: 15.5px; letter-spacing: var(--tracking-tight); color: var(--text); }
 .pal-in input::placeholder { color: var(--muted-2); }
 .pal-in .count { font-size: 11px; color: var(--muted-2); font-family: var(--mono); white-space: nowrap; }
+/* THE SEARCH MODE, shown and set by the same pair (ADR 0028). Lit means "this
+   is what the results in front of you came from", which is why a `/regex/`
+   query lights it without anyone clicking. */
+.pal-modes { display: inline-flex; flex: 0 0 auto; gap: 2px; padding: 2px; border-radius: var(--r-sm); background: var(--panel-2); }
+.pal-mode {
+  border: 0; padding: 3px 8px; border-radius: calc(var(--r-sm) - 2px); cursor: pointer;
+  background: none; color: var(--muted-2); font-family: var(--mono); font-size: 10.5px; line-height: 1.4;
+}
+.pal-mode:hover { color: var(--text-2); }
+.pal-mode.on { background: var(--panel); color: var(--accent); box-shadow: var(--sh-1); }
+.pal-mode:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .pal-list { overflow-y: auto; padding: 6px; min-height: 80px; }
 .pal-item { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; padding: 6px 9px; border-radius: var(--r-sm); min-width: 0; transition: background .1s; }
 .pal-item .pico { flex: 0 0 auto; color: var(--muted-2); margin-top: 2px; }
@@ -1979,6 +1990,8 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .pal-item:hover { background: var(--panel-3); }
 .pal-item.sel:hover { background: var(--accent-soft); }
 .pal-empty { padding: 26px 10px; text-align: center; color: var(--muted); font-size: 13px; }
+/* a pattern still being typed, not a search that found nothing */
+.pal-empty.bad { color: var(--warn); font-family: var(--mono); font-size: 12px; }
 .pal-foot { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-top: var(--bd-2); background: var(--panel-2); font-size: 11px; color: var(--muted-2); }
 .pal-foot span { display: inline-flex; align-items: center; gap: 4px; }
 

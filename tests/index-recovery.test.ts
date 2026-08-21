@@ -160,3 +160,57 @@ describe("a corrupt index is parked and the app keeps booting", () => {
     }
   }, 90000);
 });
+
+/* ============================================================
+   The search line cache's accounting (ADR 0028).
+
+   White-box on purpose: the failure is INVISIBLE from outside. The cache keeps
+   split+lowercased lines against the content hash, and bills each entry to a
+   running character count that eviction gives back. Bill more than you refund —
+   as building the regex pre-check's rejoined copy did, on entries that were
+   never cached at all — and the counter ratchets upward until the eviction loop
+   throws out everything on sight. Search still ANSWERS correctly, so no
+   black-box test can see it; it just quietly does more work per keystroke than
+   it did before the cache existed.
+   ============================================================ */
+describe("search line cache accounting", () => {
+  const doc = (i: number, lines: number) => ({
+    path: `d${i}.md`,
+    rev: "1",
+    hash: "h" + i,
+    size: 1,
+    mtimeMs: 1,
+    title: "t",
+    slug: "s" + i,
+    hasSecrets: 0 as unknown as boolean,
+    empty: 0 as unknown as boolean,
+    body: (`line ${i} of ordinary prose here\n`).repeat(lines),
+  });
+
+  test("the counter always equals what the cache is actually holding", () => {
+    const dir = mkdtempSync(join(tmpdir(), "znotes-cache-"));
+    const ix = new Index(join(dir, "index.db")) as any;
+    /* deliberately MORE text than the cache may hold, so eviction runs every
+       sweep — the only condition under which the drift appears */
+    for (let i = 0; i < 12; i++) ix.upsertFile(doc(i, 30000), []);
+
+    const held = () => [...ix.lineCache.values()].reduce((n: number, e: any) => n + e.acct, 0);
+
+    /* regex sweeps, because the rejoined copy is what regex asks for */
+    for (let round = 0; round < 5; round++) {
+      ix.search("/prose/", 10, null);
+      expect(`round ${round}: drift ${ix.lineCacheChars - held()}`).toBe(`round ${round}: drift 0`);
+    }
+    /* and the cache is still doing its job rather than having evicted itself
+       into uselessness */
+    expect(`entries held: ${ix.lineCache.size > 0}`).toBe("entries held: true");
+    expect(`within its cap: ${ix.lineCacheChars <= 4_000_000}`).toBe("within its cap: true");
+
+    /* fuzzy sweeps interleaved — the other caller of the same cache */
+    for (let round = 0; round < 3; round++) {
+      ix.search("prose", 10, null);
+      expect(`fuzzy round ${round}: drift ${ix.lineCacheChars - held()}`).toBe(`fuzzy round ${round}: drift 0`);
+    }
+    ix.close?.();
+  }, 60000);
+});

@@ -671,7 +671,16 @@ const ROUTES: Route[] = [
         // quietly lop results off the END of the list instead of paging
         const asked = parseInt(c.url.searchParams.get("limit") || "24", 10);
         const limit = Number.isFinite(asked) && asked > 0 ? Math.min(100, asked) : 24;
-        return json({ query: q, results: registry.search(q, limit) });
+        /* `mode=regex` reads a bare pattern as one; `/pattern/flags` says so
+           itself and needs no parameter (ADR 0028) */
+        const a = registry.search(q, limit, c.url.searchParams.get("mode"));
+        return json({
+          query: q,
+          mode: a.mode,
+          results: a.results,
+          ...(a.invalid ? { invalid: a.invalid } : {}),
+          ...(a.partial ? { partial: true } : {}),
+        });
       },
     },
   },

@@ -23,6 +23,27 @@ const SCHEMA_VERSION = 3;
 /** What the age-fence body is replaced with in the search index. */
 const AGE_PLACEHOLDER = "ageblock";
 
+/* ---------- search limits ----------
+   A search runs on the one process that also serves SSE, saves and git, so the
+   sweep is bounded rather than trusted: past the budget it returns what it has
+   and says so. The regex caps are the same argument aimed at backtracking —
+   the pattern comes from the vault's owner, but a pattern nobody meant to be
+   catastrophic still stalls the app that runs it. */
+const SEARCH_BUDGET_MS = 60;
+const REGEX_LINE_MAX = 2000;
+/** two caps on one line's highlighting: how many matches are walked, and how
+    many characters they may light up between them. `/./` over prose reaches
+    both, and neither changes WHICH lines are hits — only how much of one is
+    painted. */
+const REGEX_MATCH_MAX = 64;
+const REGEX_IDX_MAX = 240;
+/** past this, a document skips the whole-document pre-check and is scanned line
+    by line instead — bounded work, and never a rejection over an unseen hit */
+const REGEX_PROBE_MAX = 262_144;
+const REGEX_BASE = 30;
+/** lowercased line cache, in characters — a few MB, not a second vault */
+const LINE_CACHE_MAX = 4_000_000;
+
 export interface FileRow {
   path: string;
   rev: string;
@@ -366,31 +387,158 @@ export class Index {
    * text, and `SELECT *` made every one of them allocate and discard the whole
    * vault — on every SSE-driven tree refresh and every 404.
    */
-  /** GET /api/search: fuzzy over paths + redacted bodies (top 2 hit lines per doc). */
-  search(q: string, limit: number): SearchHit[] {
+  /**
+   * One document's lines, split and lowercased ONCE and kept against the hash
+   * the reconciler already computes.
+   *
+   * The scan below reads every line of every document on every keystroke, and
+   * it used to `split` and `toLowerCase` all of it each time — the whole vault
+   * re-allocated between one letter and the next. Keyed by hash, so an edit
+   * invalidates its own document and nothing else, and bounded, so a large
+   * vault cannot turn the index into a second copy of itself in memory.
+   */
+  private lineCache = new Map<string, LineEntry>();
+  private lineCacheChars = 0;
+
+  private lines(row: { hash: string; body: string }): LineEntry {
+    const hit = this.lineCache.get(row.hash);
+    if (hit) return hit;
+    /* TRIMMED here, once, because trimmed is what a hit reports and what its
+       match offsets index into — doing it in the scan meant re-trimming every
+       line of the vault per keystroke, and left the two passes disagreeing
+       about where a line starts (see `flat`). Keyed by CONTENT hash, so an edit
+       invalidates its own document and two identical documents share an entry. */
+    const text = row.body.split("\n").map((l) => l.trim());
+    const entry: LineEntry = {
+      hash: row.hash,
+      text,
+      low: text.map((l) => l.toLowerCase()),
+      chars: row.body.length,
+      acct: 0,
+      flat: null,
+    };
+    if (entry.chars <= LINE_CACHE_MAX) {
+      while (this.lineCacheChars + entry.chars > LINE_CACHE_MAX && this.lineCache.size) {
+        const oldest = this.lineCache.keys().next().value as string;
+        /* `acct`, not `chars`: an evicted entry must hand back everything it
+           took, `flat` included, or the counter ratchets up until the cache
+           evicts everything on sight and every keystroke rebuilds the vault —
+           slower than having no cache at all, and silent. */
+        this.lineCacheChars -= this.lineCache.get(oldest)!.acct;
+        this.lineCache.delete(oldest);
+      }
+      this.lineCache.set(row.hash, entry);
+      entry.acct = entry.chars;
+      this.lineCacheChars += entry.acct;
+    }
+    return entry;
+  }
+
+  /**
+   * The document as the per-line pass will see it: trimmed lines, rejoined.
+   *
+   * The whole-document regex reject has to be asked of EXACTLY this, not of the
+   * raw body. Lines are matched trimmed, so `^` means "after the indentation" —
+   * and against the raw body `/^- \[/` failed on every indented list item and
+   * threw the document away before its lines were ever tried. Built once per
+   * document, and only for the regex queries that need it.
+   */
+  private flatOf(entry: LineEntry): string {
+    if (entry.flat === null) {
+      entry.flat = entry.text.join("\n");
+      /* charge it ONLY to an entry the cache is actually holding: a document
+         too big to cache, or one already evicted, is rebuilt every time and
+         must not bill the counter every time it is */
+      if (this.lineCache.get(entry.hash) === entry) {
+        entry.acct += entry.flat.length;
+        this.lineCacheChars += entry.flat.length;
+      }
+    }
+    return entry.flat;
+  }
+
+  /**
+   * GET /api/search: fuzzy (subsequence) or regex over doc paths AND redacted
+   * bodies, top 2 hit lines per doc.
+   *
+   * Two things keep this honest on a large vault. A document is REJECTED WHOLE
+   * before its lines are looked at — a line can only match if the body does,
+   * for both modes — which is what turns a per-keystroke scan of every line in
+   * the vault into a scan of the few documents that can possibly answer. And
+   * the sweep runs against a DEADLINE: partial results now beat complete
+   * results after the next keystroke has already replaced them, and this is the
+   * one process serving SSE, saves and everything else.
+   */
+  search(q: string, limit: number, forced?: string | null): SearchAnswer {
+    const sq = parseSearch(q, forced);
     const out: SearchHit[] = [];
+    const until = Date.now() + SEARCH_BUDGET_MS;
+    let partial = false;
+    let seen = 0;
+
+    if (sq.mode === "regex" && sq.term && !sq.probe) {
+      return { results: [], mode: sq.mode, invalid: sq.invalid, partial: false };
+    }
+    const needle = sq.mode === "fuzzy" ? sq.term.toLowerCase() : "";
+    const empty = !sq.term;
+
     for (const row of this.allFiles()) {
       const path = row.path;
       const name = path.split("/").pop()!;
-      if (!q) {
+      if (empty) {
         out.push({ kind: "doc", path, name, text: path, matches: [], score: 0 });
         continue;
       }
-      const nm = fuzzy(q, path);
-      if (nm) out.push({ kind: "doc", path, name, text: path, matches: nm.idx, score: nm.score + 12 });
-      const lines = row.body.split("\n");
+      /* EVERY document, not every sixteenth: one `Date.now()` costs nothing
+         beside a regex sweep of a document, and a pattern that backtracks can
+         spend the whole budget inside a single one — checking in strides let
+         fifteen more run after the budget was already gone. */
+      seen++;
+      if (Date.now() > until) {
+        partial = true;
+        break;
+      }
+
+      const entry = this.lines(row);
+      const { text: lines, low } = entry;
+
+      /* THE WHOLE-DOCUMENT REJECT, asked of exactly what the per-line pass will
+         see. A line can only match if the document does, in either mode, so a
+         `false` here can never hide a hit — and it is what keeps a keystroke
+         off the lines of every document that cannot possibly answer. */
+      if (sq.mode === "regex") {
+        const pm = regexIdx(sq.all!, path);
+        if (pm) out.push({ kind: "doc", path, name, text: path, matches: pm, score: 12 + REGEX_BASE });
+        /* `probe` is not global, so it carries no lastIndex between documents.
+           Past a size the pre-check is skipped rather than truncated: a
+           truncated probe could reject a document over a hit it never saw, and
+           a wrong answer is worse than a slow one. The per-line pass that then
+           runs is bounded line by line. */
+        const flat = this.flatOf(entry);
+        if (flat.length <= REGEX_PROBE_MAX && !sq.probe!.test(flat)) continue;
+      } else {
+        const nm = fuzzyOn(needle, path.toLowerCase());
+        if (nm) out.push({ kind: "doc", path, name, text: path, matches: nm.idx, score: nm.score + 12 });
+        if (!hasSubseq(needle, low)) continue;
+      }
+
       const hits: SearchHit[] = [];
       for (let i = 0; i < lines.length; i++) {
-        const raw = lines[i].trim();
-        if (!raw || raw.length < 2) continue;
-        const r = fuzzy(q, raw);
-        if (r) hits.push({ kind: "line", path, name, line: i, text: raw, matches: r.idx, score: r.score });
+        const text = lines[i];
+        if (!text || text.length < 2) continue;
+        if (sq.mode === "regex") {
+          const r = regexIdx(sq.all!, text.length > REGEX_LINE_MAX ? text.slice(0, REGEX_LINE_MAX) : text);
+          if (r) hits.push({ kind: "line", path, name, line: i, text, matches: r, score: regexScore(r, text) });
+        } else {
+          const r = fuzzyOn(needle, low[i]);
+          if (r) hits.push({ kind: "line", path, name, line: i, text, matches: r.idx, score: r.score });
+        }
       }
       hits.sort((a, b) => b.score - a.score);
       for (const h of hits.slice(0, 2)) out.push(h);
     }
-    out.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-    return out.slice(0, limit);
+    out.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path) || (a.line ?? -1) - (b.line ?? -1));
+    return { results: out.slice(0, limit), mode: sq.mode, invalid: sq.invalid, partial };
   }
 
   /**
@@ -809,9 +957,20 @@ export interface ProposalRow {
    ============================================================ */
 
 export function fuzzy(q: string, hay: string): { score: number; idx: number[] } | null {
-  if (!q) return { score: 0, idx: [] };
-  const n = q.toLowerCase();
-  const h = hay.toLowerCase();
+  return fuzzyOn(q.toLowerCase(), hay.toLowerCase());
+}
+
+/**
+ * The scorer proper, over an ALREADY-LOWERCASED needle and haystack.
+ *
+ * Split out because `fuzzy` lowercased its haystack on every call, and the
+ * search below calls it once per line of every document in the vault on every
+ * keystroke — so the whole vault was being re-lowercased, and re-allocated,
+ * between one letter and the next. The caller now lowercases each body once and
+ * keeps it (see `lines`).
+ */
+function fuzzyOn(n: string, h: string): { score: number; idx: number[] } | null {
+  if (!n) return { score: 0, idx: [] };
   const idx: number[] = [];
   let from = 0;
   let score = 0;
@@ -832,9 +991,155 @@ export function fuzzy(q: string, hay: string): { score: number; idx: number[] } 
     from = at + 1;
   }
   if (h.indexOf(n.replace(/\s+/g, "")) >= 0) score += 22;
-  score -= idx[0] * 0.08;
-  score -= Math.max(0, hay.length - 60) * 0.01;
+  /* an all-whitespace needle matches everything and indexes nothing, so there
+     is no first offset to discount — `idx[0]` there made every score NaN, and
+     NaN sorts nowhere */
+  score -= (idx.length ? idx[0] : 0) * 0.08;
+  score -= Math.max(0, h.length - 60) * 0.01;
   return { score, idx };
+}
+
+/* ---------- regex queries ----------
+
+   A regex is written `/pattern/flags`, so it survives a URL, a bookmark and a
+   curl without a second parameter to say what it is — and the palette's toggle
+   is then a READING of the query as much as a control over it. `mode=regex`
+   forces the reading for a pattern the user would rather not wrap.
+
+   `g` and `y` are stripped: iteration is this file's job, and a caller-supplied
+   `lastIndex` is a foot-gun in a matcher that runs over every line in a vault. */
+const SLASHED = /^\/(.*)\/([a-z]*)$/s;
+const FLAGS_OK = /^[imsu]*$/;
+
+export type SearchMode = "fuzzy" | "regex";
+
+export interface SearchQuery {
+  mode: SearchMode;
+  /** the pattern or the fuzzy needle — what the user meant, minus delimiters */
+  term: string;
+  /** non-global, for `test`; null when the pattern will not compile */
+  probe: RegExp | null;
+  /** the same pattern with `g`, for walking every match on a line */
+  all: RegExp | null;
+  /** why the pattern was refused, for the palette to say out loud */
+  invalid: string | null;
+}
+
+export function parseSearch(q: string, forced?: string | null): SearchQuery {
+  /* The slash form only claims a query whose tail is REAL flags. `/etc/hosts`
+     and `/usr/bin` are paths people search for, not patterns with a flag set
+     called "hosts" — reading them as regex made ordinary text unsearchable and
+     answered with a complaint about a flag the user never typed. */
+  const m = SLASHED.exec(q);
+  const slashed = !!m && FLAGS_OK.test(m[2].replace(/[gy]/g, ""));
+  /* `mode=fuzzy` is the other way out: it takes a query at its word even when
+     it is shaped like a pattern, which is what the palette's fuzzy chip sends
+     so that clicking it never has to rewrite what you typed. */
+  if (forced === "fuzzy" || (forced !== "regex" && !slashed)) {
+    return { mode: "fuzzy", term: q, probe: null, all: null, invalid: null };
+  }
+  const src = slashed ? m![1] : q;
+  const flags = slashed ? m![2].replace(/[gy]/g, "") : "";
+  if (!src) return { mode: "regex", term: "", probe: null, all: null, invalid: null };
+  try {
+    /* `m` ALWAYS: this searches a vault line by line, so `^` and `$` mean the
+       ends of a line — which is both what a person means by them here and what
+       makes the whole-body pre-check below agree with the per-line pass. Without
+       it `/^WARN/` pre-rejected every document whose FIRST line was not WARN,
+       and found nothing anywhere. */
+    return {
+      mode: "regex",
+      term: src,
+      probe: new RegExp(src, flags.includes("m") ? flags : flags + "m"),
+      all: new RegExp(src, (flags.includes("m") ? flags : flags + "m") + "g"),
+      invalid: null,
+    };
+  } catch (err) {
+    /* a half-typed pattern is the NORMAL state of a box being typed into, so
+       this is a result the palette can render, never an error it must toast */
+    return { mode: "regex", term: src, probe: null, all: null, invalid: cleanRegexError(err) };
+  }
+}
+
+function cleanRegexError(err: unknown): string {
+  const raw = String((err as Error)?.message || err);
+  return raw.replace(/^Invalid regular expression:?\s*/i, "").replace(/^\/.*\/[a-z]*:\s*/, "") || "invalid pattern";
+}
+
+/**
+ * Could any ONE line hold this needle? Asked of the whole document before its
+ * lines are scored, and cheap enough to be worth asking: it walks the lines
+ * already lowercased in the cache and allocates nothing.
+ *
+ * The pointer carries ACROSS lines on purpose — that is the concatenation test,
+ * which is a superset of the per-line one, so a `false` here can never hide a
+ * line that would have matched.
+ */
+function hasSubseq(n: string, lines: string[]): boolean {
+  let i = 0;
+  for (const line of lines) {
+    let from = 0;
+    while (i < n.length) {
+      const c = n[i];
+      if (c === " ") {
+        i++;
+        continue;
+      }
+      const at = line.indexOf(c, from);
+      if (at < 0) break;
+      i++;
+      from = at + 1;
+    }
+    if (i >= n.length) return true;
+  }
+  return i >= n.length;
+}
+
+/** Every match on one line, as the character offsets the clients highlight —
+    capped, because `.` over a long line is a legal thing to ask for and a
+    highlight per character is not worth serialising. */
+function regexIdx(re: RegExp, text: string): number[] | null {
+  re.lastIndex = 0;
+  const idx: number[] = [];
+  let m: RegExpExecArray | null;
+  let guard = 0;
+  while ((m = re.exec(text)) && guard++ < REGEX_MATCH_MAX) {
+    for (let i = m.index; i < m.index + m[0].length && idx.length < REGEX_IDX_MAX; i++) idx.push(i);
+    /* a zero-length match (`x*`, a lone anchor) never advances lastIndex */
+    if (m[0].length === 0) re.lastIndex++;
+    if (idx.length >= REGEX_IDX_MAX) break;
+  }
+  return idx.length ? idx : null;
+}
+
+/** A regex hit has no subsequence score to earn, so rank by where and how much
+    it matched: earlier and denser first, long lines discounted the same way
+    `fuzzyOn` discounts them, so the two modes sort alike. */
+function regexScore(idx: number[], text: string): number {
+  return REGEX_BASE + Math.min(idx.length, 24) * 0.5 - idx[0] * 0.08 - Math.max(0, text.length - 60) * 0.01;
+}
+
+/** one document's lines, ready to match: trimmed, lowercased, and (for regex)
+    rejoined — see `Index.lines` for why all three are kept rather than derived */
+interface LineEntry {
+  /** its own key, so `flatOf` can tell whether this entry is still cached */
+  hash: string;
+  text: string[];
+  low: string[];
+  chars: number;
+  /** what this entry has added to `lineCacheChars` — the ONE number eviction
+      gives back. Grows when `flat` is built; 0 for an entry never cached. */
+  acct: number;
+  flat: string | null;
+}
+
+export interface SearchAnswer {
+  results: SearchHit[];
+  mode: SearchMode;
+  /** the reason a regex would not compile — results are empty when set */
+  invalid: string | null;
+  /** the deadline cut the sweep short; what is here is real, just not all */
+  partial: boolean;
 }
 
 export interface SearchHit {

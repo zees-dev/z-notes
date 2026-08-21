@@ -216,7 +216,10 @@ export const putVaultIdentity = (identity, recipient, replace) =>
 
 /* ---------------- search ---------------- */
 
-export const search = (q, { limit = 24, signal } = {}) => get("api/search", { params: { q, limit }, signal });
+/** `mode: "regex"` reads a BARE pattern as a regex; a `/pattern/flags` query
+    says so itself and needs no parameter (ADR 0028). */
+export const search = (q, { limit = 24, mode = null, signal } = {}) =>
+  get("api/search", { params: { q, limit, mode }, signal });
 
 /* ---------------- settings ---------------- */
 
