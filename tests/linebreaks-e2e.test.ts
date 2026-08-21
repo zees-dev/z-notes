@@ -22,7 +22,11 @@
      · CLICK — each rendered line carries its own [data-line], so click-to-edit
        lands the caret on the line that was clicked and not on the block's
        first. Under this rule a paragraph is routinely many lines, which is
-       what makes that distinction matter.
+       what makes that distinction matter. And the line it lands on has to stay
+       WHERE IT WAS: Raw soft-wraps, so locating a line by multiplying it by a
+       line height counts every wrapped row as zero and scrolls further off the
+       longer the document gets. Measured by asking the browser what character
+       sits at the point that was clicked.
      · SOURCE — none of the above is allowed to cost a byte on disk.
    ============================================================ */
 
@@ -53,12 +57,19 @@ const LONG =
   "is a property of the column and not of the file, and a fix that reached " +
   "for white-space pre-wrap would have taken it away without saying so.";
 
+/* Every line wider than the column, so Raw wraps every one of them, and enough
+   of them to scroll — the shape in which "line × line-height" is not merely
+   imprecise but wrong by more the further down you click. Paragraph k is source
+   line 2k; the blank between each pair is 2k+1. */
+const WRAPPY_SRC = Array.from({ length: 40 }, (_, k) => `p${k} — ` + LONG).join("\n\n") + "\n";
+
 const PARA = "lines/para.md";
 const GAPS = "lines/gaps.md";
 const QUOTE = "lines/quote.md";
 const LONG_DOC = "lines/long.md";
 const LEAD = "lines/lead.md";
 const PLAIN = "lines/plain.md";
+const WRAPPY = "lines/wrappy.md";
 
 const SEED: SeedMap = {
   "inbox.md": "# Inbox\n\nnothing yet\n",
@@ -69,6 +80,7 @@ const SEED: SeedMap = {
   /* two leading blanks, and a trailing run — the two exceptions */
   [LEAD]: "\n\n# Top\n\nbody\n\n\n",
   [PLAIN]: "# Top\n\nbody\n",
+  [WRAPPY]: WRAPPY_SRC,
 };
 
 let srv: TestServer;
@@ -265,6 +277,79 @@ describe("click-to-edit reaches the clicked line, not the block's first", () => 
     expect(`caret at ${caret} (line 4 starts at ${want})`).toBe(`caret at ${want} (line 4 starts at ${want})`);
     /* the assertion is only worth something if the block's own answer differs */
     expect(`the block would have said ${offsetOf(PARA_SRC, 2)}`).toBe("the block would have said 9");
+  }, 90000);
+
+  /* The complaint this covers: in a long note the document jumped on the way
+     into Raw and the caret came back somewhere else entirely. The old code
+     placed the line at `line × lineHeight`, which is the truth only while
+     nothing wraps. Deep in a wrapping document it was short by every wrapped
+     row above — so the deeper the click, the bigger the jump. */
+  test("a click deep into a wrapping document leaves that line where it was clicked", async () => {
+    await open(WRAPPY);
+    /* far enough down that everything above has wrapped several times over */
+    const target = 24; // paragraph 12 → source line 24
+    const before = await page.evaluate((line) => {
+      const sc = document.getElementById("scroll")!;
+      const el = document.querySelector(`.pline[data-line="${line}"]`) as HTMLElement;
+      el.scrollIntoView({ block: "center" });
+      const r = el.getBoundingClientRect();
+      const s = sc.getBoundingClientRect();
+      return { x: r.left + 24, y: r.top + 4, offset: r.top - s.top, scrollTop: sc.scrollTop };
+    }, target);
+    expect(`scrolled to ${before.scrollTop > 300}`).toBe("scrolled to true");
+
+    await page.mouse.click(before.x, before.y);
+    await page.waitForSelector("#rawArea", { timeout: 10000 });
+    await sleep(160);
+
+    /* Where the caret physically IS. A textarea gives its insertion point no
+       box of its own, so measure it the only way there is: mirror the bytes
+       before it in the textarea's own computed typography — independently of
+       the app, which is the point — and read the marker's rect. */
+    const after = await page.evaluate(() => {
+      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
+      const cs = getComputedStyle(ta);
+      const tr = ta.getBoundingClientRect();
+      const mirror = document.createElement("div");
+      const marker = document.createElement("span");
+      Object.assign(mirror.style, {
+        position: "fixed",
+        left: tr.left + "px",
+        top: tr.top + "px",
+        width: tr.width + "px",
+        boxSizing: "border-box",
+        visibility: "hidden",
+        whiteSpace: ta.wrap === "off" ? "pre" : "pre-wrap",
+        overflowWrap: ta.wrap === "off" ? "normal" : "break-word",
+        font: cs.font,
+        fontFamily: cs.fontFamily,
+        fontSize: cs.fontSize,
+        lineHeight: cs.lineHeight,
+        letterSpacing: cs.letterSpacing,
+        padding: cs.padding,
+        borderWidth: cs.borderWidth,
+        borderStyle: cs.borderStyle,
+        tabSize: cs.tabSize,
+      });
+      marker.textContent = "​";
+      mirror.append(document.createTextNode(ta.value.slice(0, ta.selectionStart)), marker);
+      document.body.appendChild(mirror);
+      const top = marker.getBoundingClientRect().top;
+      mirror.remove();
+      return {
+        caretLine: ta.value.slice(0, ta.selectionStart).split("\n").length - 1,
+        caretTop: top,
+        lineHeight: parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5,
+      };
+    });
+
+    expect(`caret on line ${after.caretLine}`).toBe(`caret on line ${target}`);
+    /* the line is back under the pointer: within one line box, which is the
+       height of the thing being aligned and not a jump */
+    const drift = Math.abs(after.caretTop - (before.y - 4));
+    expect(`clicked line moved ${drift <= after.lineHeight ? "≤1" : Math.round(drift)} line boxes`).toBe(
+      "clicked line moved ≤1 line boxes"
+    );
   }, 90000);
 
   test("clicking the first line still opens Raw at the first line", async () => {

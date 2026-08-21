@@ -244,9 +244,11 @@ export function autoGrow(ta) {
   if (sc) sc.scrollTop = keep;
 }
 
-/** The caret has no DOM box of its own. Mirror the bytes before it with the
- * textarea's real typography so wrapped lines count exactly as they do in Raw. */
-function rawCaretBox(ta) {
+/** A character offset has no DOM box of its own. Mirror the bytes before it
+ * with the textarea's real typography so wrapped lines count exactly as they do
+ * in Raw — the only way to know where a source line actually sits, since one
+ * line is one visual row only until it is longer than the pane. */
+function rawBoxAt(ta, offset) {
   const cs = getComputedStyle(ta);
   const tr = ta.getBoundingClientRect();
   const mirror = document.createElement("div");
@@ -281,13 +283,17 @@ function rawCaretBox(ta) {
     tabSize: cs.tabSize,
   });
   marker.textContent = "\u200b";
-  mirror.append(document.createTextNode(ta.value.slice(0, ta.selectionEnd)), marker);
+  const at = Math.max(0, Math.min(offset, ta.value.length));
+  mirror.append(document.createTextNode(ta.value.slice(0, at)), marker);
   document.body.appendChild(mirror);
   const mr = marker.getBoundingClientRect();
   const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
   mirror.remove();
   return { top: mr.top, bottom: mr.top + lineHeight };
 }
+
+/** Where the caret is, in viewport coordinates. */
+const rawCaretBox = (ta) => rawBoxAt(ta, ta.selectionEnd);
 
 function revealRawCaret() {
   const ta = $("#rawArea");
@@ -1024,15 +1030,89 @@ function focusRaw(opts) {
   const pos = Math.max(0, Math.min(opts.caret || 0, ta.value.length));
   ta.setSelectionRange(pos, pos);
   if (!sc) return;
-  if (opts.line != null) {
-    const cs = getComputedStyle(ta);
-    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
-    const y = ta.offsetTop + parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth) + opts.line * lh;
-    const want = y - (opts.anchor != null ? opts.anchor : 120);
-    sc.scrollTop = Math.max(0, Math.min(want, sc.scrollHeight - sc.clientHeight));
-  } else {
-    sc.scrollTop = keep;
+  if (opts.line != null) scrollRawTo(pos, opts.anchor);
+  else sc.scrollTop = keep;
+}
+
+/**
+ * Put the source line holding `offset` back where the reader was already
+ * looking — `anchor` pixels below the top of the pane.
+ *
+ * MEASURED, never `line * lineHeight`. Raw soft-wraps, so a source line is one
+ * visual row only until it is longer than the pane; multiplying counts every
+ * wrapped row as zero and lands short by the total of everything that wrapped
+ * above it. That error grows with the document, which is why the jump was worst
+ * in exactly the long notes where losing your place costs the most.
+ */
+function scrollRawTo(offset, anchor) {
+  const ta = $("#rawArea");
+  const sc = $("#scroll");
+  if (!ta || !sc) return;
+  const want =
+    sc.scrollTop + (rawBoxAt(ta, offset).top - sc.getBoundingClientRect().top) - (anchor != null ? anchor : 120);
+  sc.scrollTop = Math.max(0, Math.min(want, sc.scrollHeight - sc.clientHeight));
+}
+
+/* ---------- keeping your place across a mode switch ----------
+
+   Preview and Raw are two renderings of one document at two different heights,
+   so the scroll OFFSET means nothing across the switch — the further into a
+   note you are, the further the same pixel lands from the same words. The
+   coordinate the two modes do share is the SOURCE LINE, which every rendered
+   block already carries (ADR 0015). So a switch reads the line the reader is
+   looking at and where on screen it sits, and puts it back there.
+
+   A click already knows its line; these are for ⌘E, the mode chip and Esc. */
+
+/** The rendered block a source line lives in — the last `[data-line]` at or
+    above it, the rule `revealLine` and `ensureLineVisible` already share. */
+function blockForLine(lineNo) {
+  let best = null;
+  $$("#doc [data-line]").forEach((b) => {
+    const l = parseInt(b.dataset.line, 10);
+    if (l <= lineNo && (!best || l >= parseInt(best.dataset.line, 10))) best = b;
+  });
+  return best;
+}
+
+/** The first source line still on screen in Preview, and how far down it sits. */
+function previewAnchor() {
+  const sc = $("#scroll");
+  if (!sc) return null;
+  const top = sc.getBoundingClientRect().top;
+  for (const b of $$("#doc [data-line]")) {
+    const r = b.getBoundingClientRect();
+    if (r.bottom <= top + 1) continue;
+    const line = parseInt(b.dataset.line, 10);
+    if (!isNaN(line)) return { line, anchor: r.top - top };
   }
+  return null;
+}
+
+/** The same question asked of Raw, answered by the caret — the place the user
+    was actually working. Null when it is off screen: anchoring to something
+    nobody can see would BE the jump this exists to prevent, so that case keeps
+    the offset it has rather than inventing a better one. */
+function rawAnchor() {
+  const ta = $("#rawArea");
+  const sc = $("#scroll");
+  if (!ta || !sc) return null;
+  const box = rawBoxAt(ta, ta.selectionStart);
+  const r = sc.getBoundingClientRect();
+  if (box.bottom < r.top || box.top > r.bottom) return null;
+  return { line: ta.value.slice(0, ta.selectionStart).split("\n").length - 1, anchor: box.top - r.top };
+}
+
+/** Put `at.line` back `at.anchor` pixels down the Preview pane. A line inside a
+    folded section has no box to aim at (ADR 0023 hides it outright) — and a
+    fold is not a thing a mode switch may open, so that case keeps the offset it
+    has rather than scrolling to a rect of zeroes. */
+function alignPreview(at) {
+  const sc = $("#scroll");
+  const b = at && blockForLine(at.line);
+  if (!sc || !b || !b.offsetParent) return;
+  const want = sc.scrollTop + (b.getBoundingClientRect().top - sc.getBoundingClientRect().top) - at.anchor;
+  sc.scrollTop = Math.max(0, Math.min(want, sc.scrollHeight - sc.clientHeight));
 }
 
 export function setMode(m, opts) {
@@ -1050,21 +1130,32 @@ export function setMode(m, opts) {
   syncRaw();
   const sc = $("#scroll");
   const keep = sc ? sc.scrollTop : 0;
+  /* read the shared coordinate BEFORE the DOM is replaced under us */
+  const carry = opts.line != null ? null : state.mode === "preview" ? previewAnchor() : rawAnchor();
   state.mode = m;
   syncModeUI();
   renderDoc({ noFade: true });
   if (sc) sc.scrollTop = Math.max(0, Math.min(keep, sc.scrollHeight - sc.clientHeight));
   if (m === "raw") {
+    const doc = activeDoc();
+    const at =
+      opts.line != null || !carry || !doc
+        ? opts
+        : { caret: lineOffset(doc.markdown, carry.line), line: carry.line, anchor: carry.anchor };
     /* W_SHEET, not W_DOCK: this one really is about the SOFT KEYBOARD — an
        unasked-for focus that throws a keyboard over half the screen. A tablet
-       has the room for it; a phone does not. */
-    if (!isSheet() || opts.caret != null) focusRaw(opts);
+       has the room for it; a phone does not. The PLACE is not the keyboard's to
+       decide, though: a phone that declines the focus still owes the reader the
+       line they were on. */
+    if (!isSheet() || opts.caret != null) focusRaw(at);
+    else if (at.line != null) scrollRawTo(at.caret, at.anchor);
     /* …and, on a phone only, make sure Back has an entry to spend on leaving
        Raw. `onPop` intercepts that press, and an interception needs a popstate
        to intercept — at the bottom of the stack there is none. See
        `markerForLayer`; it no-ops wherever an entry already exists. */
     if (isSheet()) markerForLayer();
   } else {
+    alignPreview(carry);
     /* …and leaving Raw hands back a press nothing is owed any more, by whichever
        door it left through — ⌘E, the chip, a click on the whitespace, Esc, or
        the Back this was reserved for. See `retireLayerMarker`. */
@@ -1137,12 +1228,7 @@ function revealLine(lineNo) {
      whatever is covering the line before going looking for it (ADR 0023), the
      way revealing a tree row force-opens the folders above it. */
   ensureLineVisible(activeDoc(), lineNo);
-  const blocks = $$("#doc [data-line]");
-  let best = null;
-  blocks.forEach((b) => {
-    const l = parseInt(b.dataset.line, 10);
-    if (l <= lineNo && (!best || l >= parseInt(best.dataset.line, 10))) best = b;
-  });
+  const best = blockForLine(lineNo);
   if (!best) return;
   const sc = $("#scroll");
   /* rects, not offsetTop: a foldable block is `position: relative` for its
