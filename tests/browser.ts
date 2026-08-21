@@ -181,8 +181,30 @@ export function appDriver(page: Page, base: string) {
     await page.waitForFunction((u) => location.pathname === u, { timeout: 10000 }, dUrl(path));
   }
 
+  /**
+   * Click a doc in the tree, and survive the tree being rebuilt underneath the
+   * click.
+   *
+   * `page.click` resolves the selector, then scrolls to it, then presses — and
+   * the sidebar re-renders WHOLESALE on any `doc-changed` frame, so a create or
+   * a save landing in that window detaches the very node puppeteer is holding
+   * ("Node is either not clickable or not an Element"). Nothing is wrong with
+   * the app; the harness simply grabbed a node that a legitimate refresh
+   * replaced. Retry against the fresh tree instead — the row is identified by
+   * its path, so the second attempt asks for the new node by name.
+   */
   async function clickDoc(path: string) {
-    await page.click(`#tree .row.file[data-doc="${path}"]`);
+    const sel = `#tree .row.file[data-doc="${path}"]`;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await page.waitForSelector(sel, { timeout: 10000 });
+        await page.click(sel);
+        break;
+      } catch (err) {
+        if (attempt >= 3) throw err;
+        await new Promise((r) => setTimeout(r, 120));
+      }
+    }
     await settled(path);
   }
 

@@ -1082,10 +1082,28 @@ describe("the ? overlay lists every global shortcut", () => {
           const items = [...document.querySelectorAll("#ctxMenu .menu-item")].filter((n) => !(n as HTMLElement).hidden);
           return { n: items.length, at: items.indexOf(document.activeElement as Element) };
         });
+      /* WAIT for the focus to land rather than reading straight after the key.
+         `keyboard.press` resolves when the event is dispatched, not when the
+         app's handler has moved focus — so a slower machine read `activeElement`
+         while it was still the row that opened the menu, and reported -1. */
+      const settled = async (want: "last" | "first") => {
+        await p
+          .waitForFunction(
+            (which) => {
+              const items = [...document.querySelectorAll("#ctxMenu .menu-item")].filter((n) => !(n as HTMLElement).hidden);
+              const at = items.indexOf(document.activeElement as Element);
+              return which === "last" ? at === items.length - 1 && at >= 0 : at === 0;
+            },
+            { timeout: 5000, polling: 50 },
+            want
+          )
+          .catch(() => {});
+        return cells();
+      };
       await p.keyboard.press("End");
-      const end = await cells();
+      const end = await settled("last");
       await p.keyboard.press("Home");
-      const home = await cells();
+      const home = await settled("first");
       expect(`End → last of ${end.n}: ${end.at === end.n - 1}, Home → first: ${home.at}`).toBe(
         `End → last of ${end.n}: true, Home → first: 0`
       );

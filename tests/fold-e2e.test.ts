@@ -286,6 +286,37 @@ const chevOpacity = (key: string) =>
     return b ? getComputedStyle(b, "::after").opacity : "no chevron";
   }, key);
 
+/**
+ * The same reading, once the FADE HAS FINISHED.
+ *
+ * The chevron crosses on an opacity transition, so sampling it a fixed number
+ * of milliseconds after the pointer moves is a race against the machine: a
+ * slower one was still at 0.0012356 when the assertion wanted 0, which is the
+ * transition working exactly as designed and the test measuring it too early.
+ * Waits for the value to ARRIVE instead of guessing when it will.
+ */
+const chevSettled = async (key: string, want: 0 | 1) => {
+  try {
+    await page.waitForFunction(
+      (k, target) => {
+        const b = document.querySelector(`#doc .md [data-fold="${k}"] > .fold`);
+        if (!b) return false;
+        const o = parseFloat(getComputedStyle(b, "::after").opacity);
+        return Math.abs(o - (target as number)) < 0.01;
+      },
+      { timeout: 5000, polling: 50 },
+      key,
+      want
+    );
+  } catch {
+    /* fall through — the assertion below reports the value it actually found,
+       which says more than a timeout stack does */
+  }
+  const raw = await chevOpacity(key);
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? String(Math.abs(n - Math.round(n)) < 0.01 ? Math.round(n) : n) : raw;
+};
+
 /** byte offset of the start of source line `n` — what the caret should land on */
 const offsetOf = (src: string, n: number) => src.split("\n").slice(0, n).reduce((a, l) => a + l.length + 1, 0);
 
@@ -659,7 +690,7 @@ describe("the chevron hides while the section is open and stays while it is clos
       const h = document.querySelector('#doc .md [data-fold="h2:Bravo:0"]') as HTMLElement;
       return getComputedStyle(h).backgroundColor;
     });
-    expect(`text-hovered chevron: ${await chevOpacity(H_BRAVO)}, tint: ${tintOnText}`).toBe(
+    expect(`text-hovered chevron: ${await chevSettled(H_BRAVO, 0)}, tint: ${tintOnText}`).toBe(
       "text-hovered chevron: 0, tint: rgba(0, 0, 0, 0)"
     );
 
@@ -671,18 +702,18 @@ describe("the chevron hides while the section is open and stays while it is clos
       const h = document.querySelector('#doc .md [data-fold="h2:Bravo:0"]') as HTMLElement;
       return getComputedStyle(h).backgroundColor !== "rgba(0, 0, 0, 0)";
     });
-    expect(`gutter-hovered chevron: ${await chevOpacity(H_BRAVO)}, tinted: ${tintOnPad}`).toBe(
+    expect(`gutter-hovered chevron: ${await chevSettled(H_BRAVO, 1)}, tinted: ${tintOnPad}`).toBe(
       "gutter-hovered chevron: 1, tinted: true"
     );
 
     await page.mouse.move(4, 4); // nothing hovered
     await sleep(160);
-    expect(`expanded, pointer away: ${await chevOpacity(H_BRAVO)}`).toBe("expanded, pointer away: 0");
+    expect(`expanded, pointer away: ${await chevSettled(H_BRAVO, 0)}`).toBe("expanded, pointer away: 0");
 
     await foldClick(H_BRAVO);
     await page.mouse.move(4, 4);
     await sleep(160);
-    expect(`collapsed, pointer away: ${await chevOpacity(H_BRAVO)}`).toBe("collapsed, pointer away: 1");
+    expect(`collapsed, pointer away: ${await chevSettled(H_BRAVO, 1)}`).toBe("collapsed, pointer away: 1");
 
   }, 90000);
 
@@ -697,7 +728,7 @@ describe("the chevron hides while the section is open and stays while it is clos
     expect(`the emulated device hovers: ${await page.evaluate(() => matchMedia("(hover: hover)").matches)}`).toBe(
       "the emulated device hovers: false"
     );
-    expect(`untouched, expanded heading: ${await chevOpacity(H_ALPHA)}`).toBe("untouched, expanded heading: 1");
+    expect(`untouched, expanded heading: ${await chevSettled(H_ALPHA, 1)}`).toBe("untouched, expanded heading: 1");
 
     await page.setViewport({ width: 1440, height: 900, hasTouch: false, isMobile: false });
     await sleep(260);
