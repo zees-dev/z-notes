@@ -36,6 +36,14 @@ never learns about it.**
   to the next heading of the same or higher rank, blank-line spacers included;
   folding an item hides its sub-list. Folds nest, and each one is applied on its
   own pass, so unfolding an outer heading leaves an inner one still folded.
+- **Only where there is something to hide.** A heading whose range is empty —
+  or holds nothing but blank lines, since a `.bgap` is a line box and not
+  content — gets no chevron at all, exactly as a list item without a sub-list
+  gets none. A control whose two states render identically is not a control,
+  and on a phone it is a tap target that spends a press to do nothing. The
+  heading still claims its ordinal on the way past, though: skipping the number
+  as well would renumber every later fold key and reopen a saved fold on the
+  wrong section.
 - It is a POST-PASS over the finished `.md`. No node moves, no wrapper is
   introduced, and a fold only ever adds a class. Mermaid's `show-src` is the
   precedent: what is on screen changes, what the file says does not.

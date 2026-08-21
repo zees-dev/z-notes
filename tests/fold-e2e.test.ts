@@ -10,8 +10,10 @@
 
    Seven groups:
 
-     · CHEVRONS — one on every h1–h3 and on every list item that has a
-       sub-list, and on nothing else.
+     · CHEVRONS — one on every h1–h3 THAT HAS SOMETHING UNDER IT and on every
+       list item that has a sub-list, and on nothing else. A section holding
+       nothing, or holding only blank lines, folds to exactly what it already
+       looks like, so it gets no control at all.
      · RANGES — a folded heading hides its own section and stops at the next
        heading of its rank; folds nest; a list item hides only its own list.
      · VISIBILITY — hover-revealed while open, always there while closed.
@@ -459,6 +461,69 @@ describe("the chevron appears exactly where something can be folded", () => {
     expect(`foldable leaf items: ${stray.leaves}, foldable paragraphs: ${stray.paras}`).toBe(
       "foldable leaf items: 0, foldable paragraphs: 0"
     );
+  }, 90000);
+
+  test("a section with nothing in it — or only blank lines — gets no chevron", async () => {
+    /* The gutter used to give every h1–h3 a chevron whatever followed it, so an
+       empty section offered a control whose two states rendered identically:
+       press it and the document does not change. Blank lines do not rescue it,
+       because a `.bgap` is a line box rather than content and folds away to the
+       same nothing. */
+    const EMPTY = "folds/empty.md";
+    const src = [
+      "# Nothing at all",
+      "# Blank lines only",
+      "",
+      "",
+      "# Has a body",
+      "",
+      "a real paragraph",
+      "## Trailing empty child",
+      "",
+    ].join("\n");
+    expect((await srv.api("POST", "/api/docs", { path: EMPTY, markdown: src })).status).toBe(201);
+    await page.goto(srv.base + "/d/" + EMPTY, { waitUntil: "domcontentloaded" });
+    await waitForApp(page);
+    await page.waitForSelector("#doc .md", { timeout: 15000 });
+    await sleep(160);
+
+    const rows = await page.evaluate(() =>
+      [...document.querySelectorAll("#doc .md h1, #doc .md h2, #doc .md h3")]
+        .map((h) => ((h.textContent || "").replace(/\s+/g, " ").trim()) + "=" + (h.querySelector(":scope > .fold") ? "chevron" : "none"))
+        .join(" | ")
+    );
+    expect(rows).toBe(
+      "Nothing at all=none | Blank lines only=none | Has a body=chevron | Trailing empty child=none"
+    );
+
+    /* the one that DOES fold still folds — the guard must not have taken the
+       feature with it */
+    await page.click('#doc .md h1[data-fold] > .fold');
+    await sleep(200);
+    expect(
+      await page.evaluate(() => [...document.querySelectorAll("#doc .md p")].every((n) => n.classList.contains("fold-hidden")))
+    ).toBe(true);
+  }, 90000);
+
+  test("an empty heading does not renumber the folds after it", async () => {
+    /* The ordinal is what tells two identically-titled sections apart, and it
+       is persisted. If a skipped heading also skipped its number, every later
+       fold key would shift by one and a saved fold would reopen on the wrong
+       section — a silent corruption of state that outlives the session. */
+    const ORD = "folds/ordinals.md";
+    const src = ["## Repeat", "## Repeat", "", "body under the second", ""].join("\n");
+    expect((await srv.api("POST", "/api/docs", { path: ORD, markdown: src })).status).toBe(201);
+    await page.goto(srv.base + "/d/" + ORD, { waitUntil: "domcontentloaded" });
+    await waitForApp(page);
+    await page.waitForSelector("#doc .md", { timeout: 15000 });
+    await sleep(160);
+
+    const keys = await page.evaluate(() =>
+      [...document.querySelectorAll("#doc .md [data-fold]")].map((n) => (n as HTMLElement).dataset.fold).join(" | ")
+    );
+    /* the SECOND one is foldable and keeps ordinal 1 — the empty first one
+       claimed 0 on its way past without taking a chevron */
+    expect(keys).toBe("h2:Repeat:1");
   }, 90000);
 
   test("the chevron is one empty button per foldable block, and adds no text", async () => {

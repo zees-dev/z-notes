@@ -438,11 +438,38 @@ function toggleFold(doc, md, node) {
  * flipping to Raw underneath it, while the text beside it still opens Raw:
  * only the gutter pad takes a pointer at all.
  */
+/**
+ * Is there anything under this heading worth hiding?
+ *
+ * Its range is the same one `paintFolds` hides — every following sibling up to
+ * the next heading of the same or higher rank — and blank lines do not count.
+ * A `.bgap` is a line box, not content: a section holding only those folds down
+ * to nothing visible, so the chevron would be a control whose two states look
+ * identical. Same reasoning as the `li` beside it, which earns its chevron only
+ * by having a sub-list.
+ */
+function foldWorthIt(node) {
+  const rank = +node.tagName[1];
+  for (let n = node.nextElementSibling; n; n = n.nextElementSibling) {
+    if (HEADING.test(n.tagName) && +n.tagName[1] <= rank) return false;
+    if (!n.classList.contains("bgap")) return true;
+  }
+  return false;
+}
+
 function wireFolds(doc, md) {
   const ords = new Map();
   for (const node of md.querySelectorAll("h1, h2, h3, li")) {
     if (node.tagName === "LI" && !node.querySelector(":scope > ul")) continue;
-    node.dataset.fold = foldKey(node, ords);
+    /* the key is claimed even by a heading that then gets no chevron: its
+       ordinal is what tells two identically-titled sections apart, so leaving
+       a gap in the count would renumber every later one — silently moving a
+       saved fold onto a different section. */
+    const key = foldKey(node, ords);
+    /* an empty section is not a foldable one — nothing to expand, nothing to
+       collapse, and a chevron that says otherwise is a lie the gutter tells */
+    if (HEADING.test(node.tagName) && !foldWorthIt(node)) continue;
+    node.dataset.fold = key;
     const btn = el("button", "fold");
     btn.type = "button";
     /* every chevron sits on ONE SPINE in the page gutter (see base.css). CSS
