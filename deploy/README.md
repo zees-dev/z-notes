@@ -530,7 +530,8 @@ Verified on this machine:
   and `bun.lock`: `bun install --frozen-lockfile --production --ignore-scripts`
   → 10 packages, `puppeteer-core` correctly excluded.
 - **The base image**, by pulling its manifest and config from Docker Hub:
-  `oven/bun:1.3.14-slim` exists for **linux/amd64 and linux/arm64**, is Debian
+  `oven/bun:1.4.0-slim` (re-verified at the 1.4 pin; the 1.3.14 record read the
+  same) exists for **linux/amd64 and linux/arm64**, is Debian
   *trixie*-slim (so `apt-get install git` is right), creates user `bun` with
   **uid/gid 1000** and home `/home/bun`, and presets
   `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` — which is what makes

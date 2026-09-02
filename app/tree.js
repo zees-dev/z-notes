@@ -107,11 +107,12 @@ let dragged = null;
 /** The one pending hover-to-expand timer, and the row it is counting for. */
 let dwell = null;
 
-/** A drag the app did not start, carrying files from the desktop. `!dragged`
-    is what keeps the two gestures apart: an internal move never carries
-    "Files", but asking BOTH questions means a future drag source that does
-    cannot be mistaken for an upload. */
-const externalFiles = (e) => !dragged && dragHasFiles(e);
+/** A drag the app did not start, carrying files from the desktop. The DATA
+    decides, alone: an internal move never carries "Files", and `dragged` can
+    be stale — a source row that left the DOM mid-drag gets no `dragend` from
+    Chromium — so consulting it would turn a drop of files into a move of
+    whatever was dragged last. */
+const externalFiles = (e) => dragHasFiles(e);
 
 const basename = (path) => {
   const rel = relOf(path);
@@ -263,7 +264,7 @@ function wireDropTarget(row, path, kind, kids) {
       e.stopPropagation();
       clearDropMarks();
       const dt = e.dataTransfer;
-      uploadFiles([...dt.files], directoryFlags(dt), dropFolder(path, kind));
+      uploadFiles([...dt.files], directoryFlags(dt), dropFolder(path, kind)).catch((err) => apiFail(err, "Upload failed"));
       return;
     }
     const source = dragged;
@@ -334,12 +335,14 @@ function acceptedExtensions() {
 }
 
 /** What the toast calls the destination: a folder by its path, a vault's root
-    by the vault's own label — "to projects", or "to Notes". */
+    by the vault's name — "to projects", or "to Notes". The server's label
+    carries a sync status ("Notes (unsynced)") that would read here as a
+    warning about the upload; the name is what the sentence wants. */
 function folderLabel(folder) {
   const rel = relOf(folder);
   if (rel) return rel;
   const v = vaultById(vaultOf(folder));
-  return (v && v.label) || "the vault";
+  return ((v && v.label) || "the vault").replace(/ \(unsynced\)$/, "");
 }
 
 /**
