@@ -1272,11 +1272,19 @@ export function normalizeExtensions(raw: string): string {
   return [...seen].join(", ");
 }
 
-/** Type only: the VALUE is a spelling, and `normalizeExtensions` heals it. */
+/**
+ * Type only: the VALUE is a spelling, and `normalizeExtensions` heals it.
+ *
+ * `null` is not "absent" here, it is a non-string, and it is refused as one.
+ * Let through, it merges over the default, reads to the heal as an absent key
+ * and reaches the TOML writer as the literal string `"null"` — which the next
+ * boot heals into a perfectly ordinary accepted extension. A key that is in the
+ * patch carries a string or it carries an error.
+ */
 function validateUpload(upload: unknown): void {
   if (upload == null) return;
   if (!isPlainObject(upload)) throw new SettingsError("bad-upload", "upload must be an object.");
-  if ("extensions" in upload && upload.extensions != null && typeof upload.extensions !== "string")
+  if ("extensions" in upload && typeof upload.extensions !== "string")
     throw new SettingsError("bad-extensions", "upload.extensions must be a comma-separated string.");
 }
 

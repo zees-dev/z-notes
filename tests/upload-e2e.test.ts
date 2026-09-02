@@ -15,23 +15,27 @@
        `settings.upload.extensions`, and the server's own `409 exists`. One
        refused file never takes an acceptable one down with it.
 
-   The drag is synthesised: a `DataTransfer` built in-page and dispatched as
-   real `DragEvent`s, the same idiom `tests/ux-e2e.test.ts` uses for a paste.
-   CDP cannot start an OS drag carrying a file, and the app's handlers read
-   nothing but the event.
+   Most drags here are synthesised: a `DataTransfer` built in-page and dispatched
+   as real `DragEvent`s, the same idiom `tests/ux-e2e.test.ts` uses for a paste.
+   The app's handlers read nothing but the event, so that is enough — except for
+   a FOLDER, which has no synthesised form: `webkitGetAsEntry()` answers only
+   for items the browser itself put in the drag. That one drop goes through
+   CDP's `Input.dispatchDragEvent`, carrying real paths on disk.
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { type Browser, type Page } from "puppeteer-core";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer, vaultHas, type SeedMap, type TestServer } from "./helpers";
 import { launchTestBrowser, newAppPage, waitForApp } from "./browser";
 
 const FOLDER = "projects";
 const DROPPED = "projects/note.md";
-/** CRLF and no trailing newline: the two things a helpful client would "fix" */
-const BYTES = "# hi\r\nno newline";
+/** A BOM, CRLF, no trailing newline: the three things a helpful client "fixes"
+    on the way past — and `TextDecoder` eats the BOM unless it is told not to */
+const BYTES = "\uFEFF# hi\r\nno newline";
 
 const SEED: SeedMap = {
   "inbox.md": "# Inbox\n\nstart here\n",
@@ -42,17 +46,23 @@ const SEED: SeedMap = {
 let srv: TestServer;
 let browser: Browser;
 let page: Page;
+/** real paths on disk: the only kind of drag that can carry a real FOLDER */
+let scratch: string;
 
 beforeAll(async () => {
   srv = await startServer({ seed: SEED });
   browser = await launchTestBrowser();
   page = await newAppPage(browser);
+  scratch = mkdtempSync(join(tmpdir(), "znotes-drop-"));
+  mkdirSync(join(scratch, "notes.md")); // a folder the extension gate would wave through
+  writeFileSync(join(scratch, "beside.md"), "# beside\n");
   await boot();
 }, 90000);
 
 afterAll(async () => {
   if (browser) await browser.close().catch(() => {});
   if (srv) await srv.stop();
+  if (scratch) rmSync(scratch, { recursive: true, force: true });
 });
 
 async function boot() {
@@ -97,6 +107,24 @@ async function dragEvent(sel: string, type: string, files?: FileSpec[]) {
     type,
     files ?? null
   );
+}
+
+/**
+ * The same gesture, but carrying real paths — the browser builds the
+ * `DataTransfer` itself, so `webkitGetAsEntry()` answers for real and a FOLDER
+ * can be dropped. A synthesised `DataTransfer` cannot do either: its items have
+ * no filesystem entry, so every one of them looks like a file.
+ */
+async function cdpDrop(sel: string, paths: string[]) {
+  const client = await page.createCDPSession();
+  const at = await page.evaluate((s) => {
+    const r = document.querySelector(s as string)!.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }, sel);
+  const data = { items: [], files: paths, dragOperationsMask: 1 };
+  for (const type of ["dragEnter", "dragOver", "drop"] as const)
+    await client.send("Input.dispatchDragEvent", { type, x: at.x, y: at.y, data });
+  await client.detach();
 }
 
 /** enter + over, which is what a pointer arriving over a row produces */
@@ -159,6 +187,47 @@ describe("dropping a file on the tree uploads it", () => {
       `dup.md is untouched: ${SEED["dup.md"]}`
     );
     expect(`no photo.png was written: ${vaultHas(srv.vault, "photo.png")}`).toBe("no photo.png was written: false");
+  }, 90000);
+
+  test("a folder is refused wherever it sits in the drop, not just first", async () => {
+    /* the folder goes SECOND deliberately: `webkitGetAsEntry()` answers only
+       while the drop event is dispatching, so an upload loop that asks after
+       its first `await` gets `null` here and refuses the folder as the wrong
+       file type — and this one is named `notes.md`, so that mistake would read
+       a directory as a document */
+    await cdpDrop(VAULT_ROW, [join(scratch, "beside.md"), join(scratch, "notes.md")]);
+    await page.waitForSelector(DOC_ROW("beside.md"), { timeout: 10000 });
+
+    const toast = await toastText();
+    expect(`the file beside it landed: ${toast.includes("Uploaded 1 file")}`).toBe("the file beside it landed: true");
+    expect(`and the folder got the folder's reason: ${toast.includes("notes.md: folders cannot be uploaded")}`).toBe(
+      "and the folder got the folder's reason: true"
+    );
+    expect(`nothing was written for it: ${vaultHas(srv.vault, "notes.md")}`).toBe("nothing was written for it: false");
+  }, 90000);
+
+  test("a file under the cap whose JSON body is over it is refused by size", async () => {
+    /* 4.5 MiB of newlines is a 9 MiB request: `markdown` travels as a JSON
+       string, where every newline costs two bytes. Gated on `file.size` alone
+       this one reaches the server's body limit and comes back as
+       "Failed to fetch", which names neither the size nor the file. */
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(["\n".repeat(4.5 * 1024 * 1024)], "newlines.log", { type: "text/plain" }));
+      (window as any).__dt = dt;
+      const row = document.querySelector('#tree .row.vault[data-vault="vault"]')!;
+      for (const t of ["dragenter", "dragover", "drop"])
+        row.dispatchEvent(new DragEvent(t, { dataTransfer: dt, bubbles: true, cancelable: true }));
+    });
+    await page.waitForFunction(
+      () => (document.getElementById("toastTxt")!.textContent ?? "").includes("newlines.log"),
+      { timeout: 20000 }
+    );
+    expect(`refused by size: ${await toastText()}`).toBe(
+      "refused by size: newlines.log: too large to send — the limit is 8 MiB"
+    );
+    await pause(200);
+    expect(`nothing was written: ${vaultHas(srv.vault, "newlines.log")}`).toBe("nothing was written: false");
   }, 90000);
 
   test("narrowing the accepted types is what the next drop obeys", async () => {

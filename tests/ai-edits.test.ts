@@ -47,3 +47,12 @@ test("two sides that share nothing bail at the deadline instead of stopping the 
   ]);
   expect(`+${added} -${removed}`).toBe("+0 -0");
 });
+
+test("adding the file's final newline is a change, and the card says so", () => {
+  /* the one edit whose whole content is a byte the eye cannot see: an
+     unterminated last line is not the same line as a terminated one, so Accept
+     changing the file and the card showing nothing must not be possible */
+  const { diff, added, removed } = oneFile("a\nb\nc", "a\nb\nc\n");
+  expect(diff.map((d) => d.marker + d.text)).toEqual([" a", " b", "-c", "+c"]);
+  expect(`+${added} -${removed}`).toBe("+1 -1");
+});

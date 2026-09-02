@@ -740,6 +740,9 @@ describe("PUT /api/settings — malformed values are refused by code", () => {
       ["ai that is not an object", { ai: 7 }, "bad-ai"],
       ["upload that is not an object", { upload: 5 }, "bad-upload"],
       ["an extension list that is not a string", { upload: { extensions: 5 } }, "bad-extensions"],
+      /* null is a non-string like any other: accepted, it would reach the file
+         as the literal "null" and heal into an accepted extension */
+      ["an extension list that is null", { upload: { extensions: null } }, "bad-extensions"],
     ];
 
     for (const [label, patch, code] of cases) {

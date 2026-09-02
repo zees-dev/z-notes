@@ -263,7 +263,7 @@ function wireDropTarget(row, path, kind, kids) {
       e.stopPropagation();
       clearDropMarks();
       const dt = e.dataTransfer;
-      uploadFiles([...dt.files], [...(dt.items || [])], dropFolder(path, kind));
+      uploadFiles([...dt.files], directoryFlags(dt), dropFolder(path, kind));
       return;
     }
     const source = dragged;
@@ -292,8 +292,33 @@ function wireDropTarget(row, path, kind, kids) {
    that is ADR 0019's, and the server still rules on it. */
 
 /** The one place the browser knows the server's body cap. Refused HERE so an
-    oversized file gets a sentence instead of a raw 413. */
+    oversized drop gets a sentence instead of a raw 413. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+
+/** The cap is on the REQUEST, and `markdown` travels inside it as a JSON
+    string: every newline, CR, quote and backslash costs two bytes there, every
+    other control character six. A 6 MiB log of short CRLF lines is a 12 MiB
+    request — under the cap by the file's own measure, and cut off by the
+    server before the route can name it, which reaches the user as "Failed to
+    fetch". So the gate weighs what is actually sent. */
+const bodyBytes = (payload) => new Blob([JSON.stringify(payload)]).size;
+
+/**
+ * Which of the dropped items are directories, read SYNCHRONOUSLY — that is the
+ * whole point of this function existing.
+ *
+ * `webkitGetAsEntry()` answers only while the drop event is being dispatched:
+ * Chromium empties the drag data store the moment the handler returns, so the
+ * first `await file.arrayBuffer()` in the upload loop neuters every item after
+ * it. Asked late, a folder dropped second answers `null` and is refused as the
+ * wrong file type — or, named `notes.md`, is read as a file and refused as
+ * "not UTF-8 text". Answered here, all of them are folders.
+ */
+const directoryFlags = (dt) =>
+  [...(dt.items || [])].map((it) => {
+    const entry = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
+    return !!entry && entry.isDirectory;
+  });
 
 /** `settings.upload.extensions` as a set, by the server's own rule
     (`normalizeExtensions`, settings.ts) — one list, one spelling. Read off
@@ -320,25 +345,28 @@ function folderLabel(folder) {
 /**
  * Every file in one drop, in the order it was dropped, into `folder`.
  *
+ * `dirs[i]` is the answer `directoryFlags` already took for `files[i]`; it
+ * cannot be asked for here, one `await` too late.
+ *
  * Serial rather than parallel, deliberately: each create is a write plus a
  * reconcile pass under the same lock, and a refusal has to be able to name the
  * file it belongs to. One file being refused never stops the next — the whole
  * point of dropping three at once — so the loop collects reasons and reports
  * once at the end.
  */
-async function uploadFiles(files, items, folder) {
+async function uploadFiles(files, dirs, folder) {
   if (!files.length) return;
   const accepted = acceptedExtensions();
   const wrongType = accepted.size
     ? "only " + [...accepted].join(", ") + " can be uploaded"
     : "no file type is accepted for upload";
+  const tooLarge = "too large to send — the limit is " + MAX_UPLOAD_BYTES / (1024 * 1024) + " MiB";
   const made = [];
   const refused = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     const name = file.name;
-    const entry = items[i] && items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
-    if (entry && entry.isDirectory) {
+    if (dirs[i]) {
       refused.push(name + ": folders cannot be uploaded");
       continue;
     }
@@ -348,22 +376,30 @@ async function uploadFiles(files, items, folder) {
       refused.push(name + ": " + wrongType);
       continue;
     }
+    /* the cheap half of the size gate: nothing this big can encode small */
     if (file.size > MAX_UPLOAD_BYTES) {
-      refused.push(name + ": larger than " + MAX_UPLOAD_BYTES / (1024 * 1024) + " MiB");
+      refused.push(name + ": " + tooLarge);
       continue;
     }
-    /* `fatal` is the whole check: a doc is UTF-8 text (ADR 0019), and a
-       lossy decode would write mojibake to disk and call it a note. */
+    /* `fatal` is the whole check: a doc is UTF-8 text (ADR 0019), and a lossy
+       decode would write mojibake to disk and call it a note. `ignoreBOM`
+       keeps a leading U+FEFF as text instead of eating it — the promise is the
+       bytes the file had, and the server writes back what it is handed. */
     let markdown;
     try {
-      markdown = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
+      markdown = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer());
     } catch (err) {
       refused.push(name + ": not UTF-8 text");
       continue;
     }
     const path = folder ? folder + "/" + name : name;
+    const payload = { path, type: "doc", markdown };
+    if (bodyBytes(payload) > MAX_UPLOAD_BYTES) {
+      refused.push(name + ": " + tooLarge);
+      continue;
+    }
     try {
-      await api.createEntry({ path, type: "doc", markdown });
+      await api.createEntry(payload);
     } catch (err) {
       refused.push(name + ": " + ((err && err.message) || "could not be created"));
       continue;

@@ -35,12 +35,12 @@ the obligation.
 **The line-level Myers diff inside `server/ai-edits.ts` IS the diff, and its
 bound is a deadline, not a size.**
 
-- `lineHunks(pre, post, context, deadlineMs)` splits both images on `\n`, diffs
-  the lines, and returns hunks of `"+text"` / `"-text"` / `" text"` rows — the
-  shape `buildDiff()` already consumed. Past the deadline it returns `null` and
-  the card says the diff was too large to render, which is what the jsdiff
-  timeout did. Nothing else about the rows moved: two lines of context, `\r`
-  stripped from row text, the 300-row cap and the `… diff truncated` row.
+- `lineHunks(pre, post, context, deadlineMs)` cuts both images into lines after
+  each `\n`, diffs them, and returns hunks of `"+text"` / `"-text"` / `" text"`
+  rows — the shape `buildDiff()` already consumed. Past the deadline it returns
+  `null` and the card says the diff was too large to render, which is what the
+  jsdiff timeout did. Nothing else about the rows moved: two lines of context,
+  `\r` stripped from row text, the 300-row cap and the `… diff truncated` row.
 - **It is Myers' linear-space form** (his §4b: find the middle snake from both
   ends, recurse on the two halves), not the textbook forward pass. The textbook
   form keeps every V array it wrote so it can walk the path back, which is
@@ -49,12 +49,15 @@ bound is a deadline, not a size.**
   replica it exists to protect is not a bound. Two V arrays and a recursion
   that halves the remaining edit distance at every step cost 52MB of RSS on the
   same input.
-- **A trailing newline ends the last line; it does not open an empty one.**
-  jsdiff tokenised each line with its newline attached, so a document missing
-  its final newline diffed as a changed last line plus a `\ No newline at end
-  of file` row that `buildDiff()` then dropped — the card printed `-text` and
-  `+text` with identical text. Ours prints nothing there, and is one edit
-  shorter.
+- **A line carries its newline, so the file's final one is a visible edit.**
+  jsdiff tokenised each line with its terminator attached, and ours does too: a
+  document missing its final newline diffs as a changed last line, and a
+  proposal whose ONLY change is that byte prints `-text` and `+text` with
+  identical text. (jsdiff's `\ No newline at end of file` row is the one thing
+  `buildDiff()` still drops.) Splitting the terminator OFF instead is one edit
+  shorter and renders an EMPTY card for that proposal while Accept goes on
+  changing the file — a diff that hides a real change is worse than a diff that
+  repeats a line.
 
 ## Consequences
 
@@ -73,5 +76,5 @@ bound is a deadline, not a size.**
   equal lines. Only a human reads these rows, so that is a difference, not a
   regression.
 - `tests/ai-edits.test.ts` holds the claims that used to belong to the package
-  — context width, the empty diff, CRLF rows, the deadline — and
-  `tests/ai.test.ts` keeps them at the proposal layer.
+  — context width, the empty diff, CRLF rows, the final-newline row, the
+  deadline — and `tests/ai.test.ts` keeps them at the proposal layer.

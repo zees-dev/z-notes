@@ -370,8 +370,24 @@ export function applyEditToText(cur: string, e: EditSpec): { ok: true; post: str
    Unified diff — the `diff` array on a proposal object
    ============================================================ */
 
-/** A trailing newline ENDS the last line; it does not open an empty one. */
-const splitLines = (s: string): string[] => (s === "" ? [] : (s.endsWith("\n") ? s.slice(0, -1) : s).split("\n"));
+/**
+ * A line KEEPS its newline, so a last line that has one is not the same line as
+ * a last line that has not — and a trailing newline still ends the last line
+ * rather than opening an empty one.
+ *
+ * Carrying the terminator is the whole reason a proposal whose only change is
+ * the file's final newline renders `-c` / `+c` instead of an empty card while
+ * Accept goes on changing the bytes. It is jsdiff's tokenisation, and git's;
+ * `bare()` takes the terminator back off where the row text is built.
+ */
+function splitLines(s: string): string[] {
+  if (s === "") return [];
+  const parts = s.split("\n");
+  const last = parts.pop()!; // "" exactly when the text ended in a newline
+  const lines = parts.map((l) => l + "\n");
+  if (last !== "") lines.push(last);
+  return lines;
+}
 
 /** one stretch of the edit script: kind −1 gone from `pre`, +1 new in `post`, 0 common to both */
 interface Run {
@@ -494,6 +510,10 @@ function lineHunks(pre: string, post: string, context: number, deadlineMs: numbe
   const runs = editRuns(a, b, performance.now() + deadlineMs);
   if (!runs) return null;
 
+  /* a row is DISPLAY text: the terminator that made the comparison honest is
+     not part of the line the card shows, the same way buildDiff drops the CR */
+  const bare = (l: string) => (l.endsWith("\n") ? l.slice(0, -1) : l);
+
   const hunks: string[][] = [];
   let rows: string[] | null = null; // the open hunk
   let lead: string[] = []; // the tail of the last common stretch — context for the next one
@@ -510,9 +530,9 @@ function lineHunks(pre: string, post: string, context: number, deadlineMs: numbe
         /* a gap two contexts wide or less would print as context twice over,
            so it stays inside the hunk; a wider one — or the end — closes it */
         if (common.length <= context * 2 && i < runs.length) {
-          for (const l of common) rows.push(" " + l);
+          for (const l of common) rows.push(" " + bare(l));
         } else {
-          for (const l of common.slice(0, context)) rows.push(" " + l);
+          for (const l of common.slice(0, context)) rows.push(" " + bare(l));
           hunks.push(rows);
           rows = null;
         }
@@ -534,9 +554,9 @@ function lineHunks(pre: string, post: string, context: number, deadlineMs: numbe
         bi += r.count;
       }
     }
-    if (!rows) rows = lead.map((l) => " " + l);
-    for (const l of gone) rows.push("-" + l);
-    for (const l of fresh) rows.push("+" + l);
+    if (!rows) rows = lead.map((l) => " " + bare(l));
+    for (const l of gone) rows.push("-" + bare(l));
+    for (const l of fresh) rows.push("+" + bare(l));
   }
   if (rows) hunks.push(rows);
   return hunks;
