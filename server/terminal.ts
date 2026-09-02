@@ -556,16 +556,12 @@ export class Terminal {
   /**
    * Signal a command's whole process group.
    *
-   * `proc.kill()` reaches the shell only — a `sleep 300` it started would be
-   * reparented to init and keep the pipes open, and the stream reader would
-   * wait on a command the user already cancelled. The shell is spawned
-   * `detached: true`, which makes it its own group leader (pgid == pid), so the
-   * negative pid reaches every process the command started, on macOS and in the
-   * container alike, with no `ps` to parse and no `procps` in the image.
-   *
-   * The fallback is for the one case the group cannot answer: it is already
-   * gone (ESRCH), or a platform without groups. Signalling the pid alone is
-   * then the most that could ever have been done.
+   * `proc.kill()` reaches the shell only, so a `sleep 300` it started would be
+   * reparented to init and keep the pipes open. The shell is spawned
+   * `detached: true`, which makes it its own group leader (pgid == pid). The
+   * negative pid then reaches every process the command started, on macOS and
+   * in the container alike, with no `ps` to parse. The fallback covers a group
+   * that is already gone (ESRCH).
    */
   private signalGroup(pid: number, signal: NodeJS.Signals) {
     try {

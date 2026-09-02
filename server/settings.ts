@@ -112,11 +112,10 @@ export const DEFAULTS = {
   },
   trash: { retentionDays: TRASH_RETENTION_DEFAULT_DAYS },
   /* Which extensions a file dropped on the sidebar tree may have (ADR 0030).
-     A comma-separated LIST in one string, because that is how it is edited —
-     in one text field, and by hand in this file. The server never gates
-     `POST /api/docs` by it: what a doc IS is ADR 0019's question, and the
-     sidebar's own "New doc" legitimately makes `report.txt`. This is the
-     client's drop filter, published so both surfaces read the same list. */
+     One string holding a comma-separated list, because that is how it is
+     edited: in one text field, and by hand in this file. The server never
+     gates `POST /api/docs` by it. What a doc IS is ADR 0019's question, and
+     the sidebar's own "New doc" legitimately makes `report.txt`. */
   upload: { extensions: "md, html, txt, log" },
   git: { branch: "main", autoSync: true, autoSyncSeconds: 60 },
   /* Browser-side auto-lock policy (research §5.2 / §7.2). It lives here rather
@@ -804,28 +803,16 @@ export class Settings {
     return touched;
   }
 
-  /**
-   * `upload.extensions` is a hand-written LIST, so every way to get it wrong is
-   * a spelling: a leading dot, capitals, a trailing comma, the same token
-   * twice. `normalizeExtensions` answers all of them and is the same function
-   * the PUT runs — the rule the numbers get from clamp/snap, for the one
-   * free-text list. `""` is a legal outcome and means nothing may be dropped.
-   */
+  /** One spelling for the hand-written list; `normalizeExtensions` is the rule the PUT runs too. */
   private healUpload(): boolean {
     const up = this.data.upload;
     if (!isPlainObject(up)) {
       this.data.upload = structuredClone(DEFAULTS.upload);
       return true;
     }
-    if (up.extensions == null) return false; // absent: mergeOneLevel already gave us the default
-    if (typeof up.extensions !== "string") {
-      process.stderr.write(
-        `[z-notes] settings.toml: unusable upload.extensions, falling back to "${DEFAULTS.upload.extensions}"\n`
-      );
-      up.extensions = DEFAULTS.upload.extensions;
-      return true;
-    }
-    const fixed = normalizeExtensions(up.extensions);
+    if (up.extensions == null) return false;
+    if (typeof up.extensions !== "string") process.stderr.write(`[z-notes] settings.toml: unusable upload.extensions, falling back to the default\n`);
+    const fixed = normalizeExtensions(typeof up.extensions === "string" ? up.extensions : DEFAULTS.upload.extensions);
     if (fixed === up.extensions) return false;
     up.extensions = fixed;
     return true;
@@ -1054,8 +1041,8 @@ export class Settings {
       clean.editor.homeDoc = clean.editor.homeDoc.trim();
     if (isPlainObject(clean.git) && typeof clean.git.branch === "string")
       clean.git.branch = clean.git.branch.trim();
-    /* normalised on the way IN, so the response carries what was stored — the
-       same promise the number clamp makes, for the one free-text list */
+    /* normalised on the way IN, so the response carries what was stored, the
+       same promise the number clamp makes */
     if (isPlainObject(clean.upload) && typeof clean.upload.extensions === "string")
       clean.upload.extensions = normalizeExtensions(clean.upload.extensions);
     // the same clamp/snap the file gets on load and the number input applies in
@@ -1254,14 +1241,10 @@ function validateTerminal(terminal: unknown): void {
 }
 
 /**
- * One list, one spelling. Split on commas AND whitespace, drop the leading
- * dots people write out of habit, lowercase, and keep only what can actually be
- * a file extension — de-duplicated, in the order they were written.
- *
- * Exported because it is the WHOLE rule: the file heal, the PUT and the
- * browser's drop filter all have to agree on which extensions a dropped file
- * may have, and a second copy of "split on commas" is how they would stop
- * agreeing. `""` is a legal answer and means nothing may be dropped.
+ * One list, one spelling: dot-less, lowercase, de-duplicated, in the order they
+ * were written. Exported because the file heal, the PUT and the browser's drop
+ * filter all have to agree on which extensions a dropped file may have. `""` is
+ * a legal answer and means nothing may be dropped.
  */
 export function normalizeExtensions(raw: string): string {
   const seen = new Set<string>();
@@ -1275,11 +1258,9 @@ export function normalizeExtensions(raw: string): string {
 /**
  * Type only: the VALUE is a spelling, and `normalizeExtensions` heals it.
  *
- * `null` is not "absent" here, it is a non-string, and it is refused as one.
- * Let through, it merges over the default, reads to the heal as an absent key
- * and reaches the TOML writer as the literal string `"null"` — which the next
- * boot heals into a perfectly ordinary accepted extension. A key that is in the
- * patch carries a string or it carries an error.
+ * `null` counts as a non-string here and is refused as one. Let through, it
+ * merges over the default and reaches the TOML writer as the literal string
+ * `"null"`, which the next boot heals into an ordinary accepted extension.
  */
 function validateUpload(upload: unknown): void {
   if (upload == null) return;

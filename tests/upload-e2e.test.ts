@@ -3,13 +3,13 @@
 
    A real browser, the real backend, the real vault on disk. There is no upload
    route to test: the gesture is `POST /api/docs` with the file's text, so what
-   is measured here is the CLIENT's half —
+   is measured here is the CLIENT's half:
 
      - the destination rule is the move gesture's (a folder row means itself, a
        vault row means that vault's root) and so are its hover mechanics: the
        `drop-target` paint, and the 600 ms dwell that opens a closed folder
        under the pointer;
-     - the bytes survive the round trip EXACTLY — CRLF and a missing trailing
+     - the bytes survive the round trip EXACTLY, CRLF and a missing trailing
        newline included, which is the whole claim of "the file you dropped";
      - every refusal is client-side and named: an extension outside
        `settings.upload.extensions`, and the server's own `409 exists`. One
@@ -17,7 +17,7 @@
 
    Most drags here are synthesised: a `DataTransfer` built in-page and dispatched
    as real `DragEvent`s, the same idiom `tests/ux-e2e.test.ts` uses for a paste.
-   The app's handlers read nothing but the event, so that is enough — except for
+   The app's handlers read nothing but the event, so that is enough, except for
    a FOLDER, which has no synthesised form: `webkitGetAsEntry()` answers only
    for items the browser itself put in the drag. That one drop goes through
    CDP's `Input.dispatchDragEvent`, carrying real paths on disk.
@@ -224,7 +224,7 @@ describe("dropping a file on the tree uploads it", () => {
       { timeout: 20000 }
     );
     expect(`refused by size: ${await toastText()}`).toBe(
-      "refused by size: newlines.log: too large to send — the limit is 8 MiB"
+      "refused by size: newlines.log: too large to send, the limit is 8 MiB"
     );
     await pause(200);
     expect(`nothing was written: ${vaultHas(srv.vault, "newlines.log")}`).toBe("nothing was written: false");

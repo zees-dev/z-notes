@@ -217,15 +217,9 @@ jobs:
           git config --global user.name "z-notes CI"
           git config --global init.defaultBranch main
 
-      # Every file already spawns its own server on its own port against its own
-      # temp vault, so the files are independent and `--parallel` is safe by
-      # construction. The worker count is not: a worker running an e2e file
-      # holds a headless Chromium, and measured on a 16-core laptop the default
-      # (one worker per core) flaked twice out of two — a 10 s `waitForFunction`
-      # blown in fileops-e2e, a splash-repaint sample in theming-e2e — while
-      # `--parallel=4` ran clean twice (816 s serial → 306 s). Two vCPUs here,
-      # so two Chromiums; the timeout stays generous because a 2-vCPU runner
-      # gets far less out of the parallelism than the laptop did.
+      # Every file spawns its own server on its own port, so `--parallel` is safe.
+      # The default worker count (one per core) flaked on a 16-core laptop; `--parallel=4`
+      # ran clean (816 s → 306 s). Two vCPUs here, so two workers, and a generous timeout.
       - name: bun test
         timeout-minutes: 25
         run: bun test --parallel=2

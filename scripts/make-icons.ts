@@ -25,12 +25,10 @@
    `maskable` icon is cropped to whatever shape the platform likes and a
    transparent corner would show the launcher through it.
 
-   WHY THE PNG CONTAINER IS STILL HAND-ROLLED. `Bun.Image` (1.4.0) encodes,
-   but only from an encoded image: its constructor takes a file/blob and every
-   raw-pixel spelling — `{width, height, channels}`, `{raw: …}`, `{format:
-   "raw"}` — is rejected with ERR_IMAGE_UNKNOWN_FORMAT, and there is no
-   raw-buffer factory in its typings. This file starts from pixels it drew
-   itself, so `node:zlib` + the chunk writer below stay.
+   WHY THE PNG CONTAINER IS STILL HAND-ROLLED. `Bun.Image` (1.4.0) encodes only
+   from an encoded image: every raw-pixel constructor spelling is rejected with
+   ERR_IMAGE_UNKNOWN_FORMAT. This file starts from pixels it drew itself, so
+   `node:zlib` and the chunk writer below stay.
    ============================================================ */
 
 import { deflateSync } from "node:zlib";

@@ -814,16 +814,11 @@ function wire() {
      rest click-through), and clicking it is how it goes away. */
   $("#toast").addEventListener("click", clearStickyToast);
 
-  /* THE APP IS NOT A FILE VIEWER. A file dropped anywhere the tree has not
-     claimed would otherwise make the browser navigate to it — the whole tab,
-     unsaved buffer and all, replaced by a raw .md. So the window takes the
-     drag, says "no drop" and drops it on the floor.
-
-     Bubbling phase, and skipped once something has already called
-     `preventDefault()`: a tree row that accepted the drag (tree.js
-     `wireDropTarget`) has done exactly that, and calls `stopPropagation` on the
-     drop besides, so its own upload is untouched. An INTERNAL move carries no
-     "Files" and never reaches either branch. */
+  /* THE APP IS NOT A FILE VIEWER: the browser's default for a dropped file is
+     to navigate to it, replacing the whole tab, unsaved buffer and all. So the
+     window swallows any files drag nothing else claimed. A tree row that
+     accepted the drag has already called `preventDefault()`, and
+     `stopPropagation` on the drop besides, so it is skipped here. */
   window.addEventListener("dragover", (e) => {
     if (e.defaultPrevented || !dragHasFiles(e)) return;
     e.preventDefault();

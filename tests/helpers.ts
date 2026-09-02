@@ -428,9 +428,7 @@ export async function startServer(opts: StartOptions = {}): Promise<TestServer> 
   const vault = opts.vault ?? makeVault(opts.seed ?? {});
   const port = await freePort();
 
-  /* `--no-orphans`: the child exits when this test worker dies. Under
-     `bun test --parallel` a worker that is killed (or crashes) would otherwise
-     leave its server holding a port and an fs.watch on a temp vault. */
+  /* `--no-orphans`: a killed test worker takes its server, port and fs.watch with it. */
   const proc = Bun.spawn(["bun", "--no-orphans", "server/index.ts"], {
     cwd: REPO_ROOT,
     env: {

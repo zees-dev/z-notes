@@ -107,21 +107,14 @@ let dragged = null;
 /** The one pending hover-to-expand timer, and the row it is counting for. */
 let dwell = null;
 
-/** A drag the app did not start, carrying files from the desktop. The DATA
-    decides, alone: an internal move never carries "Files", and `dragged` can
-    be stale — a source row that left the DOM mid-drag gets no `dragend` from
-    Chromium — so consulting it would turn a drop of files into a move of
-    whatever was dragged last. */
-const externalFiles = (e) => dragHasFiles(e);
-
 const basename = (path) => {
   const rel = relOf(path);
   return rel.slice(rel.lastIndexOf("/") + 1);
 };
 
-/** The folder a row MEANS as a destination — the one rule both drops obey: a
-    doc row is its parent folder, a folder row is itself, a vault row is that
-    vault's root ("" for the primary, "@id" for a secondary). */
+/** The destination rule both drops obey: a doc row means its parent folder, a
+    folder row means itself, a vault row means that vault's root ("" for the
+    primary, "@id" for a secondary). */
 const dropFolder = (target, kind) => (kind === "doc" ? dirname(target) : target);
 
 function dropPlan(source, target, kind) {
@@ -219,10 +212,10 @@ function wireDropTarget(row, path, kind, kids) {
   };
   const paint = (e) => {
     /* A drag from outside has no plan and no refusal: every row is a legal
-       destination, and WHICH of the dropped files it takes is decided on the
-       drop, against the file itself. The hover mechanics are the move's,
-       deliberately unchanged — same paint, same dwell, same dragleave. */
-    if (externalFiles(e)) {
+       destination, and which of the dropped files it takes is decided on the
+       drop, against the file itself. The hover mechanics stay the move's, so
+       paint, dwell and dragleave are unchanged. */
+    if (dragHasFiles(e)) {
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
       row.classList.add("drop-target");
@@ -256,7 +249,7 @@ function wireDropTarget(row, path, kind, kids) {
     if (dragged) dragged.refusal = null;
   });
   row.addEventListener("drop", (e) => {
-    if (externalFiles(e)) {
+    if (dragHasFiles(e)) {
       /* both, and in this order: preventDefault stops the browser navigating
          to the file, stopPropagation keeps the window-level swallow (app.js)
          off a drop this row has claimed */
@@ -286,58 +279,24 @@ function wireDropTarget(row, path, kind, kids) {
 /* ---------- drop to upload (ADR 0030) ----------
 
    There is no upload route. A dropped file is `POST /api/docs` carrying its
-   text, so every refusal below is the CLIENT deciding not to send — the
-   accepted-extension list, the body cap, the UTF-8 check — and the ones that
-   are left (a duplicate name, a name the server will not mint) come back from
-   the server and are read out verbatim. Nothing here relaxes what a doc is:
-   that is ADR 0019's, and the server still rules on it. */
+   text, so every refusal below is the CLIENT deciding not to send: the
+   accepted-extension list, the body cap, the UTF-8 check. The refusals left
+   over, a duplicate name or a name the server will not mint, come back from
+   the server and are read out verbatim. What a doc IS stays ADR 0019's
+   question, and the server still rules on it. */
 
-/** The one place the browser knows the server's body cap. Refused HERE so an
-    oversized drop gets a sentence instead of a raw 413. */
+/** The server's body cap, refused here so an oversized drop gets a sentence
+    instead of a raw 413. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
-/** The cap is on the REQUEST, and `markdown` travels inside it as a JSON
-    string: every newline, CR, quote and backslash costs two bytes there, every
-    other control character six. A 6 MiB log of short CRLF lines is a 12 MiB
-    request — under the cap by the file's own measure, and cut off by the
-    server before the route can name it, which reaches the user as "Failed to
-    fetch". So the gate weighs what is actually sent. */
-const bodyBytes = (payload) => new Blob([JSON.stringify(payload)]).size;
-
-/**
- * Which of the dropped items are directories, read SYNCHRONOUSLY — that is the
- * whole point of this function existing.
- *
- * `webkitGetAsEntry()` answers only while the drop event is being dispatched:
- * Chromium empties the drag data store the moment the handler returns, so the
- * first `await file.arrayBuffer()` in the upload loop neuters every item after
- * it. Asked late, a folder dropped second answers `null` and is refused as the
- * wrong file type — or, named `notes.md`, is read as a file and refused as
- * "not UTF-8 text". Answered here, all of them are folders.
- */
-const directoryFlags = (dt) =>
-  [...(dt.items || [])].map((it) => {
-    const entry = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
-    return !!entry && entry.isDirectory;
-  });
-
-/** `settings.upload.extensions` as a set, by the server's own rule
-    (`normalizeExtensions`, settings.ts) — one list, one spelling. Read off
-    `state` rather than through settings.js: the tree has no other reason to
-    know that module, and a shared setting is what state.js is for. */
-function acceptedExtensions() {
-  const out = new Set();
-  for (const token of String(state.settings.upload.extensions || "").split(/[\s,]+/)) {
-    const ext = token.replace(/^\.+/, "").toLowerCase();
-    if (/^[a-z0-9]{1,16}$/.test(ext)) out.add(ext);
-  }
-  return out;
-}
+/** `webkitGetAsEntry()` answers only while the drop event is being dispatched,
+    because Chromium empties the drag data store the moment the handler
+    returns. So the flags are read here, before the upload loop's first await. */
+const directoryFlags = (dt) => [...(dt.items || [])].map((it) => !!it.webkitGetAsEntry?.()?.isDirectory);
 
 /** What the toast calls the destination: a folder by its path, a vault's root
-    by the vault's name — "to projects", or "to Notes". The server's label
-    carries a sync status ("Notes (unsynced)") that would read here as a
-    warning about the upload; the name is what the sentence wants. */
+    by the vault's name. The server's label carries a sync status ("Notes
+    (unsynced)") that would read here as a warning about the upload. */
 function folderLabel(folder) {
   const rel = relOf(folder);
   if (rel) return rel;
@@ -348,22 +307,21 @@ function folderLabel(folder) {
 /**
  * Every file in one drop, in the order it was dropped, into `folder`.
  *
- * `dirs[i]` is the answer `directoryFlags` already took for `files[i]`; it
- * cannot be asked for here, one `await` too late.
- *
- * Serial rather than parallel, deliberately: each create is a write plus a
- * reconcile pass under the same lock, and a refusal has to be able to name the
- * file it belongs to. One file being refused never stops the next — the whole
- * point of dropping three at once — so the loop collects reasons and reports
+ * `dirs[i]` is the answer `directoryFlags` already took for `files[i]`, which
+ * cannot be asked for here, one `await` too late. The loop is serial because
+ * each create is a write plus a reconcile pass under the same lock. One file
+ * being refused never stops the next, so reasons are collected and reported
  * once at the end.
  */
 async function uploadFiles(files, dirs, folder) {
   if (!files.length) return;
-  const accepted = acceptedExtensions();
+  /* the server heals the setting to exactly this spelling on read and on PUT
+     (`normalizeExtensions`, settings.ts), so the client only splits */
+  const accepted = new Set(state.settings.upload.extensions.split(", ").filter(Boolean));
   const wrongType = accepted.size
     ? "only " + [...accepted].join(", ") + " can be uploaded"
     : "no file type is accepted for upload";
-  const tooLarge = "too large to send — the limit is " + MAX_UPLOAD_BYTES / (1024 * 1024) + " MiB";
+  const tooLarge = "too large to send, the limit is " + MAX_UPLOAD_BYTES / (1024 * 1024) + " MiB";
   const made = [];
   const refused = [];
   for (let i = 0; i < files.length; i++) {
@@ -379,15 +337,10 @@ async function uploadFiles(files, dirs, folder) {
       refused.push(name + ": " + wrongType);
       continue;
     }
-    /* the cheap half of the size gate: nothing this big can encode small */
-    if (file.size > MAX_UPLOAD_BYTES) {
-      refused.push(name + ": " + tooLarge);
-      continue;
-    }
     /* `fatal` is the whole check: a doc is UTF-8 text (ADR 0019), and a lossy
        decode would write mojibake to disk and call it a note. `ignoreBOM`
-       keeps a leading U+FEFF as text instead of eating it — the promise is the
-       bytes the file had, and the server writes back what it is handed. */
+       keeps a leading U+FEFF as text, because the promise is the bytes the
+       file had. */
     let markdown;
     try {
       markdown = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer());
@@ -397,7 +350,11 @@ async function uploadFiles(files, dirs, folder) {
     }
     const path = folder ? folder + "/" + name : name;
     const payload = { path, type: "doc", markdown };
-    if (bodyBytes(payload) > MAX_UPLOAD_BYTES) {
+    /* The cap is on the REQUEST, and `markdown` travels inside it as a JSON
+       string, where a newline or a quote costs two bytes and another control
+       character costs six. A 6 MiB log of short CRLF lines is a 12 MiB
+       request, so the gate weighs what is actually sent. */
+    if (new Blob([JSON.stringify(payload)]).size > MAX_UPLOAD_BYTES) {
       refused.push(name + ": " + tooLarge);
       continue;
     }

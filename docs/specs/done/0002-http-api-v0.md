@@ -564,14 +564,14 @@ responses derive each entry's new `purgeAt` from it. The scheduled sweep uses th
 value; a restart is not required.
 
 *Real backend, additive:* `settings.upload.extensions` is the list of extensions a file
-dropped onto the sidebar tree may have — a **comma-separated string**, healed on read and
-on `PUT` to lowercase, dot-less, de-duplicated tokens (` .MD, Txt,,md ` → `md, txt`), and
-the response carries what was stored, exactly as a clamped number does. `""` is legal and
+dropped onto the sidebar tree may have: a **comma-separated string**, healed on read and
+on `PUT` to lowercase, dot-less, de-duplicated tokens (` .MD, Txt,,md ` → `md, txt`). The
+response carries what was stored, exactly as a clamped number does. `""` is legal and
 means nothing may be dropped. The server does **not** gate `POST /api/docs` by it: what a
 doc is stays [ADR 0019](../../decisions/0019-an-explicit-file-extension-is-literal.md)'s
-question — the sidebar's own inline create legitimately makes `report.txt` — and this is
-the client's drop filter, published so both surfaces read one list. There is no upload
-route; a dropped file is `POST /api/docs` carrying its text
+question, and the sidebar's own inline create legitimately makes `report.txt`. This is the
+client's drop filter, published so both surfaces read one list. There is no upload route;
+a dropped file is `POST /api/docs` carrying its text
 ([ADR 0030](../../decisions/0030-a-dropped-file-is-a-doc.md)).
 
 *Real backend, additive (SPEC §13):* `settings.terminal` configures the command runner.

@@ -371,14 +371,9 @@ export function applyEditToText(cur: string, e: EditSpec): { ok: true; post: str
    ============================================================ */
 
 /**
- * A line KEEPS its newline, so a last line that has one is not the same line as
- * a last line that has not — and a trailing newline still ends the last line
- * rather than opening an empty one.
- *
- * Carrying the terminator is the whole reason a proposal whose only change is
- * the file's final newline renders `-c` / `+c` instead of an empty card while
- * Accept goes on changing the bytes. It is jsdiff's tokenisation, and git's;
- * `bare()` takes the terminator back off where the row text is built.
+ * A line KEEPS its newline, so a proposal whose only change is the file's final
+ * newline renders `-c` / `+c` instead of an empty card. `bare()` takes the
+ * terminator back off where the row text is built.
  */
 function splitLines(s: string): string[] {
   if (s === "") return [];
@@ -398,15 +393,12 @@ interface Run {
 /**
  * Myers' O(N·D) line diff in its linear-space form (his §4b): find the middle
  * snake of an optimal path by running the greedy search from both ends until
- * they meet, then recurse on the two halves. Null once `deadline` — a
- * `performance.now()` reading — has passed.
- *
- * The textbook form is the forward search alone, keeping every V array it
- * wrote so it can walk the path back afterwards. That trace is O(D²): on the
- * very input the deadline exists for it reaches 1.5GB inside the 1s budget,
- * twice what the pod may have (768Mi, deploy/k3s/20-deployment.yaml) — the
- * bound that is there to keep the one replica alive would be what killed it.
- * This form carries two V arrays and nothing else.
+ * they meet, then recurse on the two halves. The textbook forward-with-trace
+ * form keeps every V array it wrote, which is O(D²) memory: on 20k unrelated
+ * lines a side it reaches 1.5GB inside the 1s budget, twice what the pod may
+ * have (768Mi, deploy/k3s/20-deployment.yaml). This form carries two V arrays
+ * and nothing else. Null once `deadline`, a `performance.now()` reading, has
+ * passed.
  */
 function editRuns(a: string[], b: string[], deadline: number): Run[] | null {
   const runs: Run[] = [];
@@ -424,7 +416,7 @@ function editRuns(a: string[], b: string[], deadline: number): Run[] | null {
   const vr = new Int32Array(2 * off + 1);
   let expired = false;
 
-  /** the middle snake as [x, y, u, v] — its start and end, relative to (a0, b0) */
+  /** the middle snake as [x, y, u, v]: its start and end, relative to (a0, b0) */
   const middle = (a0: number, n: number, b0: number, m: number): [number, number, number, number] => {
     const delta = n - m;
     const odd = (delta & 1) !== 0;
@@ -469,7 +461,7 @@ function editRuns(a: string[], b: string[], deadline: number): Run[] | null {
 
   const walk = (a0: number, n: number, b0: number, m: number): void => {
     /* the shared head and tail are free, and shedding them is what keeps the
-       ordinary edit — a handful of lines inside a long note — linear */
+       ordinary edit, a handful of lines inside a long note, linear */
     let head = 0;
     while (head < n && head < m && a[a0 + head] === b[b0 + head]) head++;
     push(0, head);
@@ -482,7 +474,7 @@ function editRuns(a: string[], b: string[], deadline: number): Run[] | null {
     n -= tail;
     m -= tail;
     /* with head and tail gone the two sides share neither first nor last line,
-       so what is left is either one-sided or at least two edits deep — which is
+       so what is left is either one-sided or at least two edits deep, which is
        what makes both halves of the split strictly smaller than this call */
     if (n === 0 || m === 0) {
       push(-1, n);
@@ -510,13 +502,13 @@ function lineHunks(pre: string, post: string, context: number, deadlineMs: numbe
   const runs = editRuns(a, b, performance.now() + deadlineMs);
   if (!runs) return null;
 
-  /* a row is DISPLAY text: the terminator that made the comparison honest is
-     not part of the line the card shows, the same way buildDiff drops the CR */
+  /* a row is DISPLAY text, so the terminator that made the comparison honest
+     comes off, the same way buildDiff drops the CR */
   const bare = (l: string) => (l.endsWith("\n") ? l.slice(0, -1) : l);
 
   const hunks: string[][] = [];
   let rows: string[] | null = null; // the open hunk
-  let lead: string[] = []; // the tail of the last common stretch — context for the next one
+  let lead: string[] = []; // the tail of the last common stretch, context for the next one
   let ai = 0;
   let bi = 0;
   for (let i = 0; i < runs.length; ) {
@@ -528,7 +520,7 @@ function lineHunks(pre: string, post: string, context: number, deadlineMs: numbe
       i++;
       if (rows) {
         /* a gap two contexts wide or less would print as context twice over,
-           so it stays inside the hunk; a wider one — or the end — closes it */
+           so it stays inside the hunk; a wider one, or the end, closes it */
         if (common.length <= context * 2 && i < runs.length) {
           for (const l of common) rows.push(" " + bare(l));
         } else {
@@ -541,7 +533,7 @@ function lineHunks(pre: string, post: string, context: number, deadlineMs: numbe
       continue;
     }
     /* one change region, however the path threaded it: every line it drops,
-       then every line it adds — the order a unified diff reads in */
+       then every line it adds, the order a unified diff reads in */
     const gone: string[] = [];
     const fresh: string[] = [];
     for (; i < runs.length && runs[i]!.kind !== 0; i++) {
@@ -575,15 +567,13 @@ export function buildDiff(files: FileImage[]): { diff: Array<{ marker: string; t
   };
   for (const f of files) {
     if (files.length > 1) push(" ", `— ${f.path} —`);
-    /* THE DEADLINE IS LOAD-BEARING, not tidiness. Myers is O(N·D), and `f.post`
-       is a post-image the MODEL wrote — a `rewrite` of a long note is a
-       perfectly ordinary request whose two sides share almost no lines, which
-       is the worst case. Measured, unbounded: 10k lines/side = 0.6s, 20k =
-       2.4s, 40k = 13.1s. There is one replica, ever
-       (deploy/k3s/20-deployment.yaml), so that is the whole server stopped, on
-       a request nobody meant as an attack. Bounded at 1s the same input bails
-       in ~1s (and inside 100MB of RSS) and the user gets a proposal with no
-       rendered diff instead of a dead app. */
+    /* THE DEADLINE IS LOAD-BEARING. Myers is O(N·D), and its worst case here
+       is an ordinary request: a `rewrite` of a long note, whose two sides
+       share almost no lines. Measured, unbounded: 10k lines/side = 0.6s, 20k
+       = 2.4s, 40k = 13.1s, and there is one replica ever
+       (deploy/k3s/20-deployment.yaml). Bounded at 1s the same input bails in
+       ~1s inside 100MB of RSS, and the user gets a proposal with no rendered
+       diff instead of a dead app. */
     const hunks = lineHunks(f.pre, f.post, 2, 1000);
     if (!hunks) {
       /* The diff is a VIEW of the proposal, never the proposal itself — the
