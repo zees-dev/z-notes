@@ -111,6 +111,13 @@ export const DEFAULTS = {
     homeDoc: HOME_DOC_DEFAULT,
   },
   trash: { retentionDays: TRASH_RETENTION_DEFAULT_DAYS },
+  /* Which extensions a file dropped on the sidebar tree may have (ADR 0030).
+     A comma-separated LIST in one string, because that is how it is edited —
+     in one text field, and by hand in this file. The server never gates
+     `POST /api/docs` by it: what a doc IS is ADR 0019's question, and the
+     sidebar's own "New doc" legitimately makes `report.txt`. This is the
+     client's drop filter, published so both surfaces read the same list. */
+  upload: { extensions: "md, html, txt, log" },
   git: { branch: "main", autoSync: true, autoSyncSeconds: 60 },
   /* Browser-side auto-lock policy (research §5.2 / §7.2). It lives here rather
      than as a constant in crypto-worker.js for the same reason the autosave
@@ -544,6 +551,7 @@ export class Settings {
       this.healBooleans(),
       this.healEnums(),
       this.healTerminal(),
+      this.healUpload(),
     ].some(Boolean);
   }
 
@@ -797,6 +805,33 @@ export class Settings {
   }
 
   /**
+   * `upload.extensions` is a hand-written LIST, so every way to get it wrong is
+   * a spelling: a leading dot, capitals, a trailing comma, the same token
+   * twice. `normalizeExtensions` answers all of them and is the same function
+   * the PUT runs — the rule the numbers get from clamp/snap, for the one
+   * free-text list. `""` is a legal outcome and means nothing may be dropped.
+   */
+  private healUpload(): boolean {
+    const up = this.data.upload;
+    if (!isPlainObject(up)) {
+      this.data.upload = structuredClone(DEFAULTS.upload);
+      return true;
+    }
+    if (up.extensions == null) return false; // absent: mergeOneLevel already gave us the default
+    if (typeof up.extensions !== "string") {
+      process.stderr.write(
+        `[z-notes] settings.toml: unusable upload.extensions, falling back to "${DEFAULTS.upload.extensions}"\n`
+      );
+      up.extensions = DEFAULTS.upload.extensions;
+      return true;
+    }
+    const fixed = normalizeExtensions(up.extensions);
+    if (fixed === up.extensions) return false;
+    up.extensions = fixed;
+    return true;
+  }
+
+  /**
    * FIRST-RUN ONLY, deliberately.
    *
    * settings.toml is the startup surface (see the file preamble), so a fresh
@@ -1005,6 +1040,7 @@ export class Settings {
     validateGit(patch.git);
     validateAi(patch.ai);
     validateTerminal(patch.terminal);
+    validateUpload(patch.upload);
     validateNumbers(patch);
     validateBooleans(patch);
 
@@ -1018,6 +1054,10 @@ export class Settings {
       clean.editor.homeDoc = clean.editor.homeDoc.trim();
     if (isPlainObject(clean.git) && typeof clean.git.branch === "string")
       clean.git.branch = clean.git.branch.trim();
+    /* normalised on the way IN, so the response carries what was stored — the
+       same promise the number clamp makes, for the one free-text list */
+    if (isPlainObject(clean.upload) && typeof clean.upload.extensions === "string")
+      clean.upload.extensions = normalizeExtensions(clean.upload.extensions);
     // the same clamp/snap the file gets on load and the number input applies in
     // the browser — one rule, three surfaces
     for (const path of Object.keys(NUMBERS)) {
@@ -1213,6 +1253,33 @@ function validateTerminal(terminal: unknown): void {
     throw new SettingsError("bad-password", "terminal.password must be a string.");
 }
 
+/**
+ * One list, one spelling. Split on commas AND whitespace, drop the leading
+ * dots people write out of habit, lowercase, and keep only what can actually be
+ * a file extension — de-duplicated, in the order they were written.
+ *
+ * Exported because it is the WHOLE rule: the file heal, the PUT and the
+ * browser's drop filter all have to agree on which extensions a dropped file
+ * may have, and a second copy of "split on commas" is how they would stop
+ * agreeing. `""` is a legal answer and means nothing may be dropped.
+ */
+export function normalizeExtensions(raw: string): string {
+  const seen = new Set<string>();
+  for (const token of String(raw).split(/[\s,]+/)) {
+    const ext = token.replace(/^\.+/, "").toLowerCase();
+    if (/^[a-z0-9]{1,16}$/.test(ext)) seen.add(ext);
+  }
+  return [...seen].join(", ");
+}
+
+/** Type only: the VALUE is a spelling, and `normalizeExtensions` heals it. */
+function validateUpload(upload: unknown): void {
+  if (upload == null) return;
+  if (!isPlainObject(upload)) throw new SettingsError("bad-upload", "upload must be an object.");
+  if ("extensions" in upload && upload.extensions != null && typeof upload.extensions !== "string")
+    throw new SettingsError("bad-extensions", "upload.extensions must be a comma-separated string.");
+}
+
 function mergeOneLevel(base: Json, patch: Json): Json {
   const out: Json = { ...base };
   for (const [k, v] of Object.entries(patch)) {
@@ -1223,7 +1290,7 @@ function mergeOneLevel(base: Json, patch: Json): Json {
 }
 
 const SCALAR_ORDER = ["theme", "density", "colorScheme"];
-const SECTION_ORDER = ["editor", "trash", "git", "secrets", "ai", "terminal"];
+const SECTION_ORDER = ["editor", "trash", "upload", "git", "secrets", "ai", "terminal"];
 
 /* ---------- the file is the STARTUP surface, so it documents itself ----------
    settings.toml is how a fresh install is configured before anything has a UI:
@@ -1236,6 +1303,7 @@ const SECTION_ORDER = ["editor", "trash", "git", "secrets", "ai", "terminal"];
 const SECTION_DOC: Record<string, string> = {
   editor: "Editor behaviour.",
   trash: "Recoverable-delete retention. Expired entries are permanently removed by the scheduled sweep.",
+  upload: "Files dropped onto the sidebar tree.",
   git: "Git sync. The remote itself is ordinary git config (`git remote add origin …`).",
   secrets: "Browser-side auto-lock policy for encrypted blocks. Applied by the crypto worker.",
   ai: "AI relay. The browser never talks to the endpoint; the server does.",
@@ -1254,6 +1322,8 @@ const KEY_DOC: Record<string, string> = {
   "editor.homeDoc":
     "Doc the vault button (top left) opens. Vault-relative path; empty means the first doc.",
   "trash.retentionDays": "Keep deleted docs this long before the scheduled permanent purge.",
+  "upload.extensions":
+    "Comma-separated extensions a dropped file may have. Anything else is refused before it is sent.",
   "git.branch": "Branch every sync commits to.",
   "git.autoSync": "Commit + push after saves settle; a rejected push pulls --rebase and retries.",
   "git.autoSyncSeconds": "Debounce: sync this long after the last change settles.",

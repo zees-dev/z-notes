@@ -507,6 +507,7 @@ results, distinguishable only by their prefix.
     "editor": { "autosaveSeconds": 10, "tabSize": 2, "clickToEdit": true,
                 "confirmBeforeExit": true, "homeDoc": "index.md" },
     "trash": { "retentionDays": 7 },
+    "upload": { "extensions": "md, html, txt, log" },
     "git": { "branch": "main", "autoSync": true, "autoSyncSeconds": 60,
              "tokenMasked": "ghp_9f3kx2Qm7Lp0" },
     "secrets": { "idleLockMinutes": 15, "hiddenLockMinutes": 5,
@@ -561,6 +562,17 @@ setting is therefore a backend change only.
 changed value live: shortening it schedules an immediate sweep, and subsequent list
 responses derive each entry's new `purgeAt` from it. The scheduled sweep uses the same
 value; a restart is not required.
+
+*Real backend, additive:* `settings.upload.extensions` is the list of extensions a file
+dropped onto the sidebar tree may have — a **comma-separated string**, healed on read and
+on `PUT` to lowercase, dot-less, de-duplicated tokens (` .MD, Txt,,md ` → `md, txt`), and
+the response carries what was stored, exactly as a clamped number does. `""` is legal and
+means nothing may be dropped. The server does **not** gate `POST /api/docs` by it: what a
+doc is stays [ADR 0019](../../decisions/0019-an-explicit-file-extension-is-literal.md)'s
+question — the sidebar's own inline create legitimately makes `report.txt` — and this is
+the client's drop filter, published so both surfaces read one list. There is no upload
+route; a dropped file is `POST /api/docs` carrying its text
+([ADR 0030](../../decisions/0030-a-dropped-file-is-a-doc.md)).
 
 *Real backend, additive (SPEC §13):* `settings.terminal` configures the command runner.
 `shell` and `startupCwd` are absolute paths or `""` (meaning `$SHELL`, else `/bin/sh`; and
@@ -716,7 +728,7 @@ is refused if any check fails. This table is the complete list for this route:
 | --- | --- |
 | `bad-json` | the request body is not parseable JSON |
 | `bad-body` | the patch parses but is not an object |
-| `bad-editor` / `bad-git` / `bad-ai` / `bad-terminal` | `editor` / `git` / `ai` / `terminal` is present but is not an object |
+| `bad-editor` / `bad-git` / `bad-ai` / `bad-terminal` / `bad-upload` | `editor` / `git` / `ai` / `terminal` / `upload` is present but is not an object |
 | `bad-home-doc` | `editor.homeDoc` is not a string, or is not a vault-relative path (absolute, `..`, `\`, a URL scheme, or a control character) |
 | `unknown-theme` / `unknown-density` / `unknown-color-scheme` | not in the matching `meta` list |
 | `bad-number` | a `meta.numbers` path that is not a positive number (message names the path and its unit) |
@@ -726,6 +738,7 @@ is refused if any check fails. This table is the complete list for this route:
 | `bad-branch` | `git.branch` empty, leading `-`, or not a legal ref name |
 | `bad-base-url` | `ai.baseUrl` unparseable or not `http:`/`https:` |
 | `bad-model` / `bad-effort` | `ai.model` / `ai.effort` given a non-string or a blank one |
+| `bad-extensions` | `upload.extensions` is not a string |
 
 A numeric value that is positive but outside its `meta.numbers` range is **not** an error:
 it is clamped to the bound and snapped to `step`, and the response carries what was
@@ -1661,7 +1674,7 @@ against whatever doc URL is in the address bar.
 The frontend's other routing space, and the same kind of thing as `/d/{path}`: Settings is a
 **page** in the editor pane, not a modal, so it has a real address that can be deep-linked,
 reloaded and walked back out of. `{section}` is one of `appearance`, `editing`, `trash`,
-`git`, `secrets`, `ai`, `terminal` — the page opens scrolled to that group, which is what makes
+`upload`, `git`, `secrets`, `ai`, `terminal` — the page opens scrolled to that group, which is what makes
 "open Settings at the AI section" (the statusbar AI chip) a link and not a gesture. An
 unrecognised section is not an error: the client degrades it to the top of the page.
 

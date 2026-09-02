@@ -349,6 +349,7 @@
         <button data-sec="appearance">Appearance</button>
         <button data-sec="editing">Editing</button>
         <button data-sec="trash">Recently deleted</button>
+        <button data-sec="upload">Upload</button>
         <button data-sec="git">Git sync</button>
         <button data-sec="secrets">Secrets</button>
         <button data-sec="ai">AI</button>
@@ -424,6 +425,17 @@
                 <input class="inp w-sm mono" data-num="trash.retentionDays" value="" aria-label="Trash retention days">
                 <span class="unit"></span>
               </div>
+            </div>
+          </section>
+
+          <section class="grp" id="settingsGrp-upload">
+            <div class="grp-t">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M8 8l4-4 4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+              Upload
+            </div>
+            <div class="field">
+              <div class="lab"><b>Accepted file types</b><span>Drop files from your desktop onto a folder in the sidebar. Comma-separated extensions.</span></div>
+              <div class="ctl"><input class="inp mono" id="uploadExt" data-draft="upload.extensions" aria-label="Accepted file types" placeholder="md, html, txt, log"></div>
             </div>
           </section>
 

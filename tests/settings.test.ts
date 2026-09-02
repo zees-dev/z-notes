@@ -41,7 +41,7 @@ import {
   type TestServer,
 } from "./helpers";
 import { startMockUpstream, reply, type MockUpstream } from "./mock-upstream";
-import { DEFAULTS, NUMBERS, BOOLEANS, META } from "../server/settings";
+import { DEFAULTS, NUMBERS, BOOLEANS, META, normalizeExtensions } from "../server/settings";
 
 const KEY = "sk-mock-settings-0000000000006789";
 const SETTINGS_REL = ".znotes/settings.toml";
@@ -175,7 +175,7 @@ describe("settings parity — every key is settable in BOTH surfaces", () => {
     );
 
     expect(`controls found: ${nums.length} numeric, ${sws.length} boolean, ${drafts.length} free-text`).toBe(
-      `controls found: ${Object.keys(NUMBERS).length} numeric, ${BOOLEANS.length} boolean, 6 free-text`
+      `controls found: ${Object.keys(NUMBERS).length} numeric, ${BOOLEANS.length} boolean, 7 free-text`
     );
   });
 
@@ -245,6 +245,9 @@ describe("settings.toml — the startup surface round-trips", () => {
       `[trash]`,
       `retentionDays = 21`,
       ``,
+      `[upload]`,
+      `extensions = "md, txt"`,
+      ``,
       `[git]`,
       `branch = "trunk"`,
       `autoSync = false`,
@@ -285,6 +288,7 @@ describe("settings.toml — the startup surface round-trips", () => {
       "editor.confirmBeforeExit": false,
       "editor.homeDoc": "architecture/event-pipeline.md",
       "trash.retentionDays": 21,
+      "upload.extensions": "md, txt",
       "git.branch": "trunk",
       "git.autoSync": false,
       "git.autoSyncSeconds": 300,
@@ -496,6 +500,29 @@ describe("settings.toml — unusable values heal instead of refusing to start", 
       "file now says the healed value: true"
     );
   }, 60000);
+
+  /* `upload.extensions` is a hand-written LIST in a single string, so the ways
+     to get it wrong are spelling, not type: a leading dot, capitals, a stray
+     comma, the same token twice. One normalisation answers all of them, and it
+     is the same function the PUT runs — the rule numbers get from
+     clamp/snap. */
+  test("upload.extensions is healed to lowercase, dot-less, de-duplicated tokens", async () => {
+    const vault = vaultWithToml(`[upload]\nextensions = " .MD, Txt,,md "\n`);
+    const s = await newServer({ vault });
+    const got = (await s.get("/api/settings")).body.settings;
+    expect(`extensions healed: ${JSON.stringify(got.upload.extensions)}`).toBe(
+      'extensions healed: "md, txt"'
+    );
+    await s.api("PUT", "/api/settings", { theme: "modern" }); // force the rewrite
+    expect(`the file agrees: ${readVaultText(vault, SETTINGS_REL).includes(`extensions = "md, txt"`)}`).toBe(
+      "the file agrees: true"
+    );
+  }, 60000);
+
+  test("normalizeExtensions is the one rule — pure, and directly testable", () => {
+    expect(normalizeExtensions("  .LOG , log,, html ")).toBe("log, html");
+    expect(normalizeExtensions("!!! , .md")).toBe("md");
+  });
 });
 
 /* ============================================================
@@ -711,6 +738,8 @@ describe("PUT /api/settings — malformed values are refused by code", () => {
       ["a blank effort", { ai: { effort: "" } }, "bad-effort"],
       ["git that is not an object", { git: "yes" }, "bad-git"],
       ["ai that is not an object", { ai: 7 }, "bad-ai"],
+      ["upload that is not an object", { upload: 5 }, "bad-upload"],
+      ["an extension list that is not a string", { upload: { extensions: 5 } }, "bad-extensions"],
     ];
 
     for (const [label, patch, code] of cases) {
@@ -737,6 +766,20 @@ describe("PUT /api/settings — malformed values are refused by code", () => {
     const r2 = await s.api("PUT", "/api/settings", { secrets: { clipboardClearSeconds: 33 } });
     expect(`snapped to the step grid: ${r2.body.settings.secrets.clipboardClearSeconds % step.step}`).toBe(
       "snapped to the step grid: 0"
+    );
+  }, 60000);
+
+  /* the same rule as the number clamp, for the one free-text LIST: what comes
+     back is what was stored, so the field can never show a spelling the server
+     has already rewritten behind it */
+  test("upload.extensions is NORMALISED on PUT, and the response carries what was stored", async () => {
+    const s = await newServer({ seed: { "inbox.md": "# Inbox\n\n" } });
+    const r = await s.api("PUT", "/api/settings", { upload: { extensions: "LOG, .log, html" } });
+    expect(`PUT ${r.status} → ${JSON.stringify(r.body?.settings?.upload?.extensions)}`).toBe(
+      'PUT 200 → "log, html"'
+    );
+    expect(`settings.toml stored it normalised: ${readVaultText(s.vault, SETTINGS_REL).includes(`extensions = "log, html"`)}`).toBe(
+      "settings.toml stored it normalised: true"
     );
   }, 60000);
 

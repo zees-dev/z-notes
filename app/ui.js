@@ -117,6 +117,13 @@ export const syncDotClass = (s) =>
     than one of them. */
 export const vaultTrees = () => state.vaults.map((v) => v.tree || []);
 
+/** Is this drag carrying files from OUTSIDE the browser? The tree accepts one
+    as an upload (ADR 0030); everywhere else swallows it, because the browser's
+    own default for a dropped file is to navigate away from the app. `types` is
+    the only half of a DataTransfer readable during a drag — `files` fills in on
+    `drop` — so this is the question both handlers can actually ask. */
+export const dragHasFiles = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+
 let toastT;
 /**
  * `opts.sticky` keeps the notice up until something dismisses it.

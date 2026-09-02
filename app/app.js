@@ -16,7 +16,7 @@
 import * as api from "./api.js";
 import { generatePassphrase } from "./entropy.js";
 import { state } from "./state.js";
-import { $, $$, clearStickyToast, lookupLink, toast, vaultTrees } from "./ui.js";
+import { $, $$, clearStickyToast, dragHasFiles, lookupLink, toast, vaultTrees } from "./ui.js";
 import { pendingHistory, stepHistory, wireHistory } from "./history.js";
 import { LONGPRESS_MS, applyFileHistory, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
 import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, wireDialogs } from "./dialogs.js";
@@ -813,6 +813,26 @@ function wire() {
   /* A sticky notice is the only toast that can be clicked (base.css keeps the
      rest click-through), and clicking it is how it goes away. */
   $("#toast").addEventListener("click", clearStickyToast);
+
+  /* THE APP IS NOT A FILE VIEWER. A file dropped anywhere the tree has not
+     claimed would otherwise make the browser navigate to it — the whole tab,
+     unsaved buffer and all, replaced by a raw .md. So the window takes the
+     drag, says "no drop" and drops it on the floor.
+
+     Bubbling phase, and skipped once something has already called
+     `preventDefault()`: a tree row that accepted the drag (tree.js
+     `wireDropTarget`) has done exactly that, and calls `stopPropagation` on the
+     drop besides, so its own upload is untouched. An INTERNAL move carries no
+     "Files" and never reaches either branch. */
+  window.addEventListener("dragover", (e) => {
+    if (e.defaultPrevented || !dragHasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "none";
+  });
+  window.addEventListener("drop", (e) => {
+    if (e.defaultPrevented || !dragHasFiles(e)) return;
+    e.preventDefault();
+  });
 
   /* The settings draft lives in memory, so a reload or a closed tab is the one
      way it can be lost. `exitSettings` keeps it across every in-app exit and

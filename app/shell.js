@@ -748,7 +748,7 @@ export function urlDoc() {
    page rather than 404ing or flashing a section that does not exist. It is the
    same list the rail in index.html carries, and `#settingsGrp-<section>` is
    what both resolve to. */
-export const SETTINGS_SECTIONS = ["appearance", "editing", "trash", "git", "secrets", "ai", "terminal"];
+export const SETTINGS_SECTIONS = ["appearance", "editing", "trash", "upload", "git", "secrets", "ai", "terminal"];
 /* `location.search` rides along for the same reason `docUrl` keeps it:
    `?theme=terminal` must survive every rewrite or it lasts one page load. */
 const settingsUrl = (sec) => "/settings" + (sec ? "/" + encodeURIComponent(sec) : "") + location.search;

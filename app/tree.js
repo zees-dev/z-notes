@@ -9,7 +9,7 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, I, apiFail, clearStickyToast, dirname, el, esc, normTarget, relOf, syncDotClass, toast, vaultOf, vaultPrefix, vaultRootKey, withDefaultExtension } from "./ui.js";
+import { $, $$, I, apiFail, clearStickyToast, dirname, dragHasFiles, el, esc, normTarget, relOf, syncDotClass, toast, vaultOf, vaultPrefix, vaultRootKey, withDefaultExtension } from "./ui.js";
 import { cells } from "./markdown.js";
 import { confirmDialog } from "./dialogs.js";
 import { refreshTrash, trashRetentionNote } from "./trash.js";
@@ -107,13 +107,24 @@ let dragged = null;
 /** The one pending hover-to-expand timer, and the row it is counting for. */
 let dwell = null;
 
+/** A drag the app did not start, carrying files from the desktop. `!dragged`
+    is what keeps the two gestures apart: an internal move never carries
+    "Files", but asking BOTH questions means a future drag source that does
+    cannot be mistaken for an upload. */
+const externalFiles = (e) => !dragged && dragHasFiles(e);
+
 const basename = (path) => {
   const rel = relOf(path);
   return rel.slice(rel.lastIndexOf("/") + 1);
 };
 
+/** The folder a row MEANS as a destination — the one rule both drops obey: a
+    doc row is its parent folder, a folder row is itself, a vault row is that
+    vault's root ("" for the primary, "@id" for a secondary). */
+const dropFolder = (target, kind) => (kind === "doc" ? dirname(target) : target);
+
 function dropPlan(source, target, kind) {
-  const parent = kind === "doc" ? dirname(target) : target;
+  const parent = dropFolder(target, kind);
   const id = vaultOf(parent);
   const prefix = vaultPrefix(id);
   const rel = relOf(parent);
@@ -206,6 +217,18 @@ function wireDropTarget(row, path, kind, kids) {
     };
   };
   const paint = (e) => {
+    /* A drag from outside has no plan and no refusal: every row is a legal
+       destination, and WHICH of the dropped files it takes is decided on the
+       drop, against the file itself. The hover mechanics are the move's,
+       deliberately unchanged — same paint, same dwell, same dragleave. */
+    if (externalFiles(e)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      row.classList.add("drop-target");
+      if (kids && kids.classList.contains("closed")) armDwell();
+      else clearDwell(row);
+      return null;
+    }
     if (!dragged) return null;
     const plan = dropPlan(dragged.path, path, kind);
     e.preventDefault();
@@ -232,6 +255,17 @@ function wireDropTarget(row, path, kind, kids) {
     if (dragged) dragged.refusal = null;
   });
   row.addEventListener("drop", (e) => {
+    if (externalFiles(e)) {
+      /* both, and in this order: preventDefault stops the browser navigating
+         to the file, stopPropagation keeps the window-level swallow (app.js)
+         off a drop this row has claimed */
+      e.preventDefault();
+      e.stopPropagation();
+      clearDropMarks();
+      const dt = e.dataTransfer;
+      uploadFiles([...dt.files], [...(dt.items || [])], dropFolder(path, kind));
+      return;
+    }
     const source = dragged;
     const plan = source && paint(e);
     dragged = null;
@@ -246,6 +280,111 @@ function wireDropTarget(row, path, kind, kids) {
     if (!plan.useful) return;
     moveEntry({ path: source.path, type: source.type === "folder" ? "folder" : "file" }, plan.to);
   });
+}
+
+/* ---------- drop to upload (ADR 0030) ----------
+
+   There is no upload route. A dropped file is `POST /api/docs` carrying its
+   text, so every refusal below is the CLIENT deciding not to send — the
+   accepted-extension list, the body cap, the UTF-8 check — and the ones that
+   are left (a duplicate name, a name the server will not mint) come back from
+   the server and are read out verbatim. Nothing here relaxes what a doc is:
+   that is ADR 0019's, and the server still rules on it. */
+
+/** The one place the browser knows the server's body cap. Refused HERE so an
+    oversized file gets a sentence instead of a raw 413. */
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+
+/** `settings.upload.extensions` as a set, by the server's own rule
+    (`normalizeExtensions`, settings.ts) — one list, one spelling. Read off
+    `state` rather than through settings.js: the tree has no other reason to
+    know that module, and a shared setting is what state.js is for. */
+function acceptedExtensions() {
+  const out = new Set();
+  for (const token of String(state.settings.upload.extensions || "").split(/[\s,]+/)) {
+    const ext = token.replace(/^\.+/, "").toLowerCase();
+    if (/^[a-z0-9]{1,16}$/.test(ext)) out.add(ext);
+  }
+  return out;
+}
+
+/** What the toast calls the destination: a folder by its path, a vault's root
+    by the vault's own label — "to projects", or "to Notes". */
+function folderLabel(folder) {
+  const rel = relOf(folder);
+  if (rel) return rel;
+  const v = vaultById(vaultOf(folder));
+  return (v && v.label) || "the vault";
+}
+
+/**
+ * Every file in one drop, in the order it was dropped, into `folder`.
+ *
+ * Serial rather than parallel, deliberately: each create is a write plus a
+ * reconcile pass under the same lock, and a refusal has to be able to name the
+ * file it belongs to. One file being refused never stops the next — the whole
+ * point of dropping three at once — so the loop collects reasons and reports
+ * once at the end.
+ */
+async function uploadFiles(files, items, folder) {
+  if (!files.length) return;
+  const accepted = acceptedExtensions();
+  const wrongType = accepted.size
+    ? "only " + [...accepted].join(", ") + " can be uploaded"
+    : "no file type is accepted for upload";
+  const made = [];
+  const refused = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const name = file.name;
+    const entry = items[i] && items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+    if (entry && entry.isDirectory) {
+      refused.push(name + ": folders cannot be uploaded");
+      continue;
+    }
+    const dot = name.lastIndexOf(".");
+    const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+    if (!accepted.has(ext)) {
+      refused.push(name + ": " + wrongType);
+      continue;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      refused.push(name + ": larger than " + MAX_UPLOAD_BYTES / (1024 * 1024) + " MiB");
+      continue;
+    }
+    /* `fatal` is the whole check: a doc is UTF-8 text (ADR 0019), and a
+       lossy decode would write mojibake to disk and call it a note. */
+    let markdown;
+    try {
+      markdown = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
+    } catch (err) {
+      refused.push(name + ": not UTF-8 text");
+      continue;
+    }
+    const path = folder ? folder + "/" + name : name;
+    try {
+      await api.createEntry({ path, type: "doc", markdown });
+    } catch (err) {
+      refused.push(name + ": " + ((err && err.message) || "could not be created"));
+      continue;
+    }
+    /* the same timeline entry an inline create makes, so ⌘Z asks before
+       deleting it exactly as it does there (ADR 0014) */
+    rememberFileOp({ kind: "create", path, type: "doc", markdown });
+    made.push(path);
+  }
+  if (made.length) {
+    revealFolder(folder);
+    await loadTree();
+  }
+  const lines = made.length
+    ? ["Uploaded " + made.length + " file" + (made.length === 1 ? "" : "s") + " to " + folderLabel(folder)]
+    : [];
+  lines.push(...refused);
+  /* sticky only when something was refused: a refusal the user blinks past is
+     a file they will believe arrived */
+  toast(lines.join(" · "), refused.length ? { sticky: true } : undefined);
+  if (made.length === 1) await openDoc(made[0]);
 }
 
 /**
