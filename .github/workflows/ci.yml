@@ -28,7 +28,7 @@ concurrency:
 
 env:
   # keep CI on the same bun the app is developed against
-  BUN_VERSION: "1.3.14"
+  BUN_VERSION: "1.4.0"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -217,8 +217,15 @@ jobs:
           git config --global user.name "z-notes CI"
           git config --global init.defaultBranch main
 
-      # ~12-13 min on a laptop, similar on a 4-core runner — 10 was a squeeze
-      # that recent additions to the suite finally outgrew.
+      # Every file already spawns its own server on its own port against its own
+      # temp vault, so the files are independent and `--parallel` is safe by
+      # construction. The worker count is not: a worker running an e2e file
+      # holds a headless Chromium, and measured on a 16-core laptop the default
+      # (one worker per core) flaked twice out of two — a 10 s `waitForFunction`
+      # blown in fileops-e2e, a splash-repaint sample in theming-e2e — while
+      # `--parallel=4` ran clean twice (816 s serial → 306 s). Two vCPUs here,
+      # so two Chromiums; the timeout stays generous because a 2-vCPU runner
+      # gets far less out of the parallelism than the laptop did.
       - name: bun test
         timeout-minutes: 25
-        run: bun test
+        run: bun test --parallel=2

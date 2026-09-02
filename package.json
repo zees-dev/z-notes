@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "bun --hot server/index.ts",
     "start": "bun server/index.ts",
-    "test": "bun test",
+    "test": "bun test --parallel=4",
     "gates": "bun test tests/roundtrip.test.ts tests/reconcile.test.ts tests/ai.test.ts tests/leak.test.ts tests/e2e.test.ts tests/mermaid-e2e.test.ts",
     "lint:docs": "bun scripts/lint-docs.ts"
   },
@@ -14,7 +14,6 @@
     "puppeteer-core": "^25.4.0"
   },
   "dependencies": {
-    "age-encryption": "0.3.0",
-    "diff": "9.0.0"
+    "age-encryption": "0.3.0"
   }
 }

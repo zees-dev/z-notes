@@ -40,7 +40,7 @@
 # =============================================================================
 
 # --- stage 1: production dependencies only ----------------------------------
-FROM oven/bun:1.3.14-slim AS deps
+FROM oven/bun:1.4.0-slim AS deps
 WORKDIR /src
 COPY package.json bun.lock ./
 # --production drops puppeteer-core (dev-only, headless parity tests);
@@ -65,7 +65,7 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 #
 # node_modules is borrowed from `deps` for the graph check, then removed, so
 # the `COPY --from=src /src/ ./` in the runtime stage carries sources only.
-FROM oven/bun:1.3.14-slim AS src
+FROM oven/bun:1.4.0-slim AS src
 WORKDIR /src
 COPY package.json bun.lock ./
 COPY server ./server
@@ -76,23 +76,20 @@ RUN bun build --target=bun --outdir=/tmp/graph server/index.ts > /dev/null \
 
 
 # --- stage 3: runtime -------------------------------------------------------
-FROM oven/bun:1.3.14-slim AS runtime
+FROM oven/bun:1.4.0-slim AS runtime
 LABEL org.opencontainers.image.source="https://github.com/zees-dev/z-notes"
 
-# Three packages, each earning its place:
+# Two packages, each earning its place:
 #   git             — hard runtime dependency: git sync shells out to `git`
 #                     via Bun.spawn.
 #   ca-certificates — what lets that git push to GitHub over HTTPS.
-#   procps          — `ps`, which terminal.ts's killTree() walks to signal a
-#                     cancelled command's whole process subtree (Bun.spawn has
-#                     no detached/setsid). Without it cancel degrades to
-#                     signalling the shell only, and a `sleep 300` child keeps
-#                     the output stream open after the user pressed Ctrl+C.
 # Nothing else is installed — in particular no curl/wget, because the k8s
 # probes are httpGet (the kubelet makes the request, not the container) and
-# the plain-docker HEALTHCHECK below uses the bun that is already here.
+# the plain-docker HEALTHCHECK below uses the bun that is already here; and no
+# procps, because terminal.ts spawns the shell `detached: true` and cancels it
+# by process group, rather than walking a `ps` table to find its children.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates procps \
+ && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

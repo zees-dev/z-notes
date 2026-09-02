@@ -1,15 +1,16 @@
 /* ============================================================
    terminal.ts — the password-locked command runner.
 
-   WHAT THIS IS, PRECISELY. Bun 1.3.14 has no PTY: `Bun.spawn(…, {pty:true})`
-   is ignored and the child reports "not a tty", and node-pty is a native addon,
-   which this project forbids. So this is NOT a terminal emulator and never
-   claims to be one. It is a STREAMING COMMAND RUNNER:
+   WHAT THIS IS, PRECISELY. Bun 1.4 does have a PTY (`Bun.spawn({terminal})`),
+   but it merges stdout and stderr into ONE stream, and this API's contract
+   (docs/specs/done/0002-http-api-v0.md § Terminal) streams them as separate
+   SSE events. So the runner stays pipe-based, and this is NOT a terminal
+   emulator and never claims to be one. It is a STREAMING COMMAND RUNNER:
 
-     - one command at a time, `Bun.spawn([shell, "-lc", wrapper])`
+     - one command at a time, `Bun.spawn([shell, "-lc", wrapper], {detached})`
      - stdout and stderr streamed live, tagged, as they arrive
      - the child's stdin is writable, so a `y/N` prompt or a here-doc still works
-     - cancel = SIGTERM to the whole process subtree, SIGKILL after a grace
+     - cancel = SIGTERM to the whole process group, SIGKILL after a grace
      - the working directory PERSISTS between commands
 
    Full-screen TUIs (vim, htop, `git rebase -i`) cannot work without a TTY and
@@ -553,54 +554,30 @@ export class Terminal {
   }
 
   /**
-   * Kill a process and everything it started.
+   * Signal a command's whole process group.
    *
-   * `proc.kill()` reaches the shell only. The shell is not a process group
-   * leader (Bun.spawn has no `detached`, and there is no `setsid` on macOS), so
-   * there is no group to signal — a `sleep 300` would be reparented to init and
-   * keep the pipes open, and the stream reader would wait on a command the user
-   * already cancelled. Walking `ps` is the portable way to reach the subtree on
-   * both macOS and Linux, and it costs one process on a path that only runs
-   * when someone presses Ctrl+C.
+   * `proc.kill()` reaches the shell only — a `sleep 300` it started would be
+   * reparented to init and keep the pipes open, and the stream reader would
+   * wait on a command the user already cancelled. The shell is spawned
+   * `detached: true`, which makes it its own group leader (pgid == pid), so the
+   * negative pid reaches every process the command started, on macOS and in the
+   * container alike, with no `ps` to parse and no `procps` in the image.
+   *
+   * The fallback is for the one case the group cannot answer: it is already
+   * gone (ESRCH), or a platform without groups. Signalling the pid alone is
+   * then the most that could ever have been done.
    */
-  private async killTree(pid: number, signal: NodeJS.Signals) {
-    const kids = new Map<number, number[]>();
+  private signalGroup(pid: number, signal: NodeJS.Signals) {
     try {
-      const ps = Bun.spawn(["ps", "-A", "-o", "pid=,ppid="], { stdout: "pipe", stderr: "ignore" });
-      const text = await new Response(ps.stdout).text();
-      for (const line of text.split("\n")) {
-        const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
-        if (!m) continue;
-        const child = Number(m[1]);
-        const parent = Number(m[2]);
-        const list = kids.get(parent);
-        if (list) list.push(child);
-        else kids.set(parent, [child]);
-      }
+      process.kill(-pid, signal);
     } catch {
-      // no ps: fall through and signal the direct child only
-    }
-    const targets: number[] = [];
-    const walk = (p: number) => {
-      for (const c of kids.get(p) || []) {
-        if (c === p || targets.includes(c)) continue;
-        targets.push(c);
-        walk(c);
-      }
-    };
-    walk(pid);
-    // deepest first, then the shell itself
-    for (const t of targets.reverse()) {
       try {
-        process.kill(t, signal);
+        process.kill(pid, signal);
       } catch {}
     }
-    try {
-      process.kill(pid, signal);
-    } catch {}
   }
 
-  /** SIGTERM the subtree now, SIGKILL it if it is still there after the grace. */
+  /** SIGTERM the group now, SIGKILL it if it is still there after the grace. */
   async cancel(token: string | null, id?: string): Promise<{ cancelled: boolean; id: string | null }> {
     this.authed(token);
     const run = this.running;
@@ -608,12 +585,12 @@ export class Terminal {
     return this.cancelRun(run);
   }
 
-  private async cancelRun(run: Running): Promise<{ cancelled: boolean; id: string }> {
+  private cancelRun(run: Running): { cancelled: boolean; id: string } {
     run.killed = true;
-    await this.killTree(run.proc.pid, "SIGTERM");
+    this.signalGroup(run.proc.pid, "SIGTERM");
     if (!run.killTimer) {
       run.killTimer = setTimeout(() => {
-        this.killTree(run.proc.pid, "SIGKILL").catch(() => {});
+        this.signalGroup(run.proc.pid, "SIGKILL");
       }, KILL_GRACE_MS);
     }
     return { cancelled: true, id: run.id };
@@ -692,6 +669,8 @@ export class Terminal {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
+        // its own process group, so cancel can reach everything it starts
+        detached: true,
       });
     } catch (err) {
       rmSync(tmpDir, { recursive: true, force: true });
@@ -702,7 +681,7 @@ export class Terminal {
     this.running = run;
     run.hardTimer = setTimeout(() => {
       emit({ event: "notice", data: { message: `Still running after ${Math.round(MAX_COMMAND_MS / 60000)} minutes — killing it.` } });
-      this.cancelRun(run).catch(() => {});
+      this.cancelRun(run);
     }, MAX_COMMAND_MS);
 
     let streamed = 0;
@@ -846,7 +825,7 @@ export class Terminal {
          late must never reach past its own command. */
       onCancel: () => {
         const run = this.running;
-        if (run && run.id === id) this.cancelRun(run).catch(() => {});
+        if (run && run.id === id) this.cancelRun(run);
       },
     });
   }
@@ -928,7 +907,7 @@ export class Terminal {
          arrives late must never reach past its own command. */
       onCancel: () => {
         const run = this.running;
-        if (run && run.id === rec.id) this.cancelRun(run).catch(() => {});
+        if (run && run.id === rec.id) this.cancelRun(run);
       },
     });
   }
@@ -1024,7 +1003,7 @@ export class Terminal {
   stop() {
     const run = this.running;
     if (run) {
-      this.killTree(run.proc.pid, "SIGKILL").catch(() => {});
+      this.signalGroup(run.proc.pid, "SIGKILL");
       if (run.killTimer) clearTimeout(run.killTimer);
       if (run.hardTimer) clearTimeout(run.hardTimer);
       try {

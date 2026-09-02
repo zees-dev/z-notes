@@ -1275,10 +1275,12 @@ if it is on the stack — revert first. → `200 { "proposal": … }`.
 ### Terminal *(SPEC §13)*
 
 A password-locked **streaming command runner** on the machine the vault lives on. It is not a
-terminal emulator and does not pretend to be one: bun has no PTY, so full-screen and
-interactive-editor programs (`vim`, `htop`, `less`, `git rebase -i`, `git commit` with no
-`-m`) cannot work. One command runs at a time, its stdout and stderr stream separately, its
-stdin is writable, and the **working directory persists between commands**.
+terminal emulator and does not pretend to be one: the runner is deliberately not a PTY
+(Bun's PTY merges stdout and stderr, which this contract streams separately), so
+full-screen and interactive-editor programs (`vim`, `htop`, `less`, `git rebase -i`,
+`git commit` with no `-m`) cannot work. One command runs at a time, its stdout and stderr
+stream separately, its stdin is writable, and the **working directory persists between
+commands**.
 
 The pager and the editor a tool *invokes* are neutralised (`TERM=dumb`, `PAGER`/`GIT_PAGER`,
 `GIT_EDITOR`), but a TUI the user invokes **directly** simply blocks on stdin: it has to be

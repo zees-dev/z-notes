@@ -36,7 +36,7 @@ One Bun process serves a no-build frontend, JSON/SSE API, client-side (age) secr
 
 ```sh
 bun run dev          # bun --hot server/index.ts on :4700
-bun test             # full suite (~12 min: spawns servers + headless Chromium)
+bun test             # full suite (~5 min at --parallel=4: servers + headless Chromium)
 bun test tests/X.test.ts   # one file — do this while iterating
 bun run gates        # the 6 acceptance gates (~70 s) — run before every commit
 bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
@@ -76,7 +76,7 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
   plural: the primary keeps today's bare paths and all app-level state,
   secondary vaults are `@id/`-prefixed stacks under the vaults home, and `@` is
   a reserved path segment. 0019 makes explicit extensions literal, 0020 puts
-  moves on history, 0021 defines Preview's tested Markdown dialect, 0022 makes asking before a dirty Raw exit a default-on preference, 0023 folds Preview's sections without touching a byte, 0024 drags a folder with its subtree, 0025 moves the chat panel's second chord to ⌥C so ⌘C is always copy, 0026 makes sync bidirectional on the one auto-sync switch — upstream is polled, taken fast-forward-only, and "Sync" is a verb on the vault row — 0027 makes a mode switch keep the source line you were on, measured rather than multiplied, so click-to-edit does not move the document, and 0028 gives the one search box a second language — `/pattern/flags` (or `mode=regex`) is a regex, the palette's chips report which mode actually ran, and a document is rejected whole before its lines are scored.
+  moves on history, 0021 defines Preview's tested Markdown dialect, 0022 makes asking before a dirty Raw exit a default-on preference, 0023 folds Preview's sections without touching a byte, 0024 drags a folder with its subtree, 0025 moves the chat panel's second chord to ⌥C so ⌘C is always copy, 0026 makes sync bidirectional on the one auto-sync switch — upstream is polled, taken fast-forward-only, and "Sync" is a verb on the vault row — 0027 makes a mode switch keep the source line you were on, measured rather than multiplied, so click-to-edit does not move the document, and 0028 gives the one search box a second language — `/pattern/flags` (or `mode=regex`) is a regex, the palette's chips report which mode actually ran, and a document is rejected whole before its lines are scored. 0029 makes the proposal diff in-house — a line-level Myers diff in `server/ai-edits.ts`, bounded by a 1s deadline rather than by input size, and the `diff` package is gone.
 
 ## Workflow
 
@@ -95,5 +95,5 @@ durable decision to an ADR in the same change.
   greps the source of all three `ai*.ts` modules to prove it.
 - One deploy replica, ever (sqlite + fs.watch + git working tree; see
   `deploy/k3s/20-deployment.yaml`).
-- Zero runtime deps beyond `age-encryption` and `diff`; no frontend
-  build step. Adding a dependency is an ADR-sized decision.
+- Zero runtime deps beyond `age-encryption`; no frontend build step.
+  Adding a dependency is an ADR-sized decision.

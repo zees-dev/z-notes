@@ -24,7 +24,6 @@
    artifact does not — the one drift that would otherwise be silent.
    ============================================================ */
 
-import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -56,7 +55,7 @@ if (!built.success || !built.outputs.length) {
 }
 
 const js = await built.outputs[0].text();
-const sha = createHash("sha256").update(js).digest("hex");
+const sha = new Bun.CryptoHasher("sha256").update(js).digest("hex");
 
 /* The banner is CONTRACT, not decoration: `tests/mermaid.test.ts` parses the
    version out of it. Keep the shape, and keep it a comment a minifier upstream

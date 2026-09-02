@@ -781,10 +781,10 @@ export class GitSync {
       }
       const [out, err] = pipes;
       const code = await proc.exited;
-      /* NOT `proc.killed`: Bun 1.3.14 sets that to true for EVERY reaped child,
-         including `exit 0` (measured). Reading it as "we killed it" turned an
-         ordinary rejected push into a bogus 30s-timeout report and skipped the
-         rebase retry entirely. The timeout kill is the pair
+      /* NOT `proc.killed`: Bun (measured on 1.3.14 and 1.4.0) sets that to true
+         for EVERY reaped child, including `exit 0`. Reading it as "we killed
+         it" turned an ordinary rejected push into a bogus 30s-timeout report
+         and skipped the rebase retry entirely. The timeout kill is the pair
          exitCode === null + signalCode set. */
       const timedOut = proc.exitCode === null && proc.signalCode != null;
       return {

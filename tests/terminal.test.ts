@@ -559,21 +559,25 @@ describe("terminal — running commands", () => {
     const srv = await newServer();
     const token = await armed(srv);
 
-    /* `echo go` proves the child is alive and streaming; the `sleep` is the
-       thing that must die. A marker in the sleep's argv makes it findable in
-       `ps` afterwards — a SIGTERM to the shell alone leaves it holding the
-       pipes, which is the bug this guards. */
-    const marker = `znotes-cancel-canary-${Date.now()}`;
-    let cancelled = false;
+    /* The backgrounded `sleep` is the thing that must die, and `$!` makes it
+       nameable: the command prints its pid, so the assertion below is about
+       THAT process rather than about a string in a `ps` table. A SIGTERM to the
+       shell alone leaves the sleep alive holding the pipes, which is the bug
+       this guards; the shell is spawned into its own process group so that one
+       signal reaches both. */
+    let child = 0;
     const started = Date.now();
     const r = await execStream(
       srv,
       token,
-      { command: `echo go; sleep 300 # ${marker}` },
+      { command: `sleep 300 & echo child=$!; wait` },
       {
-        onFrame: (f) => {
-          if (f.event !== "stdout" || cancelled) return;
-          cancelled = true;
+        onFrame: (_f, all) => {
+          if (child) return;
+          const out = all.map((x) => (x.event === "stdout" ? x.data?.chunk ?? "" : "")).join("");
+          const m = /child=(\d+)\n/.exec(out);
+          if (!m) return;
+          child = Number(m[1]);
           srv.api("POST", "/api/terminal/cancel", {}, auth(token)).catch(() => {});
         },
       }
@@ -581,17 +585,23 @@ describe("terminal — running commands", () => {
     await r.finished;
     const elapsed = Date.now() - started;
 
-    expect(`cancel was issued: ${cancelled}`).toBe("cancel was issued: true");
-    expect(r.stdout.trim()).toBe("go");
+    expect(`the child pid was reported: ${child > 0}`).toBe("the child pid was reported: true");
     expect(`the 300s sleep ended in ${elapsed}ms (<20000): ${elapsed < 20000}`).toBe(
       `the 300s sleep ended in ${elapsed}ms (<20000): true`
     );
     expect(`exit signal: ${r.exit?.signal}`).toBe("exit signal: SIGTERM");
 
-    /* the subtree really died — an orphan would still be in the process table */
-    await sleep(300);
-    const ps = await new Response(Bun.spawn(["ps", "-A", "-o", "args="], { stdout: "pipe" }).stdout).text();
-    expect(`an orphan survived cancel: ${ps.includes(marker)}`).toBe("an orphan survived cancel: false");
+    /* the grandchild really died — `kill(pid, 0)` throws only once it is gone */
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i++) {
+      try {
+        process.kill(child, 0);
+        await sleep(100);
+      } catch {
+        alive = false;
+      }
+    }
+    expect(`the backgrounded sleep survived cancel: ${alive}`).toBe("the backgrounded sleep survived cancel: false");
 
     /* and the runner is usable again immediately */
     const after = await exec(srv, token, "echo still-here");

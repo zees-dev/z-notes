@@ -67,7 +67,7 @@ The repo is documentation-heavy on purpose: [AGENTS.md](AGENTS.md) is the map,
 the specs that drove each change — including
 [the normative HTTP/SSE contract](docs/specs/done/0002-http-api-v0.md).
 
-Runtime dependencies are exactly two: `age-encryption` and `diff`. There is no
+There is exactly one runtime dependency, `age-encryption`. There is no
 frontend build step. Adding a dependency is an ADR-sized decision.
 
 ## License

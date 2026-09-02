@@ -17,7 +17,6 @@
    contract-tested end-to-end (tests/ai.test.ts, tests/ai-e2e.test.ts).
    ============================================================ */
 
-import { structuredPatch } from "diff";
 import { intersectsAgeFence, safePath } from "./vault.ts";
 
 /**
@@ -371,6 +370,178 @@ export function applyEditToText(cur: string, e: EditSpec): { ok: true; post: str
    Unified diff — the `diff` array on a proposal object
    ============================================================ */
 
+/** A trailing newline ENDS the last line; it does not open an empty one. */
+const splitLines = (s: string): string[] => (s === "" ? [] : (s.endsWith("\n") ? s.slice(0, -1) : s).split("\n"));
+
+/** one stretch of the edit script: kind −1 gone from `pre`, +1 new in `post`, 0 common to both */
+interface Run {
+  kind: -1 | 0 | 1;
+  count: number;
+}
+
+/**
+ * Myers' O(N·D) line diff in its linear-space form (his §4b): find the middle
+ * snake of an optimal path by running the greedy search from both ends until
+ * they meet, then recurse on the two halves. Null once `deadline` — a
+ * `performance.now()` reading — has passed.
+ *
+ * The textbook form is the forward search alone, keeping every V array it
+ * wrote so it can walk the path back afterwards. That trace is O(D²): on the
+ * very input the deadline exists for it reaches 1.5GB inside the 1s budget,
+ * twice what the pod may have (768Mi, deploy/k3s/20-deployment.yaml) — the
+ * bound that is there to keep the one replica alive would be what killed it.
+ * This form carries two V arrays and nothing else.
+ */
+function editRuns(a: string[], b: string[], deadline: number): Run[] | null {
+  const runs: Run[] = [];
+  const push = (kind: -1 | 0 | 1, count: number) => {
+    if (count <= 0) return;
+    const last = runs[runs.length - 1];
+    if (last && last.kind === kind) last.count += count;
+    else runs.push({ kind, count });
+  };
+
+  /* one pair of V arrays for the whole recursion: `off` is diagonal 0, and no
+     sub-problem reaches further out than half its own size */
+  const off = a.length + b.length + 1;
+  const vf = new Int32Array(2 * off + 1);
+  const vr = new Int32Array(2 * off + 1);
+  let expired = false;
+
+  /** the middle snake as [x, y, u, v] — its start and end, relative to (a0, b0) */
+  const middle = (a0: number, n: number, b0: number, m: number): [number, number, number, number] => {
+    const delta = n - m;
+    const odd = (delta & 1) !== 0;
+    vf[off + 1] = 0;
+    vr[off + 1] = 0;
+    const half = Math.ceil((n + m) / 2);
+    for (let d = 0; d <= half; d++) {
+      if (performance.now() > deadline) break;
+      for (let k = -d; k <= d; k += 2) {
+        /* the greedy step: extend the further-along neighbouring diagonal */
+        let x = k === -d || (k !== d && vf[off + k - 1]! < vf[off + k + 1]!) ? vf[off + k + 1]! : vf[off + k - 1]! + 1;
+        let y = x - k;
+        const sx = x;
+        const sy = y;
+        while (x < n && y < m && a[a0 + x] === b[b0 + y]) {
+          x++;
+          y++;
+        }
+        vf[off + k] = x;
+        /* the reverse search is one step behind, so only diagonals it has
+           already reached can be met on an odd delta */
+        if (odd && delta - k >= 1 - d && delta - k <= d - 1 && x + vr[off + delta - k]! >= n) return [sx, sy, x, y];
+      }
+      for (let k = -d; k <= d; k += 2) {
+        let x = k === -d || (k !== d && vr[off + k - 1]! < vr[off + k + 1]!) ? vr[off + k + 1]! : vr[off + k - 1]! + 1;
+        let y = x - k;
+        const sx = x;
+        const sy = y;
+        while (x < n && y < m && a[a0 + n - x - 1] === b[b0 + m - y - 1]) {
+          x++;
+          y++;
+        }
+        vr[off + k] = x;
+        if (!odd && delta - k >= -d && delta - k <= d && x + vf[off + delta - k]! >= n) return [n - x, m - y, n - sx, m - sy];
+      }
+    }
+    /* the two searches provably meet within `half` steps, so the loop only
+       falls out of the bottom when the deadline broke it */
+    expired = true;
+    return [0, 0, 0, 0];
+  };
+
+  const walk = (a0: number, n: number, b0: number, m: number): void => {
+    /* the shared head and tail are free, and shedding them is what keeps the
+       ordinary edit — a handful of lines inside a long note — linear */
+    let head = 0;
+    while (head < n && head < m && a[a0 + head] === b[b0 + head]) head++;
+    push(0, head);
+    a0 += head;
+    b0 += head;
+    n -= head;
+    m -= head;
+    let tail = 0;
+    while (tail < n && tail < m && a[a0 + n - tail - 1] === b[b0 + m - tail - 1]) tail++;
+    n -= tail;
+    m -= tail;
+    /* with head and tail gone the two sides share neither first nor last line,
+       so what is left is either one-sided or at least two edits deep — which is
+       what makes both halves of the split strictly smaller than this call */
+    if (n === 0 || m === 0) {
+      push(-1, n);
+      push(1, m);
+    } else {
+      const [x, y, u, v] = middle(a0, n, b0, m);
+      if (expired) return;
+      walk(a0, x, b0, y);
+      if (expired) return;
+      push(0, u - x);
+      walk(a0 + u, n - u, b0 + v, m - v);
+      if (expired) return;
+    }
+    push(0, tail);
+  };
+
+  walk(0, a.length, 0, b.length);
+  return expired ? null : runs;
+}
+
+/** Line-level Myers diff → hunks of rows (`"+text"`, `"-text"`, `" text"`), or null past the deadline. */
+function lineHunks(pre: string, post: string, context: number, deadlineMs: number): string[][] | null {
+  const a = splitLines(pre);
+  const b = splitLines(post);
+  const runs = editRuns(a, b, performance.now() + deadlineMs);
+  if (!runs) return null;
+
+  const hunks: string[][] = [];
+  let rows: string[] | null = null; // the open hunk
+  let lead: string[] = []; // the tail of the last common stretch — context for the next one
+  let ai = 0;
+  let bi = 0;
+  for (let i = 0; i < runs.length; ) {
+    const run = runs[i]!;
+    if (run.kind === 0) {
+      const common = a.slice(ai, ai + run.count);
+      ai += run.count;
+      bi += run.count;
+      i++;
+      if (rows) {
+        /* a gap two contexts wide or less would print as context twice over,
+           so it stays inside the hunk; a wider one — or the end — closes it */
+        if (common.length <= context * 2 && i < runs.length) {
+          for (const l of common) rows.push(" " + l);
+        } else {
+          for (const l of common.slice(0, context)) rows.push(" " + l);
+          hunks.push(rows);
+          rows = null;
+        }
+      }
+      lead = common.slice(common.length - context);
+      continue;
+    }
+    /* one change region, however the path threaded it: every line it drops,
+       then every line it adds — the order a unified diff reads in */
+    const gone: string[] = [];
+    const fresh: string[] = [];
+    for (; i < runs.length && runs[i]!.kind !== 0; i++) {
+      const r = runs[i]!;
+      if (r.kind === -1) {
+        for (const l of a.slice(ai, ai + r.count)) gone.push(l);
+        ai += r.count;
+      } else {
+        for (const l of b.slice(bi, bi + r.count)) fresh.push(l);
+        bi += r.count;
+      }
+    }
+    if (!rows) rows = lead.map((l) => " " + l);
+    for (const l of gone) rows.push("-" + l);
+    for (const l of fresh) rows.push("+" + l);
+  }
+  if (rows) hunks.push(rows);
+  return hunks;
+}
+
 export function buildDiff(files: FileImage[]): { diff: Array<{ marker: string; text: string }>; added: number; removed: number } {
   const diff: Array<{ marker: string; text: string }> = [];
   let added = 0;
@@ -384,19 +555,17 @@ export function buildDiff(files: FileImage[]): { diff: Array<{ marker: string; t
   };
   for (const f of files) {
     if (files.length > 1) push(" ", `— ${f.path} —`);
-    /* THE TIMEOUT IS LOAD-BEARING, not tidiness. Myers is O(N·D), and `f.post`
+    /* THE DEADLINE IS LOAD-BEARING, not tidiness. Myers is O(N·D), and `f.post`
        is a post-image the MODEL wrote — a `rewrite` of a long note is a
        perfectly ordinary request whose two sides share almost no lines, which
-       is the worst case. Measured, unbounded: 4k lines/side = 3.4s, 10k lines
-       = 19.9s. There is one replica, ever (deploy/k3s/20-deployment.yaml), so
-       that is the whole server stopped, on a request nobody meant as an
-       attack. Bounded at 1s the same input bails in ~1s and the user gets a
-       proposal with no rendered diff instead of a dead app.
-
-       Passing `timeout` switches jsdiff to its abortable overload: the return
-       type becomes `| undefined`, which is what forces the branch below. */
-    const patch = structuredPatch(f.path, f.path, f.pre, f.post, "", "", { context: 2, timeout: 1000 });
-    if (!patch) {
+       is the worst case. Measured, unbounded: 10k lines/side = 0.6s, 20k =
+       2.4s, 40k = 13.1s. There is one replica, ever
+       (deploy/k3s/20-deployment.yaml), so that is the whole server stopped, on
+       a request nobody meant as an attack. Bounded at 1s the same input bails
+       in ~1s (and inside 100MB of RSS) and the user gets a proposal with no
+       rendered diff instead of a dead app. */
+    const hunks = lineHunks(f.pre, f.post, 2, 1000);
+    if (!hunks) {
       /* The diff is a VIEW of the proposal, never the proposal itself — the
          edits are already applied to `f.post` and are what Accept writes. So a
          diff that cannot be computed in time costs the preview, not the edit,
@@ -404,9 +573,8 @@ export function buildDiff(files: FileImage[]): { diff: Array<{ marker: string; t
       push(" ", `— ${f.path}: diff too large to render; the edit itself is unaffected —`);
       continue;
     }
-    for (const h of patch.hunks) {
-      for (const line of h.lines) {
-        if (line.startsWith("\\")) continue; // "\ No newline at end of file"
+    for (const h of hunks) {
+      for (const line of h) {
         const marker = line[0] === "+" || line[0] === "-" ? line[0] : " ";
         if (marker === "+") added++;
         if (marker === "-") removed++;
