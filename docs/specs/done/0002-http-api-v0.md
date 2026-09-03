@@ -1664,6 +1664,12 @@ The server does **not** check that the doc exists — the client already has the
 say "no such doc" without a round trip, and a 404 shell would be a broken page rather than
 an app that can say so. `GET` and `HEAD` only; anything else is `405`.
 
+Every shell response — here, at `/` and at `/settings*` — also carries
+`Origin-Agent-Cluster: ?1` and `Permissions-Policy: tools=(self)`: Chrome refuses to register
+the app's WebMCP tools (ADR 0031) unless the document's agent cluster is origin-keyed and the
+`tools` permission is delegated to the origin itself, and it says nothing about why. Static
+assets and API replies carry neither.
+
 Because the shell is served from more than one depth, `index.html` carries `<base href="/">`
 — that is what keeps `./app.js`, `./themes/*.css` and, through `import.meta.url`, the API
 root in `api.js` and the crypto worker's URL resolving against the app root instead of

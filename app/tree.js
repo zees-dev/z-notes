@@ -960,6 +960,35 @@ export function startCreate(kind, where) {
 }
 
 /**
+ * MAKE ONE ENTRY — the single create transaction.
+ *
+ * Four routes mint a doc or a folder (the inline row, a broken `[[link]]`, a
+ * dropped file, a tool call), and each of them used to spell out the same four
+ * steps: create, remember it on the timeline (ADR 0014), open the folder it
+ * landed in, reload the tree. What stays with the CALLER is the chrome: an
+ * inline row answers a refusal in its own error line, a tool answers with
+ * data, and neither one wants the other's toast.
+ *
+ * `open` opens the new doc in Raw — what every human create route does, and
+ * what no folder route can.
+ */
+export async function mintEntry({ path, kind, markdown }, { open } = {}) {
+  const type = kind === "folder" ? "folder" : "doc";
+  const text = type === "folder" ? "" : String(markdown == null ? "" : markdown);
+  const r = await api.createEntry({ path, type, markdown: text });
+  rememberFileOp({ kind: "create", path, type, markdown: text });
+  /* the intermediate folders were made server-side; open them here so the new
+     entry is visible in the tree rather than buried in a collapsed subtree */
+  revealFolder(type === "folder" ? path : dirname(path));
+  await loadTree();
+  if (open && type === "doc") {
+    await openDoc(path);
+    setMode("raw", { silent: true, caret: 0 });
+  }
+  return r;
+}
+
+/**
  * Do the create the parsed plan describes.
  *
  * The row stays OPEN and mounted for the whole round trip and is only retired
@@ -977,7 +1006,7 @@ async function commitCreate(plan) {
   c.error = null;
   renderTree();
   try {
-    await api.createEntry({ path: plan.path, type: plan.kind, markdown: "" });
+    await mintEntry({ path: plan.path, kind: plan.kind }, { open: plan.kind !== "folder" });
   } catch (err) {
     if (state.creating !== c) return;
     c.busy = false;
@@ -988,20 +1017,18 @@ async function commitCreate(plan) {
     renderTree();
     return;
   }
+  /* retired AFTER the mint, not before it: the busy row is what the user looks
+     at for the whole round trip, and `inlineRow` declines the caret while it is
+     disabled, so the tree reload inside `mintEntry` redraws it without taking
+     focus back off the doc that just opened */
   state.creating = null;
-  rememberFileOp({ kind: "create", path: plan.path, type: plan.kind, markdown: "" });
-  /* the intermediate folders were made server-side; open them here so the new
-     entry is visible in the tree rather than buried in a collapsed subtree */
-  revealFolder(plan.kind === "folder" ? plan.path : dirname(plan.path));
-  await loadTree();
   if (plan.kind === "folder") {
     state.pick = { path: plan.path, kind: "folder" };
     renderTree();
     toast("Folder " + plan.path + " created");
     return;
   }
-  await openDoc(plan.path);
-  setMode("raw", { silent: true, caret: 0 });
+  renderTree();
   toast("Created " + plan.path);
 }
 
@@ -1026,11 +1053,7 @@ export async function createFromLink(name) {
   const here = relOf(dirname(state.active || ""));
   const path = prefix + withDefaultExtension(t.indexOf("/") >= 0 ? t : (here ? here + "/" : "") + t);
   try {
-    await api.createEntry({ path, type: "doc", markdown: "# " + t.split("/").pop() + "\n\n" });
-    rememberFileOp({ kind: "create", path, type: "doc", markdown: "" });
-    await loadTree();
-    await openDoc(path);
-    setMode("raw", { silent: true });
+    await mintEntry({ path, kind: "doc", markdown: "# " + t.split("/").pop() + "\n\n" }, { open: true });
     toast("Created " + path);
   } catch (err) {
     if (err && err.code === "exists") {
@@ -1142,6 +1165,15 @@ export async function commitRename(node, value) {
   return moveEntry(node, to);
 }
 
+/** Move whatever is AT `from` — a path is all the caller has. The tree is what
+    says whether it is a doc or a folder, so a path it does not know is a
+    `not-found` here rather than a PATCH the server has to refuse. */
+export async function moveByPath(from, to) {
+  const at = treeLocate(from);
+  if (!at) throw new api.ApiError(404, { error: "not-found", message: "No such doc or folder: " + from });
+  return moveEntry(at.list[at.index], to);
+}
+
 /** The ONE client move transaction, shared by inline rename, drag/drop and the
     inverse/forward halves of history. `noRecord` is what makes applying history
     move the existing entry between stacks instead of recursively minting one. */
@@ -1222,7 +1254,10 @@ async function moveEntry(node, to, opts) {
         to +
         (n ? " · " + n + " link" + (n === 1 ? "" : "s") + " rewritten" : "")
     );
-    return true;
+    /* the PATCH response, not `true`: every caller here tests `!== false`, and
+       what the move actually did — the canonical path, how many `[[link]]`s
+       were rewritten — is worth carrying back to whoever asked for it */
+    return r;
   } catch (err) {
     renderTree();
     if (err && err.code === "exists") {
@@ -1586,7 +1621,7 @@ export function applyFileHistory(entry, undoing) {
   });
 }
 
-async function doDelete(path, kind, opts) {
+export async function doDelete(path, kind, opts) {
   const affects = state.active === path || (kind === "folder" && state.active && state.active.indexOf(path + "/") === 0);
   /* Confirming a delete is also an attempt to leave the active Raw buffer.
      Ask the delete question first, then the staged-diff question: Keep editing

@@ -82,7 +82,7 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   `armor.js`, `entropy.js`, `crypto-worker.js` (the plaintext jail). Leaves
   import only leaves.
 - **Features** — `tree, editor, markdown, secrets, chat, terminal, trash,
-  settings, shell`, composed by `app.js` (`start()`). These are mutually
+  settings, shell, webmcp`, composed by `app.js` (`start()`). These are mutually
   entangled (14 mutual import pairs, a legacy of the single-file split); new
   cross-feature needs should go through `state.js`, an injected callback, or a
   DOM event rather than adding pairs. No `export let` anywhere in `app/`.
@@ -97,6 +97,21 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   builds either. `/vendor/` is the one URL prefix with two answers behind it:
   `age.<hash>.js` is built in memory at boot and has no file, everything else
   is an ordinary file under `app/vendor/`.
+
+**Agents.** `webmcp.js` is the agent's `app.js` (ADR 0031). One table registers
+every operation the human UI offers as a WebMCP tool, each wrapping the same
+feature function the click or the chord calls — which is why the open buffer,
+the undo timeline, the tree and the address bar follow a tool call exactly as
+they follow a gesture. `app.js` calls `registerWebMcpTools()` last in `start()`,
+and nothing else imports the module. Registration goes to the browser's own door
+first and never replaces one: `document.modelContext` when it exists, else
+`navigator.modelContext` when it can `registerTool`. When `document.modelContext`
+is absent the module also DEFINES it over the same table, which is how the e2e
+suite — and any DevTools-driven agent — reads the catalogue on a Chromium that
+has never heard of WebMCP. Errors are data: a tool never throws, and a failure is
+`{error, message, ...extra}` in the API's own shape (ADR 0002), because the spec
+has no settled way to plumb a rejection back to the caller. No tool decrypts,
+reveals or takes a passphrase.
 
 Two guards on leaving a surface with unsaved work, and they are twins — same
 shape, same `proceed` callback re-issuing the caller's own action with a force
@@ -122,8 +137,9 @@ a phone. `shell.js onPop` is the one place that order is written down.
 
 The suite is black-box first: `tests/helpers.ts` boots the real server per
 test, `tests/browser.ts` drives real Chromium. `markdown-e2e.test.ts` is the
-one broad Preview-dialect map (ADR 0021). Three tests enforce structure
+one broad Preview-dialect map (ADR 0021). Four tests enforce structure
 as source-text assertions (see `docs/style.md` gotchas): the no-crypto-import
-rule, the AI-has-no-delete rule, and the `OPS` operation set. Direct unit
+rule, the AI-has-no-delete rule, the `OPS` operation set, and the tool
+catalogue's own no-secrets rule (ADR 0031). Direct unit
 tests exist only where a seam is pure (`links.test.ts`, `armor`, `entropy`,
 `gitunit`, `index-recovery`).

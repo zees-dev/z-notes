@@ -89,11 +89,13 @@ scar": many comments cite the bug that forced the shape
   meant that on 1.3 it had been passing while exercising nothing, because the
   unparseable file it built was discarded for defaults. A fixture that feeds a
   PARSER should assert that its own input parses.
-- **Three tests assert on source text**, not behavior: `secrets.test.ts`
+- **Four tests assert on source text**, not behavior: `secrets.test.ts`
   (no `age-encryption` import in `server/`), `fileops.test.ts` (no
   rename/delete identifiers in the `ai*.ts` modules; the `OPS` set literal in
-  `ai-edits.ts`), `themes-tokens.test.ts` (CSS token discipline). Reformatting
-  those regions can fail CI without a behavior change — read the test first.
+  `ai-edits.ts`), `themes-tokens.test.ts` (CSS token discipline) and
+  `webmcp.test.ts` (no decrypt/reveal/passphrase identifier in `app/webmcp.js`,
+  and every tool name legal and declared once). Reformatting those regions can
+  fail CI without a behavior change — read the test first.
 - **`bun --hot` keeps `globalThis`** across reloads; module-level state that
   must survive dev reloads relies on this. Don't move it into closures
   casually.

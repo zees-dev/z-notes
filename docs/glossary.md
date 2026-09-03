@@ -118,3 +118,8 @@ entry lists banned synonyms where drift has happened or is likely.
   heartbeat). One bus for every vault.
 - **gates** — the five acceptance suites (`bun run gates`).
 - **seam** — a boundary tests go through; prefer the highest existing seam.
+- **tool** — a WebMCP tool: one named, schema'd operation registered by
+  `app/webmcp.js` on `document.modelContext` (ADR 0031). NOT the AI relay's
+  upstream tool calls — those stay **edits** and **proposals**.
+- **agent** — whatever calls tools through `document.modelContext`: the
+  browser's own agent, an extension, or a test driving `executeTool`.

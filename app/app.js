@@ -27,6 +27,7 @@ import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal,
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
 import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
+import { registerWebMcpTools } from "./webmcp.js";
 
 /* ============================================================
    EVENT WIRING
@@ -949,6 +950,11 @@ export async function start() {
     paintVaultChip();
     repaintSecretsUI();
   });
+
+  /* THE AGENT'S DOOR, last: `webmcp.js` registers every operation above as a
+     tool (ADR 0031), and it needs nothing from the probes it follows — a
+     browser with no agent in it pays for one loop over a table. */
+  registerWebMcpTools();
 }
 
 /** First leaf `ok` accepts, folders descended into — never a folder path. One

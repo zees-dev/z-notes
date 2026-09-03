@@ -327,18 +327,35 @@ async function applyProposal(id, undo) {
       if (sc) sc.scrollTop = sc.scrollHeight;
     }
   } catch (err) {
-    if (err && err.code === "not-stack-top") {
-      toast(err.message);
-      return;
-    }
-    apiFail(err, (undo ? "Revert" : "Accept") + " failed");
+    if (err && err.code === "not-stack-top") toast(err.message);
+    else apiFail(err, (undo ? "Revert" : "Accept") + " failed");
+    /* said on screen AND thrown: the card's click swallows it below, and a
+       caller with no screen (`proposalAction`) gets the server's own slug */
+    throw err;
   }
 }
 
-const acceptProposal = (id) => applyProposal(id, false);
-const revertProposal = (id) => applyProposal(id, true);
+/* the card buttons: the toast above is the whole report, so the throw stops here */
+const acceptProposal = (id) => applyProposal(id, false).catch(() => {});
+const revertProposal = (id) => applyProposal(id, true).catch(() => {});
 
-async function rejectProposal(id) {
+/** The three proposal verbs by NAME, for a caller that has no button to press
+    (`webmcp.js`). The state it reports is the one `absorbProposalResult` just
+    wrote into `state.proposals` — the server's word, not a guess from the verb,
+    because a refused accept leaves the proposal exactly as it was. */
+export async function proposalAction(id, verb) {
+  if (!proposalById(id)) await loadProposals().catch(() => {});
+  if (!proposalById(id)) throw new api.ApiError(404, { error: "not-found", message: "No such proposal: " + id });
+  /* the throwing forms, not the card buttons' swallowing ones: a refused
+     accept must come back as `not-stack-top`, not as an unchanged state */
+  if (verb === "accept") await applyProposal(id, false);
+  else if (verb === "revert") await applyProposal(id, true);
+  else await rejectProposal(id, { rethrow: true });
+  const p = proposalById(id);
+  return { id, state: (p && p.state) || null };
+}
+
+async function rejectProposal(id, opts) {
   try {
     const r = await api.rejectProposal(id);
     absorbProposalResult(r);
@@ -350,13 +367,15 @@ async function rejectProposal(id) {
     } else renderChat();
     toast("Suggestion dismissed");
   } catch (err) {
-    if (err && err.code === "applied") {
-      toast("Revert it first");
-      return;
-    }
-    apiFail(err, "Reject failed");
+    if (err && err.code === "applied") toast("Revert it first");
+    else apiFail(err, "Reject failed");
+    if (opts && opts.rethrow) throw err;
   }
 }
+
+/** Is a turn still streaming? An agent's message must not supersede a reply
+    the human is still reading in. */
+export const turnInFlight = () => !!streamCtl;
 
 export async function loadProposals() {
   const r = await api.listProposals();
@@ -416,14 +435,43 @@ function absorbTurn(r) {
   renderChat();
 }
 
+/** What the caller of a finished turn gets back: the assistant's own words,
+    the proposal it made (`target` is a doc path everywhere above the API), and
+    the commands it queued. */
+const turnResult = (r) => {
+  const msgs = (r && r.messages) || [];
+  const last = msgs.filter((m) => m.role === "assistant").pop();
+  const p = r && r.proposal;
+  return {
+    reply: (last && last.content) || "",
+    proposal: p ? { id: p.id, label: p.label, path: p.target } : null,
+    commands: (r && r.commands) || [],
+  };
+};
+
+/** The composer's own send: read it, empty it, and hand the text to the turn.
+    Everything the send DOES is one function down — the composer is only where
+    a human's text happens to come from. */
 export async function sendMessage() {
   const ta = $("#composer");
   const text = ta.value.trim();
   if (!text) return;
-  const s = state.session;
-  if (!s) return;
+  if (!state.session) return;
   ta.value = "";
   autoGrow(ta); // …and shrinks back: a sent prompt must not leave its own hole
+  /* the failure is already on screen (`apiFail` inside), and a click handler
+     has nowhere to put a rejection */
+  return sendMessageText(text).catch(() => null);
+}
+
+/**
+ * ONE TURN, from any source. `signal` is an outside cancel — the agent's
+ * `executeTool` abort — and it aborts the very stream the composer's own
+ * abort does, so there is one way to stop a turn and not two.
+ */
+export async function sendMessageText(text, { signal } = {}) {
+  const s = state.session;
+  if (!s) throw new api.ApiError(409, { error: "no-session", message: "The assistant has no session yet." });
   abortStream(); // a new message supersedes whatever is still arriving
 
   const uid = "tmp" + ++tmpSeq;
@@ -435,6 +483,10 @@ export async function sendMessage() {
 
   const ctl = new AbortController();
   streamCtl = ctl;
+  if (signal) {
+    if (signal.aborted) ctl.abort();
+    else signal.addEventListener("abort", () => ctl.abort(), { once: true });
+  }
   let acc = "";
   let think = "";
   let raf = 0;
@@ -499,6 +551,7 @@ export async function sendMessage() {
     if (streamCtl === ctl) streamCtl = null;
     drop();
     absorbTurn(r);
+    return turnResult(r);
   } catch (err) {
     if (streamCtl === ctl) streamCtl = null;
     /* An abort is the user's own doing (new message, new session) — not a
@@ -517,11 +570,14 @@ export async function sendMessage() {
       // the server keeps the partial only when something streamed; mirror it
       if (!acc) s.messages = s.messages.filter((m) => m.id !== tmpAi.id);
       renderChat();
-      return;
+      /* not a throw: an abort is nobody's error. What streamed before the stop
+         is what there is, and the caller decides whether that counts. */
+      return { reply: acc, proposal: null, commands: [], aborted: true };
     }
     drop();
     renderChat();
     apiFail(err, "Message failed");
+    throw err;
   }
 }
 

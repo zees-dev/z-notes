@@ -24,6 +24,10 @@ edit relay and a gated terminal.
 - **AI edits** — a relay to any OpenAI-compatible endpoint, with
   propose/review/revert semantics. The relay has no route to rename or delete
   a file, by construction.
+- **Agent-ready** — every operation the UI offers is registered as a
+  [WebMCP](https://github.com/webmachinelearning/webmcp) tool wrapping the same
+  function the click calls, so an agent drives the real app instead of scraping
+  it. No tool decrypts a secret or takes a passphrase.
 - **Installable** — a PWA with proper icons, launch screen and phone-shaped
   back-button behavior.
 - **One process, one replica** — sqlite + fs.watch + a git working tree.
@@ -46,6 +50,26 @@ ZNOTES_VAULT="$HOME/notes" bun run start
 anywhere. Reaching the same process over a LAN IP is an insecure context —
 the app still runs, but secret blocks stay armored until you give it HTTPS
 (see `deploy/`).
+
+## Drive it from an agent
+
+The page registers its own tools — `read_doc`, `edit_doc`, `move_doc`,
+`search_docs`, `open_doc`, `run_command` and the rest of the UI's vocabulary —
+so an agent acts through the app rather than around it. Chrome 149+ (with
+`chrome://flags/#enable-webmcp-testing`) and ChatGPT's browser discover them on
+their own and ask before anything irreversible.
+
+Any automation gets the same door, in any browser: the app installs an in-page
+`document.modelContext` when the browser has none, so
+
+```js
+await document.modelContext.getTools();      // the catalogue
+await document.modelContext.executeTool(t, { path: "inbox.md" });  // a JSON string
+```
+
+works from DevTools, puppeteer or Playwright today. A tool never throws — a
+refusal comes back as `{ "error": "…", "message": "…" }`, the same shape the
+HTTP API uses.
 
 ## Deploy it
 

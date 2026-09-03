@@ -97,15 +97,37 @@ export function adoptTrash(r) {
   paintTrash();
 }
 
-export async function refreshTrash() {
-  /* A folder delete announces one `doc-changed` PER DOC, so this is called in
-     bursts. Dropping the extras would be wrong — the last event is the one that
-     describes the finished state — so a call that arrives mid-flight is
-     remembered and run once at the end instead of N times over. */
-  if (state.trash.loading) {
+/** the GET in flight, if any — the coalescing key and the promise a late
+    caller is handed */
+let trashInflight = null;
+
+/**
+ * Re-read the trash. A folder delete announces one `doc-changed` PER DOC, so
+ * this is called in bursts. Dropping the extras would be wrong — the last
+ * event is the one that describes the finished state — so a call that arrives
+ * mid-flight is remembered and run once at the end instead of N times over.
+ *
+ * The promise RESOLVES AFTER THAT FOLLOW-UP RUN, not after the one already in
+ * flight: `doDelete` fires this without awaiting it, so the very next caller
+ * (`list_trash`, a restore by id) used to be handed the pre-delete list and
+ * told it was fresh.
+ */
+export function refreshTrash() {
+  if (trashInflight) {
     trashAgain = true;
-    return;
+    return trashInflight.then(() => trashInflight || undefined);
   }
+  trashInflight = fetchTrash().finally(() => {
+    trashInflight = null;
+    if (trashAgain) {
+      trashAgain = false;
+      trashInflight = refreshTrash();
+    }
+  });
+  return trashInflight;
+}
+
+async function fetchTrash() {
   state.trash.loading = true;
   paintTrash();
   try {
@@ -120,10 +142,6 @@ export async function refreshTrash() {
   } finally {
     state.trash.loading = false;
     paintTrash();
-    if (trashAgain) {
-      trashAgain = false;
-      refreshTrash();
-    }
   }
 }
 
@@ -220,9 +238,10 @@ export function toggleTrash() {
   if (t.open) refreshTrash();
 }
 
+/** @returns {Promise<string|null>} where it landed, or null if it did not. */
 async function restoreFromTrash(e) {
   const t = state.trash;
-  if (t.busy.has(e.id)) return;
+  if (t.busy.has(e.id)) return null;
   t.busy.add(e.id);
   t.rowErr.delete(e.id);
   paintTrashList();
@@ -240,11 +259,11 @@ async function restoreFromTrash(e) {
     if (err && (err.status === 409 || err.code === "exists")) {
       t.rowErr.set(e.id, e.path + " is taken — rename what is there, then restore.");
       paintTrashList();
-      return;
+      return null;
     }
     paintTrashList();
     apiFail(err, "Could not restore " + e.path);
-    return;
+    return null;
   }
   t.busy.delete(e.id);
   await loadTree();
@@ -256,6 +275,7 @@ async function restoreFromTrash(e) {
     await openDoc(landed);
   }
   toast("Restored " + landed);
+  return landed;
 }
 
 /* Heading, target, verb, footer — the same four parts `askDelete` was cut down
@@ -273,9 +293,10 @@ function askPurgeEntry(e) {
   });
 }
 
+/** @returns {Promise<boolean>} whether the entry is really gone. */
 async function purgeEntry(e) {
   const t = state.trash;
-  if (t.busy.has(e.id)) return;
+  if (t.busy.has(e.id)) return false;
   t.busy.add(e.id);
   t.rowErr.delete(e.id);
   paintTrashList();
@@ -285,11 +306,12 @@ async function purgeEntry(e) {
     t.busy.delete(e.id);
     paintTrashList();
     apiFail(err, "Could not delete " + e.path);
-    return;
+    return false;
   }
   t.busy.delete(e.id);
   await refreshTrash();
   toast("Deleted " + e.path + " for good");
+  return true;
 }
 
 function askEmptyTrash() {
@@ -300,20 +322,65 @@ function askEmptyTrash() {
     body: "",
     ok: "Empty trash",
     note: "The git history is what is left.",
-    onOk: emptyTrash,
+    /* the toast inside is the whole report; the throw below it belongs to the
+       caller that has no screen (`webmcp.js`), not to a dialog button */
+    onOk: () => emptyTrash().catch(() => {}),
   });
 }
 
-async function emptyTrash() {
+export async function emptyTrash() {
   try {
     /* `{ all: true }` — the sweep the SERVER runs on its own drops only what is
        already expired, and this is the user saying they meant all of it */
     const r = await api.purgeTrash({ all: true });
     await refreshTrash();
-    const n = r && typeof r.purged === "number" ? r.purged : 0;
+    /* `purged` is the LIST of ids the route emptied (0002 § POST /api/trash/purge),
+       never a count — this read used to ask for a number, always got an object,
+       and quietly fell to 0, so the sentence naming what went was dead the day
+       it was written and `empty_trash` would have reported the same nothing */
+    const n = Array.isArray(r && r.purged) ? r.purged.length : 0;
     toast(n ? "Deleted " + n + " item" + (n === 1 ? "" : "s") + " for good" : "Trash emptied");
+    return { purged: n };
   } catch (err) {
     await refreshTrash();
     apiFail(err, "Could not empty the trash");
+    throw err;
   }
+}
+
+/* ---------- the same two verbs, addressed by ID ----------
+
+   A row hands its own entry object to the functions above; a caller that only
+   has an id (`webmcp.js`) does not have one, and inventing a second restore
+   path to serve it is how the drawer would end up with two answers to "is it
+   still in the trash". So these RESOLVE the id against a freshly read list —
+   the whole question being whether the entry is still there NOW — and then
+   press the same button the row does. */
+
+/** @returns {Promise<{path:string}>} — throws `not-found` / `failed`. */
+export async function restoreTrashEntry(id) {
+  const e = await trashEntry(id);
+  const landed = await restoreFromTrash(e);
+  if (!landed) {
+    /* the row's own refusal, in the API's words: a 409 leaves its sentence on
+       the row rather than in a toast, and that sentence is the whole answer */
+    const taken = state.trash.rowErr.get(e.id);
+    if (taken) throw new api.ApiError(409, { error: "exists", message: taken });
+    throw new api.ApiError(409, { error: "failed", message: "Could not restore " + e.path + "." });
+  }
+  return { path: landed };
+}
+
+/** @returns {Promise<{purged:true}>} — throws `not-found` / `failed`. */
+export async function purgeTrashEntry(id) {
+  const e = await trashEntry(id);
+  if (!(await purgeEntry(e))) throw new api.ApiError(409, { error: "failed", message: "Could not delete " + e.path + "." });
+  return { purged: true };
+}
+
+async function trashEntry(id) {
+  await refreshTrash();
+  const e = (state.trash.entries || []).filter((x) => x.id === id)[0];
+  if (!e) throw new api.ApiError(404, { error: "not-found", message: "Nothing in the trash with id " + id + "." });
+  return e;
 }

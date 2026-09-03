@@ -55,6 +55,10 @@ const stripAnsi = (s) => String(s).replace(ANSI_RE, "").replace(/\r\n?/g, "\n");
 const ANSI_PENDING_RE = /(?:\x1b\][^\x07\x1b]*|\x1b\[[0-9;?]*[ -\/]*|\x1b|\r)$/;
 const ANSI_PENDING_MAX = 64;
 
+/** How much of a captured run comes back to a caller that cannot see the
+    console. 64 KiB of a build log is the tail anybody reads. */
+const CAPTURE_MAX_CHARS = 64 * 1024;
+
 function ansiStream() {
   let pending = "";
   return {
@@ -232,10 +236,19 @@ export async function refreshTerminalStatus() {
   return state.term.status;
 }
 
-export async function terminalUnlock() {
+/** A `password` STRING wins; the settings field is the fallback, because the
+    field is where a human's password comes from and nowhere else. The type
+    check is load-bearing: this is also wired straight to the Unlock button's
+    click, so the first argument is just as likely to be a PointerEvent. Either
+    way the answer is the STATUS, so a caller can tell an unlock that took from
+    one that did not without reading the toast. */
+export async function terminalUnlock(password) {
   const inp = $("#termPass");
-  const pass = inp.value;
-  if (!pass) return toast("Enter the terminal password");
+  const pass = typeof password === "string" && password ? password : inp.value;
+  if (!pass) {
+    toast("Enter the terminal password");
+    return state.term.status;
+  }
   try {
     state.term.status = await api.terminalUnlock(pass);
     inp.value = "";
@@ -251,6 +264,7 @@ export async function terminalUnlock() {
     toast(err.message || "Wrong terminal password");
     await refreshTerminalStatus();
   }
+  return state.term.status;
 }
 
 export async function terminalLock(why) {
@@ -308,11 +322,29 @@ async function doSaveTerminalPassword() {
  * so an AI-run command lands in exactly the same place, in the same shape,
  * with the same output, as one the user typed. That is not decoration: it is
  * the guarantee that there is no path by which the assistant runs something
- * the user cannot see.
+ * the user cannot see. Exported for the same reason one level out: a tool call
+ * runs the command the Run button runs, not a second implementation of it.
+ *
+ * `capture` is the only difference a caller with no eyes on the console makes:
+ * the output is collected as it is painted and comes back with the exit, and a
+ * terminal that is already busy REFUSES rather than toasting at nobody.
  */
-async function runTerminal(command, opts) {
+export async function runTerminal(command, opts) {
   const o = opts || {};
-  if (state.term.busy) return toast("A command is already running — press Stop or Ctrl+C");
+  if (state.term.busy) {
+    if (o.capture) throw new api.ApiError(409, { error: "terminal-busy", message: "A command is already running." });
+    return toast("A command is already running — press Stop or Ctrl+C");
+  }
+  /* the last 64 KiB, because that is the end a reader of a long build log
+     actually needs and a whole one is a tool result nothing can use */
+  const cap = [];
+  let capBytes = 0;
+  const collect = (text) => {
+    if (!o.capture) return;
+    cap.push(text);
+    capBytes += text.length;
+    while (capBytes > CAPTURE_MAX_CHARS && cap.length > 1) capBytes -= cap.shift().length;
+  };
   state.term.busy = true;
   state.term.running = null;
   /* Streamed live below, so `echoCommand` must not replay it from the record
@@ -326,15 +358,23 @@ async function runTerminal(command, opts) {
       state.term.running = d.id;
       if (state.term.status) state.term.status.running = d.id;
     },
-    onStdout: (d) => termAppend(d.chunk, "out"),
-    onStderr: (d) => termAppend(d.chunk, "err"),
+    onStdout: (d) => {
+      collect(d.chunk);
+      termAppend(d.chunk, "out");
+    },
+    onStderr: (d) => {
+      collect(d.chunk);
+      termAppend(d.chunk, "err");
+    },
     onNotice: (d) => termWrite("— " + d.message, "sys"),
     onError: (d) => termWrite("— " + d.message, "err"),
   };
   let exit = null;
+  let failure = null;
   try {
     exit = o.commandId ? await api.terminalRunCommand(o.commandId, handlers) : await api.terminalExec(command, handlers);
   } catch (err) {
+    failure = err;
     termWrite("— " + (err.message || "The command could not be started"), "err");
     /* 409 busy: something IS running, just not ours — take the id the refusal
        carries so the Stop the message tells the user to press is on screen. */
@@ -369,7 +409,17 @@ async function runTerminal(command, opts) {
     paintCwd(exit.cwd);
   }
   if (o.commandId) await loadCommands();
-  return exit;
+  if (!o.capture) return exit;
+  /* the console already says what went wrong; a capturing caller is told in
+     the only vocabulary it has */
+  if (failure) throw failure;
+  /* stripped at the END, not per chunk: an escape sequence split across two
+     stdout frames is one sequence again by the time it is joined */
+  const output = stripAnsi(cap.join("")).slice(-CAPTURE_MAX_CHARS);
+  /* no exit frame and no refusal is the stream being CUT — a cancel — and the
+     command did run up to that point, so what it printed is still the answer */
+  const cut = { code: null, signal: "cancelled", ms: null, cwd: (state.term.status && state.term.status.cwd) || null };
+  return Object.assign({}, exit || cut, { output });
 }
 
 export function submitTerminal() {

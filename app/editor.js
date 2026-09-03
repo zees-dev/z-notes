@@ -863,7 +863,7 @@ export function setBaseline(doc, text) {
   return doc;
 }
 
-async function ensureLoaded(path) {
+export async function ensureLoaded(path) {
   const cached = state.docs.get(path);
   if (cached && cached.loaded) return cached;
   const d = await api.getDoc(path);
@@ -871,6 +871,52 @@ async function ensureLoaded(path) {
   setBaseline(merged, d.markdown);
   state.docs.set(path, merged);
   return merged;
+}
+
+/**
+ * REPLACE A DOC'S TEXT ON SOMEBODY ELSE'S BEHALF — the write half of the
+ * agent's door (`webmcp.js`), and the one place that knows how to move a
+ * document's bytes without a keystroke.
+ *
+ * It goes through the SAME pipeline typing does rather than PUTting behind the
+ * app's back: the buffer is pulled in first (an agent must not silently drop
+ * the character the user has typed but not saved), the change lands as ONE
+ * step on the shared timeline so ⌘Z takes it back like any other edit
+ * (ADR 0014), the open pane repaints, and `saveDoc` writes it — with its
+ * conflict, orphan and re-encrypt handling intact.
+ *
+ * `rev` is optional and is checked HERE, against the copy this tab holds, so a
+ * caller that read the doc and then wrote it is told its read went stale
+ * (`rev-conflict`, the API's own slug and shape) instead of overwriting.
+ */
+export async function replaceDocText(path, markdown, rev) {
+  const doc = await ensureLoaded(path);
+  if (rev != null && rev !== "" && rev !== doc.rev)
+    throw new api.ApiError(409, {
+      error: "rev-conflict",
+      message: "This doc changed since that rev — read it again before writing.",
+      rev: doc.rev,
+    });
+  const active = path === state.active;
+  if (active) syncRaw();
+  doc.markdown = String(markdown == null ? "" : markdown);
+  /* open a run and close it in the same breath: one call, one entry, however
+     many lines moved */
+  noteTextEdit(path);
+  flushTextRun();
+  if (active) {
+    if (state.mode === "raw") syncRawFromModel(doc);
+    else renderDoc();
+  }
+  /* silent: the pane already shows the new text, and a toast about a write
+     nobody in this tab asked for is the app talking to itself */
+  const wrote = await saveDoc(path, { silent: true });
+  if (!wrote)
+    throw new api.ApiError(409, {
+      error: "not-saved",
+      message: "The change is in this tab but did not reach disk — " + path + " may have moved or conflicted.",
+    });
+  return { path, rev: doc.rev, bytes: doc.bytes };
 }
 
 /* Navigation token. openDoc awaits a save and a fetch, so two of them can be
