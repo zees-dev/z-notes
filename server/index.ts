@@ -451,16 +451,12 @@ async function serveStatic(pathname: string, req: Request): Promise<Response> {
     "cache-control": "no-cache",
     "content-type": file.type || "application/octet-stream",
   };
-  /* The shell is the AGENT's door too (ADR 0031): app/webmcp.js registers the
-     app's operations as WebMCP tools, and Chrome refuses that registration
-     unless the page's agent cluster is origin-keyed and the `tools` permission
-     is delegated to the origin itself. Both are properties of the DOCUMENT, so
-     they ride only on the shell — a stylesheet has no tools, and a header on
-     one would be noise a proxy has to carry. `rel` is `index.html` for `/`,
-     `/d/*` and `/settings*` alike: those two routing spaces reach here through
-     `serveStatic("/")`, so one check covers all three. The 304 and HEAD
-     branches below share this object, which is what keeps a cached reload from
-     losing the headers the first load registered under. */
+  /* app/webmcp.js registers the app's operations as WebMCP tools (ADR 0031),
+     and Chrome refuses that registration unless the page's agent cluster is
+     origin-keyed and the `tools` permission is delegated to the origin. Both
+     are properties of the document, so they ride on the shell only. `rel` is
+     `index.html` for `/`, `/d/*` and `/settings*` alike, and the 304 and HEAD
+     branches below share this object, so a cached reload keeps them too. */
   if (rel === "index.html") {
     headers["origin-agent-cluster"] = "?1";
     headers["permissions-policy"] = "tools=(self)";

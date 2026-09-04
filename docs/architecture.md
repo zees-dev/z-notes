@@ -99,19 +99,18 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   is an ordinary file under `app/vendor/`.
 
 **Agents.** `webmcp.js` is the agent's `app.js` (ADR 0031). One table registers
-every operation the human UI offers as a WebMCP tool, each wrapping the same
-feature function the click or the chord calls — which is why the open buffer,
-the undo timeline, the tree and the address bar follow a tool call exactly as
-they follow a gesture. `app.js` calls `registerWebMcpTools()` last in `start()`,
-and nothing else imports the module. Registration goes to the browser's own door
-first and never replaces one: `document.modelContext` when it exists, else
-`navigator.modelContext` when it can `registerTool`. When `document.modelContext`
-is absent the module also DEFINES it over the same table, which is how the e2e
-suite — and any DevTools-driven agent — reads the catalogue on a Chromium that
-has never heard of WebMCP. Errors are data: a tool never throws, and a failure is
-`{error, message, ...extra}` in the API's own shape (ADR 0002), because the spec
-has no settled way to plumb a rejection back to the caller. No tool decrypts,
-reveals or takes a passphrase.
+every operation the human UI offers as a WebMCP tool, each wrapping the feature
+function the click or the chord calls, so the open buffer, the undo timeline,
+the tree and the address bar follow a tool call as they follow a gesture.
+`app.js` calls `registerWebMcpTools()` last in `start()`, and nothing else
+imports the module. Registration goes to `document.modelContext` when it
+exists, else `navigator.modelContext` when it can `registerTool`, and never
+replaces either. When `document.modelContext` is absent the module defines it
+over the same table, which is how the e2e suite and any DevTools-driven agent
+read the catalogue on a Chromium that has never heard of WebMCP. A tool never
+throws. A failure is `{error, message, ...extra}` in the API's shape (ADR 0002),
+because the spec has no settled way to carry a rejection back to the caller. No
+tool decrypts, reveals or takes a passphrase.
 
 Two guards on leaving a surface with unsaved work, and they are twins — same
 shape, same `proceed` callback re-issuing the caller's own action with a force

@@ -58,7 +58,7 @@ export const BASE_HISTORY_LEN = 2;
  * Device emulation still overrides it, so a test that wants the other answer
  * asks the way it always did — a touch viewport (`hasTouch`/`isMobile`).
  *
- * `opts.args` are APPENDED to that list, never a replacement for it: the flags
+ * `opts.args` are appended to that list, never a replacement for it: the flags
  * above are the suite's pinned environment and a caller that dropped them would
  * be measuring a different machine. The one caller so far is webmcp-e2e, which
  * needs `--enable-features=WebMCP` to see the browser's own `modelContext`.

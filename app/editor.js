@@ -874,20 +874,15 @@ export async function ensureLoaded(path) {
 }
 
 /**
- * REPLACE A DOC'S TEXT ON SOMEBODY ELSE'S BEHALF — the write half of the
- * agent's door (`webmcp.js`), and the one place that knows how to move a
- * document's bytes without a keystroke.
- *
- * It goes through the SAME pipeline typing does rather than PUTting behind the
- * app's back: the buffer is pulled in first (an agent must not silently drop
- * the character the user has typed but not saved), the change lands as ONE
- * step on the shared timeline so ⌘Z takes it back like any other edit
- * (ADR 0014), the open pane repaints, and `saveDoc` writes it — with its
- * conflict, orphan and re-encrypt handling intact.
- *
- * `rev` is optional and is checked HERE, against the copy this tab holds, so a
- * caller that read the doc and then wrote it is told its read went stale
- * (`rev-conflict`, the API's own slug and shape) instead of overwriting.
+ * Replace a doc's text without a keystroke: the write half of `webmcp.js`.
+ * It goes through the pipeline typing goes through rather than PUTting behind
+ * the app's back. The buffer is pulled in first, so a character the user
+ * typed but did not save is not dropped. The change lands as one step on the
+ * shared timeline, so ⌘Z takes it back like any other edit (ADR 0014). The
+ * open pane repaints, and `saveDoc` writes it with its conflict, orphan and
+ * re-encrypt handling intact. `rev` is optional and is checked against the
+ * copy this tab holds, so a caller whose read went stale is told so
+ * (`rev-conflict`) instead of overwriting.
  */
 export async function replaceDocText(path, markdown, rev) {
   const doc = await ensureLoaded(path);

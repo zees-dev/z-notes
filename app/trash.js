@@ -102,15 +102,13 @@ export function adoptTrash(r) {
 let trashInflight = null;
 
 /**
- * Re-read the trash. A folder delete announces one `doc-changed` PER DOC, so
- * this is called in bursts. Dropping the extras would be wrong — the last
- * event is the one that describes the finished state — so a call that arrives
- * mid-flight is remembered and run once at the end instead of N times over.
- *
- * The promise RESOLVES AFTER THAT FOLLOW-UP RUN, not after the one already in
- * flight: `doDelete` fires this without awaiting it, so the very next caller
- * (`list_trash`, a restore by id) used to be handed the pre-delete list and
- * told it was fresh.
+ * Re-read the trash. A folder delete announces one `doc-changed` per doc, so
+ * this is called in bursts. The last event describes the finished state, so
+ * a call that arrives mid-flight is remembered and run once at the end
+ * instead of N times over. The promise resolves after that follow-up run,
+ * not after the one already in flight: `doDelete` fires this without
+ * awaiting it, and the next caller (`list_trash`, a restore by id) used to
+ * be handed the pre-delete list and told it was fresh.
  */
 export function refreshTrash() {
   if (trashInflight) {
@@ -348,14 +346,13 @@ export async function emptyTrash() {
   }
 }
 
-/* ---------- the same two verbs, addressed by ID ----------
+/* ---------- the same two verbs, addressed by id ----------
 
-   A row hands its own entry object to the functions above; a caller that only
-   has an id (`webmcp.js`) does not have one, and inventing a second restore
-   path to serve it is how the drawer would end up with two answers to "is it
-   still in the trash". So these RESOLVE the id against a freshly read list —
-   the whole question being whether the entry is still there NOW — and then
-   press the same button the row does. */
+   A row hands its own entry object to the functions above. A caller that
+   only has an id (`webmcp.js`) resolves it against a freshly read list, since
+   the question is whether the entry is still there now, and then presses the
+   same button the row does. A second restore path would give the drawer two
+   answers to "is it still in the trash". */
 
 /** @returns {Promise<{path:string}>} — throws `not-found` / `failed`. */
 export async function restoreTrashEntry(id) {

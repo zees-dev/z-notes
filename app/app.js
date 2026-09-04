@@ -951,9 +951,9 @@ export async function start() {
     repaintSecretsUI();
   });
 
-  /* THE AGENT'S DOOR, last: `webmcp.js` registers every operation above as a
-     tool (ADR 0031), and it needs nothing from the probes it follows — a
-     browser with no agent in it pays for one loop over a table. */
+  /* last: `webmcp.js` registers every operation above as a tool (ADR 0031).
+     It needs nothing from the probes it follows, and a browser with no agent
+     in it pays for one loop over a table. */
   registerWebMcpTools();
 }
 

@@ -960,17 +960,12 @@ export function startCreate(kind, where) {
 }
 
 /**
- * MAKE ONE ENTRY — the single create transaction.
- *
- * Four routes mint a doc or a folder (the inline row, a broken `[[link]]`, a
- * dropped file, a tool call), and each of them used to spell out the same four
- * steps: create, remember it on the timeline (ADR 0014), open the folder it
- * landed in, reload the tree. What stays with the CALLER is the chrome: an
- * inline row answers a refusal in its own error line, a tool answers with
- * data, and neither one wants the other's toast.
- *
- * `open` opens the new doc in Raw — what every human create route does, and
- * what no folder route can.
+ * The one create transaction: create, record it on the timeline (ADR 0014),
+ * open the folder it landed in, reload the tree. The inline row, a broken
+ * `[[link]]` and a tool call all come through here and keep their own chrome:
+ * the row answers a refusal in its error line, a tool answers with data, and
+ * neither wants the other's toast. `open` opens a new doc in Raw, which every
+ * human create route does.
  */
 export async function mintEntry({ path, kind, markdown }, { open } = {}) {
   const type = kind === "folder" ? "folder" : "doc";
@@ -1165,7 +1160,7 @@ export async function commitRename(node, value) {
   return moveEntry(node, to);
 }
 
-/** Move whatever is AT `from` — a path is all the caller has. The tree is what
+/** Move whatever is at `from`, for a caller that only has a path. The tree
     says whether it is a doc or a folder, so a path it does not know is a
     `not-found` here rather than a PATCH the server has to refuse. */
 export async function moveByPath(from, to) {
