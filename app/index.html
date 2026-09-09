@@ -2,7 +2,12 @@
 <html lang="en" data-density="comfy" data-theme="minimal">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- The APP owns the pinch (ADR 0033): a two-finger gesture over the document
+     steps its TEXT up a fixed ladder (app/zoom.js) instead of letting the
+     browser scale the whole layout, chrome and all. `maximum-scale` and
+     `user-scalable` are what stop the two fighting over one gesture; the
+     replacement reaches 200 %, which is the trade that makes them acceptable. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <!-- Kept in step with app.js applyColorScheme(): the resolved scheme goes here
      so the UA paints form controls, scrollbars and the canvas to match. -->
 <meta name="color-scheme" id="schemeMeta" content="light dark">
@@ -102,6 +107,14 @@
 
   var d = cached("znotes.density");
   if (d === "comfy" || d === "compact") root.setAttribute("data-density", d);
+
+  /* the fourth axis, and the only one that is not a cache of a SETTING: the
+     pinch ladder's multiplier (ADR 0033) is per browser and lives nowhere
+     else, so this read is the value's restore rather than a repaint saver.
+     Range-checked, not shape-checked — anything outside the ladder's ends
+     (including a NaN, which fails both comparisons) leaves the app at 100 %. */
+  var z = Number(cached("znotes.zoom"));
+  if (z >= 0.85 && z <= 2) root.style.setProperty("--doc-zoom", z);
 
   var t = cached("znotes.theme");
   if (t && /^[a-z][a-z0-9-]{0,23}$/.test(t) && t !== root.getAttribute("data-theme")) {

@@ -43,6 +43,7 @@ import { adoptSettings, savedValue, showSettings } from "./settings.js";
 import { app, closeNav, dismissTop, isDrawer, openNav, overlayOpen, syncNow, toggleChat } from "./shell.js";
 import { loadCommands, refreshTerminalStatus, runTerminal, termRunningId, terminalLock, terminalStop, terminalUnlock } from "./terminal.js";
 import { lockVault, vault } from "./secrets.js";
+import { ZOOM_STEPS, setZoom, zoomFactor } from "./zoom.js";
 
 /* ============================================================
    REFUSALS AND RESULTS
@@ -87,6 +88,10 @@ const REMOTE_URL = { type: "string", description: "The remote repository URL, ht
 const TRASH_ID = { type: "string", description: "Trash entry id, as list_trash reports it." };
 const PROPOSAL_ID = { type: "string", description: "Proposal id, as list_proposals or ask_assistant reports it." };
 const COMMAND_ID = { type: "string", description: "Command record id, as list_commands reports it." };
+
+/* The text-size ladder as PERCENTS, derived rather than restated: an agent
+   reads whole numbers and app/zoom.js keeps the multipliers (ADR 0033). */
+const ZOOM_PERCENTS = ZOOM_STEPS.map((s) => Math.round(s * 100));
 
 /* ============================================================
    READING THE APP'S OWN STATE
@@ -226,7 +231,7 @@ const TOOLS = [
   {
     name: "get_app_state",
     description:
-      "Report what the app is showing: the open doc, the view and mode, whether the buffer is unsaved, the event connection, sync state, every vault, the secrets and terminal state, the assistant session, which panels are open, and whether undo or redo has a step waiting. Call this first.",
+      "Report what the app is showing: the open doc, the view, mode and text size, whether the buffer is unsaved, the event connection, sync state, every vault, the secrets and terminal state, the assistant session, which panels are open, and whether undo or redo has a step waiting. Call this first.",
     annotations: { readOnlyHint: true },
     execute: async () => {
       const s = state.sync || {};
@@ -237,6 +242,7 @@ const TOOLS = [
         view: state.view,
         settingsSection: state.settingsSection,
         mode: state.mode,
+        textZoom: Math.round(zoomFactor() * 100),
         unsaved: !!state.dirty,
         connection: state.conn,
         sync: { state: s.state || null, remote: s.remote || null },
@@ -401,6 +407,19 @@ const TOOLS = [
       await settleBuffer();
       setMode(mode, { force: true, silent: true });
       return { mode: state.mode };
+    },
+  },
+  {
+    name: "set_text_zoom",
+    description:
+      "Set the size of the document's text, as a percent of the theme's own size: 85, 100, 115, 130, 150, 175 or 200. This is the step a pinch takes on a phone. It applies to the open doc and every one after it, is remembered in this browser, and moves nothing outside the document.",
+    inputSchema: schema(
+      { percent: { type: "integer", enum: ZOOM_PERCENTS, description: "One rung of the ladder, e.g. 130." } },
+      ["percent"]
+    ),
+    execute: async ({ percent }) => {
+      if (!ZOOM_PERCENTS.includes(percent)) throw deny("invalid-arg", "percent must be one of " + ZOOM_PERCENTS.join(", "));
+      return { percent: Math.round(setZoom(percent / 100) * 100) };
     },
   },
   {

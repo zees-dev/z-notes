@@ -27,6 +27,7 @@ import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal,
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
 import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
+import { initZoom } from "./zoom.js";
 import { registerWebMcpTools } from "./webmcp.js";
 
 /* ============================================================
@@ -891,6 +892,11 @@ export async function start() {
   /* remember the pin, so a settings-changed from another device cannot stamp
      the stored value over an axis THIS URL asked for (see `urlPinnedLook`) */
   pinLookFromUrl([themeOk ? "theme" : null, schemeOk ? "colorScheme" : null].filter(Boolean));
+  /* the fourth axis of the look, and the only one this browser owns alone: the
+     pinch ladder's rung (ADR 0033). Straight after the appliers because it is
+     one of them, and before the first document is rendered so the pane is
+     never painted at 100 % and stepped a frame later. */
+  initZoom();
 
   const [, , sync] = await Promise.all([loadTree(), loadSession(), api.getSyncStatus(), loadProposals()]);
   paintSync(sync);
