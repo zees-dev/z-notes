@@ -588,11 +588,17 @@ function wire() {
     if (e.key === "Tab") return trapTab(e);
     /* Enter activates the visible modal's declared primary action even when
        focus is on the dialog container (the safe choice for a modal raised
-       from under a caret). A focused button keeps its native Enter, and a
-       textarea keeps its newline. */
+       from under a caret). A focused button keeps its native Enter, and a text
+       surface keeps its newline.
+
+       `[contenteditable]:not([contenteditable=false])`, not
+       `[contenteditable=true]`: the Raw editor carries `plaintext-only`
+       (ADR 0032), and a conflict veil can open on its own while the caret is
+       still in it — under the narrower selector that Enter pressed Overwrite
+       instead of starting a line. */
     if (e.key === "Enter" && !e.defaultPrevented && !e.isComposing && !e.repeat) {
       const target = e.target;
-      if (target && target.closest && !target.closest("button, textarea, [contenteditable=true]")) {
+      if (target && target.closest && !target.closest('button, textarea, [contenteditable]:not([contenteditable="false"])')) {
         const sel = VEILS.find(isOpen);
         const primary = sel && $$("[data-default]", $(sel)).find((b) => !b.hidden && !b.disabled && b.offsetParent !== null);
         if (primary) {

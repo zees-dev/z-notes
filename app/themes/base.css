@@ -78,6 +78,7 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --font-doc: var(--font);             /* rendered markdown body */
   --font-heading: var(--font);
+  --font-raw: var(--mono);             /* the Raw line editor (ADR 0032) — a theme may opt into the document font */
   --font-kbd: var(--font);
   --tracking-tight: -.01em;
   --tracking-wide: .06em;
@@ -984,17 +985,40 @@ kbd {
    the statusbar's `#stMode` chip now; see §8. `.seg` itself stays: settings
    still uses it for theme, density and colour scheme. */
 
-/* raw markdown surface — chromeless inside the shared container */
+/* raw markdown surface — chromeless inside the shared container.
+
+   A LINE IS THE SIZE OF THE PREVIEW BLOCK IT WOULD RENDER AS (ADR 0032). The
+   editor is a contenteditable with one `.ln` per source line, so `font-size`
+   INHERITS the document size — the same one `.md p` gets, which is what makes
+   ⌘E and click-to-edit stop resizing the note — and a `#`/`##`/`###` line
+   takes the same size, weight, tracking and leading `.md h1/h2/h3` take. The
+   FAMILY stays mono: `--font-raw` is the one knob a theme needs to opt out. */
 .raw {
-  display: block; width: 100%; min-height: 0;
+  display: block; width: 100%; min-height: 0; position: relative;
   border: 0; border-radius: 0; background: transparent; box-shadow: none;
-  padding: 0; margin: 0; resize: none; outline: none; overflow: hidden;
-  font-family: var(--mono); font-size: var(--d-raw-fs); line-height: var(--d-raw-lh);
+  padding: 0; margin: 0; outline: none; overflow: visible;
+  font-family: var(--font-raw, var(--mono)); font-size: inherit; line-height: var(--d-lh);
   color: var(--text-2); tab-size: 2; caret-color: var(--accent);
+  white-space: pre-wrap; overflow-wrap: break-word;
 }
+/* an empty line keeps its row — the `<br>` inside it does this too; belt and braces */
+.raw .ln { min-height: 1lh; }
+.raw .ln.h1 { font-size: var(--h1-size); line-height: 1.2;  font-weight: var(--h1-weight); letter-spacing: var(--h1-tracking); color: var(--text); }
+.raw .ln.h2 { font-size: var(--h2-size); line-height: 1.32; font-weight: var(--h2-weight); letter-spacing: var(--h2-tracking); color: var(--text); }
+.raw .ln.h3 { font-size: var(--h3-size); line-height: 1.4;  font-weight: var(--h3-weight); letter-spacing: var(--h3-tracking); color: var(--text); }
+/* `--h*-transform` is deliberately NOT copied from `.md h1/h2/h3`: a theme that
+   uppercases a rendered heading must not uppercase the SOURCE, which would show
+   the file saying something it does not say. */
 .raw.no-wrap { white-space: pre; overflow-x: auto; overflow-y: hidden; }
-.raw::placeholder { color: var(--muted-2); }
+/* the placeholder is drawn, not typed: `data-placeholder` is a real attribute
+   on a real element, so nothing in the buffer says it is there */
+.raw.is-empty::before { content: attr(data-placeholder); position: absolute; left: 0; top: 0; color: var(--muted-2); pointer-events: none; }
 .raw:focus, .raw:focus-visible { background: transparent; border: 0; box-shadow: none; outline: none; }
+/* LINKS ARE COLOURED WITHOUT A SINGLE NODE UNDER THE CARET. A `<span>` around
+   a URL would appear and disappear while somebody types into it, which is how
+   an editor loses an IME composition; a highlight is painted over the text
+   node instead. A browser without `CSS.highlights` shows plain text. */
+::highlight(raw-link) { color: var(--accent); text-decoration: underline; text-decoration-color: var(--accent); }
 
 /* ---------- rendered markdown ---------- */
 /* THE DOCUMENT NEVER SCROLLS SIDEWAYS EITHER.
@@ -2338,8 +2362,9 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    and font here is an existing token, the rows are the same `.field`/`.btn`
    chrome as the rest of Settings, and the scrollback borrows the code-block
    surface the preview already uses. All three themes therefore restyle it for
-   free, and the two densities drive it through `--d-ctl-h` and `--d-raw-fs`
-   exactly as they drive the editor.
+   free, and the two densities drive it through `--d-ctl-h` and `--d-raw-fs`.
+   Since Raw became a line editor at the DOCUMENT size (ADR 0032), this
+   scrollback is the only thing `--d-raw-fs` still sizes.
    ============================================================ */
 
 .term-state, .key-state { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: var(--r); border: var(--bd); background: var(--panel-2); font-size: 12.5px; font-weight: var(--w-med); color: var(--muted); margin-bottom: 4px; }
@@ -2452,9 +2477,15 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
         theme's width instead of its own (see §11).
 
    16px is a floor, not a size: it applies only below the phone breakpoint, and
-   `--d-raw-fs` still drives every one of these everywhere else. */
+   `--d-raw-fs` still drives the terminal scrollback everywhere else.
+
+   `.raw` IS NOT ON THIS LIST any more (ADR 0032). It is not a form field: it
+   is a contenteditable at the DOCUMENT size, and Safari zooms on focus into
+   form fields, not into those. The viewport meta is where the remaining
+   answer to that zoom lives (spec 0013). It was also the worst offender the
+   floor ever caused — 16px mono against a 13.4px Preview was the biggest
+   size jump in the app. */
 @media (max-width: 767px) {
-  .raw,
   .composer textarea,
   .pal-in input,
   .secret-edit,
