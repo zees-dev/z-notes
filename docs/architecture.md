@@ -98,6 +98,18 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   `age.<hash>.js` is built in memory at boot and has no file, everything else
   is an ordinary file under `app/vendor/`.
 
+**Where the frontend's state lives.** `state.js` holds all of it, and two
+entries in it are VIEW choices the server has no opinion about, so each is
+mirrored per browser in `localStorage` by its one writer: `state.folds` →
+`znotes.folds` (Preview's collapsed sections, markdown.js, ADR 0023) and
+`state.folderOpen`/`state.vaultOpen` → `znotes.tree-open` (folder and vault-row
+disclosure, tree.js,
+[spec 0012](specs/done/0012-folder-disclosure-persists.md)). Both are
+write-through on a user action only — seeding reads, it never writes — both age
+their keys out rather than accumulating (the folds by a document cap, the tree
+by pruning to the tree that just loaded), and both treat an unreadable store as
+no memory rather than an error.
+
 **Agents.** `webmcp.js` is the agent's `app.js` (ADR 0031). One table registers
 every operation the human UI offers as a WebMCP tool, each wrapping the feature
 function the click or the chord calls, so the open buffer, the undo timeline,

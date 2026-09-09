@@ -38,11 +38,103 @@ const rowPad = (depth) => 8 + depth * 14;
     row's text, so each row's tick runs from the line to its own content. */
 const guideX = (parentDepth) => rowPad(parentDepth) + 7 + "px";
 
-function indexTree(nodes, seen, bySlug) {
+/* ---------- disclosure memory ----------
+
+   WHICH ROWS ARE OPEN IS A VIEW CHOICE, remembered per browser — the twin of
+   Preview's fold store one pane over (`znotes.folds`, ADR 0023). The server's
+   `folders.open` column only ever SEEDS a folder open; nothing here writes a
+   close back to it, so without this store every reload reopened all forty
+   folders of a vault the user keeps three of.
+
+   Precedence when a row is first seen in a session: what this store remembers,
+   then what the server said, then open. Only a USER action writes — seeding
+   reads — so a folder nobody has touched keeps taking the server's word for it
+   rather than freezing today's answer forever. An unreadable store means no
+   memory at all: the tree renders as the server says, which is the safe
+   direction to fail. */
+const OPEN_STORE = "znotes.tree-open";
+/** `{ folders: {path: bool}, vaults: {id: bool} }` — loaded once, lazily. */
+let openStore = null;
+
+const isPlain = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+
+function loadOpenStore() {
+  if (!openStore) {
+    openStore = { folders: {}, vaults: {} };
+    try {
+      const raw = JSON.parse(localStorage.getItem(OPEN_STORE) || "{}");
+      if (isPlain(raw)) {
+        if (isPlain(raw.folders)) openStore.folders = raw.folders;
+        if (isPlain(raw.vaults)) openStore.vaults = raw.vaults;
+      }
+    } catch (_) {
+      /* private mode, or a shape some later version wrote */
+    }
+  }
+  return openStore;
+}
+
+function persistOpenStore() {
+  try {
+    localStorage.setItem(OPEN_STORE, JSON.stringify(openStore));
+  } catch (_) {
+    /* the disclosure still holds for this session in state */
+  }
+}
+
+/** What `kind` ("folders"/"vaults") remembers for `key`, or undefined. */
+function storedOpen(kind, key) {
+  const v = loadOpenStore()[kind][key];
+  return typeof v === "boolean" ? v : undefined;
+}
+
+/* The two writers. Every site that CHANGES disclosure goes through one of
+   these; every site that merely seeds it reads `storedOpen`. A write that
+   changes nothing does not touch storage — `revealFolder` re-asserts every
+   ancestor of every doc that is opened, and that is not a reason to serialize
+   the store once per level. */
+function remember(kind, key, open) {
+  const map = loadOpenStore()[kind];
+  if (map[key] === open) return;
+  map[key] = open;
+  persistOpenStore();
+}
+
+function setFolderOpen(path, open) {
+  state.folderOpen.set(path, open);
+  remember("folders", path, open);
+}
+
+function setVaultOpen(id, open) {
+  state.vaultOpen.set(id, open);
+  remember("vaults", id, open);
+}
+
+/** Drop what the freshly indexed tree no longer has, so a renamed or deleted
+    folder ages out instead of accumulating. (Its disclosure is lost with it —
+    the same honest reading a renamed doc's folds get.) */
+function pruneOpenStore(folders) {
+  const store = loadOpenStore();
+  const ids = new Set(state.vaults.map((v) => v.id));
+  let dropped = false;
+  const dropMissing = (map, lives) => {
+    for (const key of Object.keys(map)) {
+      if (lives(key)) continue;
+      delete map[key];
+      dropped = true;
+    }
+  };
+  dropMissing(store.folders, (path) => folders.has(path));
+  dropMissing(store.vaults, (id) => ids.has(id));
+  if (dropped) persistOpenStore();
+}
+
+function indexTree(nodes, seen, bySlug, folders) {
   nodes.forEach((n) => {
     if (n.type === "folder") {
-      if (!state.folderOpen.has(n.path)) state.folderOpen.set(n.path, !!n.open);
-      indexTree(n.children, seen, bySlug);
+      folders.add(n.path);
+      if (!state.folderOpen.has(n.path)) state.folderOpen.set(n.path, storedOpen("folders", n.path) ?? !!n.open);
+      indexTree(n.children, seen, bySlug, folders);
     } else {
       seen.add(n.path);
       const slug = n.path.split("/").pop().replace(/\.md$/i, "");
@@ -73,16 +165,18 @@ export async function loadTree() {
      just become AMBIGUOUS would keep silently resolving to whichever doc was
      indexed last. One slug map PER VAULT — a link never crosses one. */
   const seen = new Set();
+  const folders = new Set();
   const slugs = new Map();
   state.vaults.forEach((v) => {
     const bySlug = new Map();
     slugs.set(v.id, bySlug);
-    indexTree(v.tree || [], seen, bySlug);
+    indexTree(v.tree || [], seen, bySlug, folders);
     bySlug.forEach((list) => list.sort());
   });
   state.docPaths = seen;
   state.slugs = slugs;
   for (const p of [...state.docs.keys()]) if (!seen.has(p) && p !== state.active) state.docs.delete(p);
+  pruneOpenStore(folders);
   renderTree();
   $("#vaultName").textContent = r.vault.name;
   $("#vaultSub").textContent =
@@ -203,8 +297,8 @@ function wireDropTarget(row, path, kind, kids) {
       row,
       timer: setTimeout(() => {
         dwell = null;
-        if (kind === "vault") state.vaultOpen.set(row.dataset.vault, true);
-        else state.folderOpen.set(path, true);
+        if (kind === "vault") setVaultOpen(row.dataset.vault, true);
+        else setFolderOpen(path, true);
         row.classList.add("open");
         kids.classList.remove("closed");
       }, 600),
@@ -506,7 +600,7 @@ export function renderTree() {
       row.addEventListener("click", () => {
         state.pick = { path: n.path, kind: "folder" };
         const now = !(state.folderOpen.get(n.path) !== false);
-        state.folderOpen.set(n.path, now);
+        setFolderOpen(n.path, now);
         row.classList.toggle("open", now);
         kids.classList.toggle("closed", !now);
       });
@@ -550,6 +644,9 @@ export function renderTree() {
      the sentence about the directory staying on disk fits. Its children are its
      own tree, one step in. */
   state.vaults.forEach((v) => {
+    /* the vault rows' seed, and the only one the server has no opinion about:
+       what this browser remembers, else open */
+    if (!state.vaultOpen.has(v.id)) state.vaultOpen.set(v.id, storedOpen("vaults", v.id) ?? true);
     const open = state.vaultOpen.get(v.id) !== false;
     const rootKey = vaultRootKey(v.id);
     const wrap = el("div", "rowwrap");
@@ -575,7 +672,7 @@ export function renderTree() {
     row.addEventListener("click", () => {
       pickRoot();
       const now = !(state.vaultOpen.get(v.id) !== false);
-      state.vaultOpen.set(v.id, now);
+      setVaultOpen(v.id, now);
       row.classList.toggle("open", now);
       kids.classList.toggle("closed", !now);
     });
@@ -733,12 +830,12 @@ export function revealFolder(path) {
   const id = vaultOf(path);
   const prefix = vaultPrefix(id);
   let changed = state.vaultOpen.get(id) === false;
-  state.vaultOpen.set(id, true);
+  setVaultOpen(id, true);
   let acc = "";
   for (const s of relOf(path).split("/").filter(Boolean)) {
     acc = acc ? acc + "/" + s : s;
     if (state.folderOpen.get(prefix + acc) === false) changed = true;
-    state.folderOpen.set(prefix + acc, true);
+    setFolderOpen(prefix + acc, true);
   }
   return changed;
 }
