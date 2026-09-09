@@ -19,6 +19,8 @@
        must NOT switch the pane to Raw (a link is a click zone that acts
        instead of editing).
      · SOURCE — none of it costs a byte on disk.
+     · COPY — and the URL is one click away (spec 0016); see the second
+       describe at the foot of this file.
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
@@ -166,4 +168,101 @@ describe("external links render as real links", () => {
     expect(`${EXT}: ${JSON.stringify(r.body.markdown)}`).toBe(`${EXT}: ${JSON.stringify(EXT_SRC)}`);
     expect(`page errors: ${pageErrors.join(" | ")}`).toBe("page errors: ");
   });
+});
+
+/* ============================================================
+   …AND EVERY ONE OF THEM CARRIES A COPY BUTTON (spec 0016).
+
+   The URL is the thing most often wanted out of a link, and taking it used to
+   be a right-click on the desktop or a long-press that opens the link half the
+   time. Three facts hold the affordance still:
+
+     · PLACEMENT — a `button.lcp` immediately after EVERY `a.xl` and after
+       nothing else. The pass lives in `renderPreview`, not in `inline()`, so a
+       chat bubble never grows one; a `.wl` pill navigates in-app and is not a
+       URL to take.
+     · THE HREF, NOT THE LABEL — measured off the REAL system clipboard, with
+       the same grant and realness probe `ux-e2e` uses, and a mailto: arrives
+       without its scheme.
+     · A COPY IS NOT AN EDIT — the click must not fall through to the pane and
+       switch the document to Raw.
+   ============================================================ */
+describe("a link in Preview carries a copy button", () => {
+  /** grant this origin the real clipboard, and prove it is real */
+  async function clipboardSession() {
+    const cdp = await page.createCDPSession();
+    await cdp.send("Browser.grantPermissions" as any, {
+      origin: srv.base,
+      permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+    } as any);
+    const real = await page.evaluate(async () => {
+      try {
+        await navigator.clipboard.writeText("znotes-clip-probe");
+        return (await navigator.clipboard.readText()) === "znotes-clip-probe";
+      } catch {
+        return false;
+      }
+    });
+    expect(`this browser hands over a real clipboard: ${real}`).toBe("this browser hands over a real clipboard: true");
+  }
+
+  const clip = () => page.evaluate(() => navigator.clipboard.readText().catch(() => "<unreadable>"));
+
+  /** a real mouse click on the copy button belonging to `href` */
+  async function copyLink(href: string) {
+    const buttons = await page.$$("#doc button.lcp");
+    const owners = await page.$$eval("#doc button.lcp", (bs) =>
+      bs.map((b) => (b.previousElementSibling as HTMLAnchorElement | null)?.href ?? "")
+    );
+    const i = owners.indexOf(href);
+    expect(`a copy button owned by ${href}: ${i >= 0}`).toBe(`a copy button owned by ${href}: true`);
+    await buttons[i]!.click();
+    await sleep(200);
+  }
+
+  test("every external anchor is followed by a copy button, and nothing else is", async () => {
+    await open(EXT);
+    const m = await page.evaluate(() => {
+      const md = document.querySelector("#doc .md") as HTMLElement;
+      return {
+        xl: [...md.querySelectorAll("a.xl")].map((a) => ({
+          href: (a as HTMLAnchorElement).href,
+          label: a.nextElementSibling?.matches("button.lcp") ? a.nextElementSibling.getAttribute("aria-label") : null,
+        })),
+        wlFollowed: [...md.querySelectorAll("a.wl")].filter((a) => a.nextElementSibling?.matches("button.lcp")).length,
+        inDoc: document.querySelectorAll("#doc .lcp").length,
+        anywhere: document.querySelectorAll(".lcp").length,
+      };
+    });
+
+    /* the fixture's six: three spellings, a mailto, the wikipedia paren, and
+       the bare URL inside the image syntax the renderer does not speak */
+    expect(`external anchors found: ${m.xl.length}`).toBe("external anchors found: 6");
+    for (const a of m.xl)
+      expect(`${a.href} is followed by a button labelled: ${a.label}`).toBe(
+        `${a.href} is followed by a button labelled: Copy link`
+      );
+    expect(`wikilinks that grew one: ${m.wlFollowed}`).toBe("wikilinks that grew one: 0");
+    expect(`buttons in the doc / on the page: ${m.inDoc} / ${m.anywhere}`).toBe(
+      "buttons in the doc / on the page: 6 / 6"
+    );
+  }, 90000);
+
+  test("clicking one copies the href, and does not open Raw", async () => {
+    await open(EXT);
+    await clipboardSession();
+    await copyLink("https://example.com/docs");
+
+    expect(`clipboard: ${await clip()}`).toBe("clipboard: https://example.com/docs");
+    expect(`Raw opened on a copy click: ${!!(await page.$("#rawArea"))}`).toBe("Raw opened on a copy click: false");
+  }, 90000);
+
+  test("a mailto: copies the bare address", async () => {
+    await open(EXT);
+    await clipboardSession();
+    await copyLink("mailto:z@example.com");
+
+    expect(`clipboard: ${await clip()}`).toBe("clipboard: z@example.com");
+    expect(`page errors: ${pageErrors.join(" | ")}`).toBe("page errors: ");
+  }, 90000);
 });

@@ -145,6 +145,35 @@ function lineSpans(lines, start) {
     .join("<br>");
 }
 
+/* THE URL IS WHAT A READER WANTS OUT OF A LINK (spec 0016), and taking it was
+   a right-click on the desktop and, on a phone, a long-press that opens the
+   link half the time. So every external anchor is followed by the code block's
+   own `I.copy`, quiet until hover (`.lcp` in base.css).
+
+   A DOM PASS OVER THE FINISHED DOCUMENT, not a branch in `inline()`: chat
+   bubbles render through `inline()` too, and an assistant's answer is not a
+   document to take URLs out of. Inserting AFTER the anchor keeps the button
+   inside the same `[data-line]` span, so the line mapping click-to-edit and
+   revealLine ride on (ADR 0015) is untouched.
+
+   `stopPropagation` because the click-away handlers that put Preview into Raw
+   are bound at `#scroll`: `previewClickToEdit` already ignores a `button`, but
+   a click that REACHES #scroll is a click outside the document. */
+function copyLinkButton(a) {
+  const b = el("button", "lcp", I.copy);
+  b.type = "button";
+  b.setAttribute("aria-label", "Copy link");
+  b.title = "Copy link";
+  b.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    /* the address, not the scheme — a mailto: puts on the clipboard what the
+       reader would have typed into a To: field */
+    copyText(a.href.replace(/^mailto:/i, ""));
+  });
+  return b;
+}
+
 export function renderPreview(doc, host) {
   const md = el("div", "md editable");
   const lines = doc.markdown.split("\n");
@@ -287,6 +316,8 @@ export function renderPreview(doc, host) {
   }
 
   host.appendChild(md);
+  /* one pass over the built document — see copyLinkButton (spec 0016) */
+  md.querySelectorAll("a.xl").forEach((a) => a.insertAdjacentElement("afterend", copyLinkButton(a)));
   wireFolds(doc, md);
 }
 
