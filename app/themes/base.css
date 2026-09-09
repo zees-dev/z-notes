@@ -421,11 +421,19 @@ html {
          scroller in here already contains its own (see `.scroll`); this is
          the outermost one, which had nothing under it to contain;
        · `tap-highlight-color` — the grey flash a tap leaves on every button
-         and tree row on iOS. `:active` states are the app's own answer. */
+         and tree row on iOS. `:active` states are the app's own answer.
+
+     …and a fourth, for the same reason and one release later:
+       · `touch-action` — the browser's own pinch-zoom and double-tap-zoom,
+         which scale the LAYOUT. The app owns the pinch now and steps the
+         document's TEXT with it (ADR 0033, app/zoom.js); leaving the browser's
+         version on means two things fight over one gesture. `pan-x pan-y`
+         removes exactly those two and keeps every scroll. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
+  touch-action: pan-x pan-y;
 }
 body {
   margin: 0;
@@ -944,14 +952,24 @@ kbd {
    without it .scroll refuses to shrink below its content, the app shell grows
    past 100dvh, the statusbar falls off-screen and — because .scroll then has
    nothing to scroll — focusing the raw textarea scrolls the *document*,
-   yanking the whole UI upward. */
-.scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; position: relative; }
+   yanking the whole UI upward.
+
+   `touch-action` is restated here, and not only on `html`: this is the pane
+   the pinch is wired on (ADR 0033), and a scroller that still offered the
+   browser's own zoom would hand the gesture away before the handler saw it. */
+.scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; position: relative; touch-action: pan-x pan-y; }
 
 /* Preview and Raw render into this exact element with byte-identical box
    metrics and the same scroll container. `.raw-mode` is a state hook only:
    it must never change chrome or layout. */
 .doc {
   max-width: var(--doc-max-w); margin: 0 auto;
+  /* THE ONLY PLACE `--doc-zoom` IS READ (ADR 0033). The pinch ladder publishes
+     a multiplier on <html>; the document is the theme's body size times it, and
+     everything inside that inherits or is em-sized rides along. The chrome —
+     topbar, statusbar, sidebar, chat, `.doc-meta` — sets its own size and so
+     deliberately does not move. */
+  font-size: calc(var(--d-font) * var(--doc-zoom, 1));
   /* Keep a useful pane-sized click target without making that blank space part
      of the textarea. For a short Raw note, the textarea ends with its actual
      content and the remainder belongs to `.doc`, so "click outside" can mean
@@ -1287,7 +1305,9 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
    not the mechanism — nothing here may ever scroll sideways. */
 .code pre {
   margin: 0; padding: var(--d-pre-pad); overflow-x: hidden;
-  font-family: var(--mono); font-size: var(--d-code-fs); line-height: var(--d-pre-lh); color: var(--code-fg);
+  /* a px token, so the zoom has to be applied by hand — em-sized text inherits
+     it from `.doc` and code cannot (ADR 0033) */
+  font-family: var(--mono); font-size: calc(var(--d-code-fs) * var(--doc-zoom, 1)); line-height: var(--d-pre-lh); color: var(--code-fg);
   white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; tab-size: 4;
 }
 /* one source line = one block box, so its wrapped continuations can hang one
@@ -1320,7 +1340,7 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 /* a diagram that will not compile is the ordinary state of one being WRITTEN:
    the reason on top, the source kept underneath, nothing thrown away */
 .mmd.bad .mmd-body { text-align: left; background: var(--danger-soft); }
-.mmd .mmd-err { font-family: var(--mono); font-size: var(--d-code-fs); color: var(--danger); margin-bottom: 8px; white-space: pre-wrap; }
+.mmd .mmd-err { font-family: var(--mono); font-size: calc(var(--d-code-fs) * var(--doc-zoom, 1)); color: var(--danger); margin-bottom: 8px; white-space: pre-wrap; }
 /* `.code pre` above already gives it the mono/wrap treatment; it only has to
    drop that rule's padding, since .mmd-body is already padded */
 .mmd .mmd-src { padding: 0; }

@@ -82,7 +82,7 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   `armor.js`, `entropy.js`, `crypto-worker.js` (the plaintext jail). Leaves
   import only leaves.
 - **Features** — `tree, editor, markdown, secrets, chat, terminal, trash,
-  settings, shell, webmcp`, composed by `app.js` (`start()`). These are mutually
+  settings, shell, webmcp, zoom`, composed by `app.js` (`start()`). These are mutually
   entangled (14 mutual import pairs, a legacy of the single-file split); new
   cross-feature needs should go through `state.js`, an injected callback, or a
   DOM event rather than adding pairs. No `export let` anywhere in `app/`.
@@ -109,6 +109,16 @@ write-through on a user action only — seeding reads, it never writes — both 
 their keys out rather than accumulating (the folds by a document cap, the tree
 by pruning to the tree that just loaded), and both treat an unreadable store as
 no memory rather than an error.
+
+**The look, resolved before the first paint.** Four axes are cached in
+`localStorage` and applied by the inline script at the top of `app/index.html`,
+so a reload never flashes the wrong one: `znotes.scheme`, `znotes.theme` and
+`znotes.density` are caches of a SETTING the server owns (`start()` re-applies
+the real value within a tick), while `znotes.zoom` is owned by the browser
+alone — the pinch ladder's rung (ADR 0033), published as `--doc-zoom` on
+`<html>` and read only by base.css — `.doc`'s font-size and the px-sized code
+tokens inside the document (`.code pre`, `.mmd-err`). `zoom.js` owns
+the gesture, the ladder and that property; nothing else may write it.
 
 **Agents.** `webmcp.js` is the agent's `app.js` (ADR 0031). One table registers
 every operation the human UI offers as a WebMCP tool, each wrapping the feature

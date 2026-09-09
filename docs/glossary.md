@@ -52,6 +52,16 @@ entry lists banned synonyms where drift has happened or is likely.
   or the state (they survive only in the chevron's aria-label), "outline mode"
   (there is no mode — folding is Preview).
 
+## Text size
+
+- **rung / ladder** — the document's text size (ADR 0033). The **ladder** is
+  the fixed list of multipliers a pinch steps through, a **rung** is one of
+  them, and the applied one is published as `--doc-zoom`. Said as a percent to
+  a person and to an agent, as a multiplier everywhere else. *Banned:* "zoom
+  level" (a rung is not a browser zoom, and it never scales the layout),
+  "font size" for this concept (that is the theme's `--d-font`, which the rung
+  multiplies).
+
 ## Secrets (SPEC §6)
 
 - **secret block / age fence** — a fenced ` ```age ` block whose body is age

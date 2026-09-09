@@ -83,6 +83,7 @@ const CATALOGUE = [
   "search_docs",
   "set_mode",
   "set_setting",
+  "set_text_zoom",
   "set_vault_remote",
   "show_panel",
   "sync_vault",
