@@ -1229,6 +1229,21 @@ a.xl {
 }
 a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 
+/* …and the URL it points at is one click away (spec 0016). `renderPreview`
+   puts one of these after every `a.xl`; it is quiet until it is hovered or
+   focused, because a link-heavy note must not read as a field of icons. Sized
+   in `em` throughout, so it tracks the text it sits in at every density and in
+   a heading, and `inline-flex` so it rides the line rather than the baseline of
+   its own glyph. The phone's tap target is in §11. */
+.lcp {
+  display: inline-flex; align-items: center; vertical-align: -.1em;
+  margin-left: .2em; padding: .1em; border: 0; border-radius: var(--r-sm);
+  background: none; color: var(--muted-2); opacity: .55; cursor: pointer; line-height: 1;
+  transition: opacity var(--dur-1), color var(--dur-1), background var(--dur-1);
+}
+.lcp svg { width: .85em; height: .85em; }
+.lcp:hover, .lcp:focus-visible { opacity: 1; color: var(--accent); background: var(--accent-soft); }
+
 .cf-ico {
   width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
   background: var(--danger-soft); color: var(--danger); flex: 0 0 auto;
@@ -2315,6 +2330,12 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   .stack { padding: 7px 10px 3px; }
   .statusbar { gap: 8px; padding: 0 10px; }
   .sc-grid { grid-template-columns: 1fr; }
+  /* the link copy button is the affordance a phone needs MOST — the gesture it
+     replaces is a long-press that opens the link as often as it offers a menu —
+     and at .1em it is ~14px. The padding grows the target rather than the
+     glyph; it cannot use §13's ::after trick because it sits INSIDE running
+     text, where an inset-negative overlay would cover the words around it. */
+  .lcp { padding: .25em; }
 }
 
 /* (there was a fifth `@media (max-width: 600px)` here carrying `.sc-grid {
