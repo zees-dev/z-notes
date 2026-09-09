@@ -393,8 +393,11 @@ const extLink = (href, label) =>
    matched up to the dot. Trailing punctuation is peeled off — entities first,
    since the text is escaped and a quote arrives five characters wide — and a
    `)` only when the URL does not own it (a Wikipedia "…_(disambiguation)" keeps
-   its close-paren because the URL also carries the open). */
-function trimUrlTail(u) {
+   its close-paren because the URL also carries the open).
+
+   Exported for rawedit.js (ADR 0032), which asks the same question of the
+   UNESCAPED source line: the entity branch simply never matches there. */
+export function trimUrlTail(u) {
   for (;;) {
     const ent = /&(amp|lt|gt|quot|#39);$/.exec(u);
     if (ent) {

@@ -17,7 +17,8 @@ import { flushSecretEdits, vault } from "./secrets.js";
 import { refreshSessionStats } from "./chat.js";
 import { exitSettings, guardSettingsExit, settingAt } from "./settings.js";
 import { closeNav, isDrawer, isSheet, markerForLayer, overlayOpen, retireLayerMarker, revealInTree, routeDoc } from "./shell.js";
-import { recordHistory } from "./history.js";
+import { pendingHistory, recordHistory, stepHistory } from "./history.js";
+import { createRawEditor } from "./rawedit.js";
 
 /* ============================================================
    EXIT GUARD — leaving Raw with text that is not on disk
@@ -48,7 +49,7 @@ import { recordHistory } from "./history.js";
    HOW IT MEETS AUTOSAVE. It does not fight it. `markDirty` arms a debounce
    (`editor.autosaveSeconds`, 10s) and `visibilitychange`/`pagehide` flush the
    buffer, so a buffer is "unsaved" only inside that window — once autosave has
-   run, `diskText` and the textarea agree and there is genuinely nothing left to
+   run, `diskText` and the buffer agree and there is genuinely nothing left to
    confirm, so leaving is silent. That makes this dialog INTERMITTENT by nature:
    it appears when you leave quickly after typing and not otherwise. That is the
    honest behaviour and the debounce is a product-level decision, not this guard's to
@@ -168,9 +169,9 @@ function exitGuardProceed(g) {
 /**
  * DISCARD — put the saved document back in the buffer, then leave.
  *
- * The revert is written into BOTH the model and the textarea before `proceed`
+ * The revert is written into BOTH the model and the editor before `proceed`
  * runs, because two of the destinations (`openDoc`, `setMode`) open with a
- * `syncRaw()` that copies the textarea over the model — reverting only the
+ * `syncRaw()` that copies the editor over the model — reverting only the
  * model would have the buffer immediately overwrite it.
  */
 export function exitGuardDiscard() {
@@ -232,6 +233,10 @@ export async function exitGuardSave() {
    RAW MODE
    ============================================================ */
 export function autoGrow(ta) {
+  /* Raw is a contenteditable now (ADR 0032) and a block grows by itself. The
+     composer and the `.secret-edit` reveal editor are still textareas, and
+     this is still the only way to size one. */
+  if (!(ta instanceof HTMLTextAreaElement)) return;
   /* Measuring an auto-growing textarea means briefly collapsing it. In a long
      Raw doc that collapse clamps the OUTER scroll container; restoring the
      textarea's height does not restore the line the user was looking at. Keep
@@ -244,53 +249,13 @@ export function autoGrow(ta) {
   if (sc) sc.scrollTop = keep;
 }
 
-/** A character offset has no DOM box of its own. Mirror the bytes before it
- * with the textarea's real typography so wrapped lines count exactly as they do
- * in Raw — the only way to know where a source line actually sits, since one
- * line is one visual row only until it is longer than the pane. */
-function rawBoxAt(ta, offset) {
-  const cs = getComputedStyle(ta);
-  const tr = ta.getBoundingClientRect();
-  const mirror = document.createElement("div");
-  const marker = document.createElement("span");
-  Object.assign(mirror.style, {
-    position: "fixed",
-    left: tr.left + "px",
-    top: tr.top + "px",
-    width: tr.width + "px",
-    boxSizing: "border-box",
-    visibility: "hidden",
-    pointerEvents: "none",
-    overflow: "visible",
-    whiteSpace: ta.wrap === "off" ? "pre" : "pre-wrap",
-    overflowWrap: ta.wrap === "off" ? "normal" : "break-word",
-    wordBreak: cs.wordBreak,
-    fontFamily: cs.fontFamily,
-    fontSize: cs.fontSize,
-    fontWeight: cs.fontWeight,
-    fontStyle: cs.fontStyle,
-    fontVariant: cs.fontVariant,
-    lineHeight: cs.lineHeight,
-    letterSpacing: cs.letterSpacing,
-    wordSpacing: cs.wordSpacing,
-    textIndent: cs.textIndent,
-    textAlign: cs.textAlign,
-    textTransform: cs.textTransform,
-    direction: cs.direction,
-    padding: cs.padding,
-    borderWidth: cs.borderWidth,
-    borderStyle: cs.borderStyle,
-    tabSize: cs.tabSize,
-  });
-  marker.textContent = "\u200b";
-  const at = Math.max(0, Math.min(offset, ta.value.length));
-  mirror.append(document.createTextNode(ta.value.slice(0, at)), marker);
-  document.body.appendChild(mirror);
-  const mr = marker.getBoundingClientRect();
-  const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
-  mirror.remove();
-  return { top: mr.top, bottom: mr.top + lineHeight };
-}
+/** A character offset has no DOM box of its own — but the LINE holding it
+ * does, and every one of them is a real element now (ADR 0032). So the answer
+ * is a `Range` in the live editor rather than a mirror of the textarea's one
+ * typography: a heading line is taller than a body line, and no single-font
+ * mirror could ever have said so. ADR 0027's "measured, never multiplied" is
+ * unchanged; what it measures is. */
+const rawBoxAt = (ta, offset) => ta.boxAt(offset);
 
 /** Where the caret is, in viewport coordinates. */
 const rawCaretBox = (ta) => rawBoxAt(ta, ta.selectionEnd);
@@ -324,43 +289,21 @@ export function keepRawCaretVisible() {
   caretSettle = setTimeout(revealRawCaret, 220);
 }
 
-function emitRawInput(ta, inputType, data) {
-  ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType, data: data == null ? null : data }));
-}
+/* EVERY STRUCTURAL EDIT THIS FILE MAKES GOES THROUGH THE ADAPTER'S OWN WRITE
+   PRIMITIVE (ADR 0032), which is the only path into the Raw buffer that keeps
+   the model and the DOM agreeing.
 
-/* EVERY STRUCTURAL EDIT THIS FILE MAKES GOES THROUGH THE BROWSER'S OWN EDITING
-   COMMAND, because that is the only way onto the textarea's UNDO STACK.
-
-   `setRangeText` was the obvious tool and it is the wrong one: measured in this
-   repo's Chromium, a `setRangeText` edit is invisible to ⌘Z — worse than
-   ignored, it left the stack pointing at the entry BEFORE it, so the first ⌘Z
-   after a whole-line cut silently did nothing and the line was gone for good.
-   `execCommand` is deprecated and universally implemented, and it is what
-   editors on top of a textarea use for exactly this reason. Measured, same
-   browser, same edit: ⌘Z restores it and ⌘⇧Z redoes it.
-
-   It also fires the native `input` event, so the listener in `renderRaw` runs
-   (dirty, autoGrow, meta) without anyone dispatching one by hand — and an UNDO
-   fires it too, as `historyUndo`, which is what keeps `doc.markdown` in step
-   with a buffer the browser rewound behind the app's back.
-
-   `insertText` covers replacement and insertion; `delete` covers removal and
-   is only ever reached with a non-empty range (with a collapsed one it would
-   eat the character behind the caret). The `setRangeText` fallback is for a
-   browser that refuses the command — the edit still lands, only its undo does
-   not. */
+   It used to go through `document.execCommand`, and for one reason: that was
+   the only way onto a TEXTAREA'S UNDO STACK. There is no textarea any more,
+   and there has been no reason to reach that stack since ADR 0014 — ⌘Z is the
+   app's one timeline across documents, and a per-element stack could never
+   have expressed it. What the adapter keeps is the other half of what
+   `execCommand` gave: it fires the `input` event itself, so the listener in
+   `renderRaw` still runs (dirty, meta, the caret) without anyone dispatching
+   one by hand. */
 function applyRawEdit(ta, start, end, text) {
   if (start === end && !text) return;
-  ta.setSelectionRange(start, end);
-  let ok = false;
-  try {
-    ok = text ? document.execCommand("insertText", false, text) : document.execCommand("delete");
-  } catch (_) {
-    ok = false;
-  }
-  if (ok) return;
-  ta.setRangeText(text, start, end, "end");
-  emitRawInput(ta, text ? "insertText" : "deleteContentBackward", text || null);
+  ta.replaceRange(start, end, text);
 }
 
 function applyWordWrap(ta) {
@@ -562,7 +505,7 @@ function editRawLineClipboard(e, ta) {
   const k = e.key.toLowerCase();
   if (k !== "x" && k !== "c") return false;
   /* Something is selected: this is the browser's gesture, not ours. So is
-     anything pressed under a modal — the guard can open while this textarea
+     anything pressed under a modal — the guard can open while this editor
      still holds focus, and swallowing a copy there would take a chord away
      from the browser to do nothing with it. Both checks come BEFORE the
      preventDefault for that reason. */
@@ -620,12 +563,17 @@ function rawKeydown(e, ta) {
 }
 
 function renderRaw(doc, host) {
-  const ta = el("textarea", "raw");
+  /* Not a textarea: one contenteditable with one block per source line, so a
+     heading is drawn at the heading's size and a link in the link's colour
+     (ADR 0032). It answers to the textarea's own vocabulary, which is why
+     everything below this line is what it always was. */
+  const ta = createRawEditor();
   ta.id = "rawArea";
   /* The SAME six attributes the reveal editor carries (research §6,
-     "DOM-adjacent services"). ⌘⇧E only works in Raw, so this textarea is where
+     "DOM-adjacent services") — they work on a contenteditable exactly as they
+     worked on the textarea. ⌘⇧E only works in Raw, so this surface is where
      every secret in the vault is typed BEFORE it becomes ciphertext — it is the
-     one field in the app that holds pre-encryption plaintext. */
+     one place in the app that holds pre-encryption plaintext. */
   ta.spellcheck = false;
   ta.setAttribute("autocomplete", "off");
   ta.setAttribute("autocorrect", "off");
@@ -638,6 +586,14 @@ function renderRaw(doc, host) {
      its own emptiness says nothing the blank page did not already say */
   ta.placeholder = "# " + doc.title;
   ta.style.tabSize = String(settingAt("editor.tabSize"));
+  /* A phone keyboard's undo key, shake-to-undo and the Edit menu reach the
+     editor as `historyUndo`/`historyRedo` rather than as ⌘Z, so they arrive
+     HERE instead of at app.js's chord — and they mean the same thing (ADR
+     0014): the app's timeline, not the browser's. */
+  ta.onHistory = (redo) => {
+    flushTextRun();
+    if (pendingHistory(redo)) stepHistory(redo);
+  };
   ta.addEventListener("input", () => {
     /* BEFORE the model moves: the run's `before` is whatever the last closed
        run left, and opening the run has to happen while that is still true. */
@@ -665,7 +621,7 @@ function renderRaw(doc, host) {
   applyWordWrap(ta);
 }
 
-/* pull pending textarea edits into the cache before anything re-renders */
+/* pull pending editor edits into the cache before anything re-renders */
 export function syncRaw() {
   if (state.mode !== "raw") return;
   const ta = $("#rawArea");
@@ -679,10 +635,10 @@ export function syncRaw() {
 }
 
 /**
- * Push the model back into the Raw textarea after something OTHER than typing
- * moved it. `syncRaw` is one-way (textarea → model) and doSaveDoc runs it
+ * Push the model back into the Raw editor after something OTHER than typing
+ * moved it. `syncRaw` is one-way (editor → model) and doSaveDoc runs it
  * BEFORE `flushSecretEdits`, so a re-encrypt that lands while the pane is in
- * Raw left the textarea holding the pre-flush armor — and the next syncRaw
+ * Raw left the editor holding the pre-flush armor — and the next syncRaw
  * (every mode switch does one) wrote that stale armor back over the ciphertext
  * that had just been saved, reverting the edit on disk under a "Saved" toast.
  *
@@ -836,7 +792,7 @@ function relTime(mtime) {
 /**
  * THE ON-DISK TEXT, remembered beside the buffer.
  *
- * `doc.markdown` cannot answer "what is on disk?" — the Raw textarea writes
+ * `doc.markdown` cannot answer "what is on disk?" — the Raw editor writes
  * straight into it on every keystroke (see `renderRaw`), so by the time
  * anything asks, the model and the buffer are the same string. `doc.diskText`
  * is the last markdown the SERVER confirmed, and it is the only thing the exit
@@ -1333,7 +1289,7 @@ export function flushTextRun() {
   recordHistory({ kind: "text", path, before, after });
 }
 
-/** Called from the Raw textarea's input listener, and from anywhere else that
+/** Called from the Raw editor's input listener, and from anywhere else that
     moves a doc's text on the user's behalf. */
 export function noteTextEdit(path) {
   if (!path) return;

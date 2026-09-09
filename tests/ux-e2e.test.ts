@@ -509,7 +509,7 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
     const cdp = await clipboardSession();
     await app.clickDoc(NAV_DOC);
 
-    /* ---- the RAW textarea ---- */
+    /* ---- the RAW editor ---- */
     await app.chord("KeyE");
     await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
     await setClip("UNTOUCHED");
@@ -521,8 +521,8 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
     });
     let before = await chatOpenNow();
     await cmdC(cdp);
-    expect(`raw: focused element is still the textarea: ${await page.evaluate(() => document.activeElement!.id)}`).toBe(
-      "raw: focused element is still the textarea: rawArea"
+    expect(`raw: focused element is still the editor: ${await page.evaluate(() => document.activeElement!.id)}`).toBe(
+      "raw: focused element is still the editor: rawArea"
     );
     expect(`raw: clipboard === the selected source: ${(await clip()) === rawWant}`).toBe(
       "raw: clipboard === the selected source: true"
@@ -592,7 +592,7 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
    With nothing selected, ⌘X takes the line — the convention every code editor
    has kept since `dd`. It belongs beside the ⌘C block above because it claims
    the same two chords, in the one place they were previously dead: inside the
-   raw textarea with a COLLAPSED caret, where the browser has nothing to copy
+   Raw editor with a COLLAPSED caret, where the browser has nothing to copy
    and `typing()` has already kept the chat toggle off them.
 
    Measured on the document, the caret and the real clipboard rather than on
@@ -630,7 +630,7 @@ describe("ux — ⌘X and ⌘C take the whole line when nothing is selected", ()
     expect(`this browser hands over a real clipboard: ${real}`).toBe("this browser hands over a real clipboard: true");
   }
 
-  /** Put known source in the textarea with the caret at `pos`, bypassing the
+  /** Put known source in the editor with the caret at `pos`, bypassing the
       keyboard: what is being measured is the chord, not how the text got there.
 
       The `input` event is dispatched and then waited out, because the app's
@@ -886,7 +886,7 @@ describe("ux — ⌘X and ⌘C take the whole line when nothing is selected", ()
    at, and the chord is one keystroke from one people press reflexively.
 
    The three things that could go wrong are each a test here: it must not
-   shadow the editor's own ⌘Z (which is the textarea's, ADR 0013) even when a
+   shadow the editor's own ⌘Z (the app timeline's, ADR 0014) even when a
    file undo is pending; it must not swallow the chord when it has nothing to
    do with it; and a prompt the user declines must leave the undo still on
    offer rather than spending it.
@@ -1289,7 +1289,7 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
 
   test("the editor keeps its own ⌘Z, even with a file undo pending", async () => {
     /* THE COLLISION THIS FEATURE COULD HAVE CAUSED. A pending file undo plus a
-       caret in the Raw textarea is the state where a greedy binding would eat
+       caret in the Raw editor is the state where a greedy binding would eat
        the text undo — and the user would get a dialog about a file they were
        not thinking about instead of their last keystroke back. */
     await deleteFromTree(UNDO_DOC);
@@ -1303,8 +1303,8 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     await page.keyboard.up("Meta");
     await sleep(300);
 
-    expect(`focus is still the textarea: ${await page.evaluate(() => document.activeElement!.id)}`).toBe(
-      "focus is still the textarea: rawArea"
+    expect(`focus is still the editor: ${await page.evaluate(() => document.activeElement!.id)}`).toBe(
+      "focus is still the editor: rawArea"
     );
     expect(`a file dialog was raised: ${await confirmUp()}`).toBe("a file dialog was raised: false");
     expect(`the file history was not touched: ${!(await docsInTree()).includes(UNDO_DOC)}`).toBe(
@@ -1411,7 +1411,7 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
      ⌘Z → a.md's edit comes back, AND the pane goes to a.md
 
    Every step of it is something the browser's own undo cannot do: its history
-   is per-textarea, dies when `renderDoc` builds the next one, and has no way
+   is per-element, dies when `renderDoc` builds the next one, and has no way
    to hold a file operation. This is the test that says the app's timeline
    really is one ordered list spanning documents and kinds — and that it takes
    you to the document it is talking about, which is the difference between an

@@ -35,8 +35,8 @@ ladder. The browser's own pinch-zoom is switched off so the two cannot fight.**
   every rung is a size the themes were checked at, the step is visible on a 4"
   screen, and the value is short enough to say in a toast. A continuous factor
   lands on 1.0736 and stays there.
-- **One published number.** `--doc-zoom` on `<html>`, read in exactly one
-  place — base.css §7's `.doc`, whose `font-size` is `calc(var(--d-font) *
+- **One published number.** `--doc-zoom` on `<html>`, read only in base.css —
+  §7's `.doc`, whose `font-size` is `calc(var(--d-font) *
   var(--doc-zoom, 1))`. Everything in the document that inherits or is
   `em`-sized rides along; the two px-sized code tokens inside `.doc` are
   multiplied by the same `calc` by hand. The chrome — topbar, statusbar,

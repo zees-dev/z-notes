@@ -81,14 +81,24 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   modals; feature callbacks injected via `wireDialogs()` from `app.js`),
   `armor.js`, `entropy.js`, `crypto-worker.js` (the plaintext jail). Leaves
   import only leaves.
-- **Features** — `tree, editor, markdown, secrets, chat, terminal, trash,
-  settings, shell, webmcp, zoom`, composed by `app.js` (`start()`). These are mutually
-  entangled (14 mutual import pairs, a legacy of the single-file split); new
-  cross-feature needs should go through `state.js`, an injected callback, or a
-  DOM event rather than adding pairs. No `export let` anywhere in `app/`.
+- **Features** — `tree, editor, markdown, rawedit, secrets, chat, terminal,
+  trash, settings, shell, webmcp, zoom`, composed by `app.js` (`start()`). These are
+  mutually entangled (14 mutual import pairs, a legacy of the single-file
+  split); new cross-feature needs should go through `state.js`, an injected
+  callback, or a DOM event rather than adding pairs. No `export let` anywhere
+  in `app/`.
   `mermaid.js` is the newest and is deliberately the cleanest: `markdown.js`
   imports it, it imports `ui.js` and nothing else, and it owns its own theme
   observer rather than making `settings.js` learn about diagrams (ADR 0010).
+  `rawedit.js` is the next cleanest and the only one that is a leaf of a
+  FEATURE rather than a peer of one: it imports `ui.js` and nothing else, and
+  `editor.js` is the only file that imports it. It builds the Raw surface — a
+  `contenteditable` with one block per source line, so a heading is drawn at
+  the heading's size and a link in the link's colour (ADR 0032) — behind the
+  textarea's own vocabulary (`value`, `selectionStart`, `setSelectionRange`,
+  `input`/`select`/`copy`/`cut`), plus two verbs of its own: `replaceRange`,
+  the single write primitive every edit goes through, and `boxAt`, where
+  ADR 0027's measurement now happens.
 - **Static, not modules** — `index.html`, `themes/*.css`, `manifest.json`,
   `icons/*.png` and `vendor/mermaid.js`. All are written by GENERATORS run by
   hand and committed, never by a build step: `scripts/make-icons.ts` draws the

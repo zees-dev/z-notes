@@ -103,7 +103,7 @@ const PARITY_PROPS = [
  * 24px; margin-top: 18px }` moved the first line of the document 24px right and
  * 4px down on every ⌘E, in every breakpoint and both densities, and the gate
  * stayed green because `#doc` itself had not moved. So the text origin is
- * measured too: the first painted block in Preview, and the textarea's own text
+ * measured too: the first painted block in Preview, and the editor's own text
  * box (its rect plus its padding, which is what a theme would add) in Raw.
  */
 async function measureDocContainer() {
@@ -266,7 +266,7 @@ describe("e2e — ⌘E and container parity", () => {
 
   /* parity is owed across densities AND breakpoints. base.css overrides
      .doc padding at <=1150px and again at <=767px, so a rule that
-     forgets one mode (or a mobile-only inset on the raw textarea) breaks parity
+     forgets one mode (or a mobile-only inset on the Raw editor) breaks parity
      on every phone while a desktop-only measurement stays green.
 
      One fixture per SHELL BAND (base.css §11), not per padding rule: the shell
@@ -528,8 +528,8 @@ describe("e2e — ⌘E and container parity", () => {
   test("no focusable text field computes under 16px at 390px (iOS zoom-on-focus)", async () => {
     await page.setViewport({ width: 390, height: 844 });
     await sleep(320);
-    /* Raw mode so textarea.raw exists, and the create-row so .newrow input
-       does — both are built by app.js and are absent from the shell. */
+    /* Raw mode so the editor exists, and the create-row so .newrow input does
+       — both are built by app.js and are absent from the shell. */
     await setMode(page, "raw");
     /* the sidebar is a drawer at this width, so the control is off-canvas —
        .click() in-page is deliberate: the row only has to be MOUNTED for its
@@ -550,7 +550,6 @@ describe("e2e — ⌘E and container parity", () => {
       }
       const named: Record<string, number | null> = {};
       for (const [k, s] of [
-        [".raw", "textarea.raw"],
         [".composer", ".composer textarea"],
         [".inp", ".inp"],
         [".term-in", ".term-in"],
@@ -558,13 +557,26 @@ describe("e2e — ⌘E and container parity", () => {
         const n = document.querySelector(s) as HTMLElement | null;
         named[k] = n ? parseFloat(getComputedStyle(n).fontSize) : null;
       }
-      return { under, named, total: document.querySelectorAll(sel).length };
+      /* THE RAW EDITOR IS NOT A FIELD (ADR 0032). It is a contenteditable at
+         the document size, which is the whole point — a 16px floor on it was
+         the biggest Preview→Raw size jump on a phone. So it is not swept and
+         not floored; what is asserted is that it is still editable. */
+      const raw = document.getElementById("rawArea");
+      return {
+        under,
+        named,
+        total: document.querySelectorAll(sel).length,
+        rawEditable: !!raw && raw.isContentEditable,
+        rawIsField: !!raw && raw.matches(sel),
+      };
     });
 
     console.log(`    iOS zoom floor: ${probe.total} fields swept · named ${JSON.stringify(probe.named)}`);
     expect(`fields under 16px: ${probe.under.join(", ") || "none"}`).toBe("fields under 16px: none");
-    /* and the four the checklist names were really present to be measured */
-    for (const k of [".raw", ".composer", ".inp", ".term-in"]) {
+    expect(`the Raw editor is editable: ${probe.rawEditable}`).toBe("the Raw editor is editable: true");
+    expect(`…and is not a form field: ${!probe.rawIsField}`).toBe("…and is not a form field: true");
+    /* and the three the checklist names were really present to be measured */
+    for (const k of [".composer", ".inp", ".term-in"]) {
       expect(`${k} computed: ${probe.named[k] === null ? "NOT MOUNTED" : probe.named[k] + "px"}`).toBe(
         `${k} computed: ${probe.named[k]}px`
       );
