@@ -1145,6 +1145,50 @@ function alignPreview(at) {
   sc.scrollTop = Math.max(0, Math.min(want, sc.scrollHeight - sc.clientHeight));
 }
 
+/* ---------- the way back in (ADR 0036) ----------
+
+   Where the caret was when Raw was last left, per doc — Esc is only half a
+   round trip until something remembers the far end of it. `setMode` is the one
+   door out, and the last moment the caret exists: `renderDoc` is about to
+   replace the editor holding it.
+
+   Nothing clears this: a stale offset is clamped to the document's length on
+   use (an SSE reload, an accepted proposal and an undo all change the text
+   under it), and the map holds one number per doc opened this session. It is
+   deliberately NOT persisted — a reload starts the reading fresh. */
+const rawCaret = new Map();
+
+/**
+ * Re-enter Raw at the caret Preview was entered from, with that caret's line
+ * held where it already sits on screen — ADR 0027's rule aimed at the caret
+ * line rather than the top one, because "carry on typing" is about the caret.
+ *
+ * Returns whether it fired, so the key handler knows whether to claim Enter.
+ * A caret whose line is scrolled away (or folded, ADR 0023) has no box to aim
+ * at, and an undefined anchor is what makes `scrollRawTo` fall back to its
+ * default — Enter still means "continue editing", just scrolled into view.
+ */
+export function resumeRaw() {
+  const doc = activeDoc();
+  if (!doc || state.view !== "doc" || state.mode !== "preview") return false;
+  const md = String(doc.markdown || "");
+  const caret = Math.max(0, Math.min(rawCaret.get(doc.path) ?? 0, md.length));
+  const line = md.slice(0, caret).split("\n").length - 1;
+  const sc = $("#scroll");
+  const b = blockForLine(line);
+  let anchor;
+  if (b && b.offsetParent && sc) {
+    const r = b.getBoundingClientRect();
+    const s = sc.getBoundingClientRect();
+    if (r.bottom > s.top && r.top < s.bottom) anchor = r.top - s.top;
+  }
+  /* `line` is always passed so setMode keeps THIS caret instead of replacing it
+     with the top-of-pane line; `silent` because the caret blinking in the
+     source is the answer, and a toast over it adds nothing. */
+  setMode("raw", { caret, line, anchor, silent: true });
+  return true;
+}
+
 export function setMode(m, opts) {
   opts = opts || {};
   if (m !== "raw" && m !== "preview") return;
@@ -1162,6 +1206,14 @@ export function setMode(m, opts) {
   const keep = sc ? sc.scrollTop : 0;
   /* read the shared coordinate BEFORE the DOM is replaced under us */
   const carry = opts.line != null ? null : state.mode === "preview" ? previewAnchor() : rawAnchor();
+  /* …and, on the way out of Raw, the caret itself — through whichever door
+     (Esc, ⌘E, the chip, a click on the pane, Back on a phone), because Enter
+     is the way back to it (ADR 0036). The anchor above is not enough: it is a
+     LINE, and resuming halfway through a sentence is the whole point. */
+  if (m === "preview") {
+    const ta = $("#rawArea");
+    if (ta) rawCaret.set(state.active, ta.selectionStart);
+  }
   state.mode = m;
   syncModeUI();
   renderDoc({ noFade: true });

@@ -21,7 +21,7 @@ import { pendingHistory, stepHistory, wireHistory } from "./history.js";
 import { LONGPRESS_MS, applyFileHistory, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
 import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, wireDialogs } from "./dialogs.js";
 import { refreshTrash, toggleTrash } from "./trash.js";
-import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, flushTextRun, initWordWrap, keepRawCaretVisible, openDoc, paneClickToPreview, previewClickToEdit, saveDoc, setMode, startHeaderRename, syncModeUI, toggleWordWrap, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
+import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, flushTextRun, initWordWrap, keepRawCaretVisible, openDoc, paneClickToPreview, previewClickToEdit, resumeRaw, saveDoc, setMode, startHeaderRename, syncModeUI, toggleWordWrap, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
 import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, palSetMode, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
@@ -576,6 +576,13 @@ function wire() {
     connect();
   });
 
+  /* Everything that has its own answer to Enter, as one selector: a control, a
+     link, a field, the shell's own regions and every floating layer. What is
+     left is the document pane and the page itself — the only place Enter is
+     free to mean "resume editing" (ADR 0036). */
+  const RESUME_BLOCKED =
+    'button, a, input, textarea, select, [contenteditable]:not([contenteditable="false"]), #sidebar, .chat, .topbar, .statusbar, .modal, .veil, .pop';
+
   const typing = () => {
     const a = document.activeElement;
     return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable);
@@ -608,6 +615,26 @@ function wire() {
           primary.click();
           return;
         }
+      }
+      /* …and with nothing more specific claiming the key, Enter is the way back
+         INTO Raw, at the caret Esc left behind (ADR 0036) — Esc's other half.
+         The selector is deliberately WIDE: only "nothing focused, document
+         showing" is claimed, so a focused tree row still renames (tree.js
+         `rowKeys`), a [[link]] pill still follows, and a settings field, the
+         chat composer, the terminal line and every modal button keep their own
+         Enter. Modifiers are excluded outright — none of them mean this. */
+      if (
+        state.view === "doc" &&
+        state.mode === "preview" &&
+        !overlayOpen() &&
+        !mod &&
+        !e.altKey &&
+        !e.shiftKey &&
+        target &&
+        target.closest &&
+        !target.closest(RESUME_BLOCKED)
+      ) {
+        if (resumeRaw()) e.preventDefault();
       }
     }
     /* ⇧F10 / the Menu key — the keyboard equivalent of the right-click, and the
