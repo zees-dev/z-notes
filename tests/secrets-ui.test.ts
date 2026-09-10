@@ -55,7 +55,7 @@ import {
   type SeedMap,
   type TestServer,
 } from "./helpers";
-import { launchTestBrowser, pressChord } from "./browser";
+import { forgetLastDoc, launchTestBrowser, pressChord } from "./browser";
 
 const PASSPHRASE = "correct horse battery staple mango velvet";
 const PLAIN = "AWS_SECRET_ACCESS_KEY=UICANARYALPHA\n";
@@ -205,7 +205,7 @@ async function newPage(
   server: TestServer,
   opts: { query?: string; noSubtle?: boolean; clipShim?: boolean; countOps?: boolean } = {}
 ) {
-  const p = await browser.newPage();
+  const p = await forgetLastDoc(await browser.newPage());
   await p.setViewport({ width: 1440, height: 900 });
   if (opts.countOps) {
     /* every op the page asks the crypto worker for. A retry LOOP is not a

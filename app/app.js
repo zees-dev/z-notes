@@ -25,7 +25,7 @@ import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuard
 import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, palSetMode, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
-import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
+import { CLOSERS, VEILS, app, bootDoc, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
 import { registerWebMcpTools } from "./webmcp.js";
 
@@ -895,20 +895,16 @@ export async function start() {
   const [, , sync] = await Promise.all([loadTree(), loadSession(), api.getSyncStatus(), loadProposals()]);
   paintSync(sync);
 
-  /* A deep link or a reload names the doc to open; the tree we just loaded is
-     what says whether it still exists, so an unknown or deleted path costs one
-     toast and falls back instead of booting into an empty shell.
-
-     never state.tree[0]: the tree lists folders before root-level files, so in
-     a vault where every doc is empty that would hand openDoc a FOLDER path */
+  /* A deep link or a reload names the doc to open; a bare `/` names none.
+     `bootDoc` answers both against the tree we just loaded (ADR 0035) — an
+     unknown or deleted path costs one toast and falls down the ladder (the last
+     doc this browser opened, the home doc, the first doc) instead of booting
+     into an empty shell. */
   const wanted = urlDoc();
   /* read BEFORE openDoc: it replaces the address bar with the doc's URL, so
      asking `location` afterwards asks about a URL this boot just wrote */
   const wantSettings = urlSettings();
-  const first =
-    (wanted && state.docPaths.has(wanted) && wanted) ||
-    findDocAcross((n) => !n.empty) ||
-    findDocAcross(() => true);
+  const first = bootDoc(wanted);
   wire();
   initWordWrap();
   syncModeUI();

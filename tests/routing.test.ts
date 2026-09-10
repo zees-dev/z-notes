@@ -38,6 +38,10 @@ const LINK_SOURCE = "zz-links/source.md";
 const LINK_TARGET = "zz-links/foo.txt.md";
 const ROOT_LINK_SOURCE = "zz-links/root-source.md";
 const ROOT_LINK_TARGET = "root-double.txt.md";
+/* the one doc this file is allowed to DELETE — the resume ladder has to survive
+   a stored doc the vault no longer has, and every other seed is load-bearing
+   somewhere below */
+const GONE = "zz-resume/gone.md";
 
 const BASE_LEN = BASE_HISTORY_LEN;
 
@@ -55,6 +59,7 @@ beforeAll(async () => {
       [ROOT_LINK_SOURCE]: `# Root source\n\nOpen [[./${ROOT_LINK_TARGET}]].\n`,
       "root-double.txt": "# Root sibling\n",
       [ROOT_LINK_TARGET]: "# Root double extension target\n",
+      [GONE]: "# Deleted while you were away\n",
     },
   });
   browser = await launchTestBrowser();
@@ -407,6 +412,95 @@ describe("routing — deep links and reloads", () => {
     }));
     expect(hrefs).toEqual({ theme: "/themes/" + DEFAULTS.theme + ".css", base: "/" });
     expect(bad).toEqual([]);
+  }, 60000);
+});
+
+/* ---------------- the root resumes ---------------- */
+
+/* `/` means "where you were" (ADR 0035): the last doc THIS BROWSER opened, then
+   the configured home doc, then the first doc. These pages keep the store the
+   rest of the harness clears before every boot — see `forgetLastDoc`. */
+describe("routing — the root resumes", () => {
+  let rp: Page;
+  let rui: AppDriver;
+  let errs: string[];
+
+  const store = (p: string) =>
+    rp.evaluate((v) => localStorage.setItem("znotes.last-doc", v as string), p);
+  /** a resuming page, and the driver bound to it */
+  async function open() {
+    rp = await newAppPage(browser, { resume: true, onPageError: (m) => errs.push(m) });
+    rui = appDriver(rp, srv.base);
+  }
+  const setHome = async (doc: string) => {
+    const r = await srv.api("PUT", "/api/settings", { editor: { homeDoc: doc } });
+    expect(`PUT editor.homeDoc=${doc} → ${r.status}`).toBe(`PUT editor.homeDoc=${doc} → 200`);
+  };
+
+  beforeEach(async () => {
+    errs = [];
+    await open();
+  });
+
+  afterEach(async () => {
+    if (rp) await rp.close().catch(() => {});
+  });
+
+  test("/ opens the doc this browser last had on screen", async () => {
+    await rui.boot("/");
+    await rui.clickDoc(B);
+    await rui.boot("/");
+    expect(await rui.shown()).toBe(B);
+    expect(await rui.urlPath()).toBe(dUrl(B));
+  }, 60000);
+
+  test("a /d/ link wins over the store — and is what / resumes next", async () => {
+    await rui.boot("/");
+    await rui.clickDoc(B);
+    await rui.boot(dUrl(C));
+    expect(await rui.shown()).toBe(C);
+    await rui.boot("/");
+    expect(await rui.shown()).toBe(C);
+  }, 60000);
+
+  test("a stored doc the vault no longer has is skipped, not an error", async () => {
+    await rui.boot("/");
+    await rui.clickDoc(GONE);
+    /* the tab is closed BEFORE the delete: the case the ladder is for is a doc
+       that went away while you were gone — another device, a git pull, an `rm` */
+    await rp.close();
+    const del = await srv.api("DELETE", "/api/docs/" + enc(GONE));
+    expect(`DELETE ${GONE} → ${del.status}`).toBe(`DELETE ${GONE} → 204`);
+
+    await open();
+    await rui.boot("/");
+    expect(await rui.shown()).toBe(A);
+    expect(errs).toEqual([]);
+  }, 60000);
+
+  test("with nothing to resume, / opens the configured home doc", async () => {
+    await setHome(C);
+    try {
+      await rui.boot("/");
+      await rp.evaluate(() => localStorage.removeItem("znotes.last-doc"));
+      await rui.boot("/");
+      expect(await rui.shown()).toBe(C);
+
+      /* …and equally when the store names a doc that is not in the tree */
+      await store("gone/never.md");
+      await rui.boot("/");
+      expect(await rui.shown()).toBe(C);
+    } finally {
+      await setHome(DEFAULTS.editor.homeDoc);
+    }
+  }, 60000);
+
+  test("a page without `resume` boots on the first doc — the harness reset works", async () => {
+    await rui.boot("/");
+    await rui.clickDoc(B);
+    /* `page` is the default harness page every other test in this file uses */
+    await boot("/");
+    expect(await shown()).toBe(A);
   }, 60000);
 });
 

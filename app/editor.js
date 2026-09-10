@@ -16,7 +16,7 @@ import { changedLineDiff, conflictDialog, orphanDialog, renderDiff } from "./dia
 import { flushSecretEdits, vault } from "./secrets.js";
 import { refreshSessionStats } from "./chat.js";
 import { exitSettings, guardSettingsExit, settingAt } from "./settings.js";
-import { closeNav, isDrawer, isSheet, markerForLayer, overlayOpen, retireLayerMarker, revealInTree, routeDoc } from "./shell.js";
+import { closeNav, isDrawer, isSheet, markerForLayer, overlayOpen, rememberLastDoc, retireLayerMarker, revealInTree, routeDoc } from "./shell.js";
 import { recordHistory } from "./history.js";
 
 /* ============================================================
@@ -999,6 +999,10 @@ export async function openDoc(path, opts) {
   /* plaintext lives exactly as long as the doc that holds it is on screen */
   for (const [k, e] of [...state.reveal]) if (e.path !== path) state.reveal.delete(k);
   state.active = path;
+  /* …and this is where the browser will come back to when it is next handed a
+     bare `/` (ADR 0035). Beside `state.active` rather than beside `routeDoc`
+     because it is the same fact one shelf up: the doc that is on screen. */
+  rememberLastDoc(path);
   /* Opening a doc IS a change of context, so the sidebar pick stops speaking
      for ⌥N: the open doc's folder is the context from here (`createParent`).
      Without this, opening a doc from the palette or a [[link]] would still

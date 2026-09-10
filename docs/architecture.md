@@ -98,6 +98,17 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   `age.<hash>.js` is built in memory at boot and has no file, everything else
   is an ordinary file under `app/vendor/`.
 
+**Where `/` goes.** The bare root is a request for the default PLACE, not a
+place: `shell.js bootDoc()` resolves it at boot against the tree that just
+loaded — the doc a `/d/` URL named, else the last doc this browser opened
+(`znotes.last-doc`, written by `openDoc` beside `state.active` for every open),
+else `editor.homeDoc`, else the first doc — and `openDoc` replaces the address
+with that doc's `/d/` URL (ADR 0035). The store is per browser and never
+synced; an entry the tree no longer has is skipped by the ladder rather than
+pruned on delete, and a store that cannot be read at all degrades to the last
+two rungs. The e2e harness clears it before every boot (`tests/browser.ts`), so
+suites measure the first doc unless they ask to `resume`.
+
 **Agents.** `webmcp.js` is the agent's `app.js` (ADR 0031). One table registers
 every operation the human UI offers as a WebMCP tool, each wrapping the feature
 function the click or the chord calls, so the open buffer, the undo timeline,

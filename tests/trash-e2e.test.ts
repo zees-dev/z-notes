@@ -31,7 +31,7 @@ import { type Browser, type Page } from "puppeteer-core";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { startServer, waitUntil, type SeedMap, type TestServer } from "./helpers";
-import { launchTestBrowser } from "./browser";
+import { forgetLastDoc, launchTestBrowser } from "./browser";
 
 /* ------------------------------------------------------------------
    fixtures
@@ -180,7 +180,7 @@ async function installTrashRoutes(p: Page) {
 beforeAll(async () => {
   srv = await startServer({ seed: SEED });
   browser = await launchTestBrowser();
-  page = await browser.newPage();
+  page = await forgetLastDoc(await browser.newPage());
   await page.setViewport({ width: 1440, height: 900 });
   page.on("pageerror", (e) => pageErrors.push(e.message));
   page.on("console", (mg) => {
@@ -674,7 +674,7 @@ describe("the trash at phone width and in every theme", () => {
     await openDoc(page, "a-seq/phone.md");
     await deleteDoc(page, "a-seq/phone.md");
 
-    const p = await browser.newPage();
+    const p = await forgetLastDoc(await browser.newPage());
     try {
       await p.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
       p.on("pageerror", (e) => pageErrors.push(e.message));
@@ -744,7 +744,7 @@ describe("the trash at phone width and in every theme", () => {
   test("it is legible and correctly ordered in minimal, modern and terminal", async () => {
     const report: string[] = [];
     for (const theme of ["minimal", "modern", "terminal"]) {
-      const p = await browser.newPage();
+      const p = await forgetLastDoc(await browser.newPage());
       try {
         await p.setViewport({ width: 1440, height: 900 });
         p.on("pageerror", (e) => pageErrors.push(e.message));

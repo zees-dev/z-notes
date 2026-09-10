@@ -37,7 +37,7 @@ import { type Browser, type Page } from "puppeteer-core";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { startServer, type SeedMap, type TestServer } from "./helpers";
-import { launchTestBrowser } from "./browser";
+import { forgetLastDoc, launchTestBrowser } from "./browser";
 
 /* ------------------------------------------------------------------
    fixtures
@@ -94,7 +94,10 @@ const pageErrors: string[] = [];
 beforeAll(async () => {
   srv = await startServer({ seed: SEED });
   browser = await launchTestBrowser();
-  page = await browser.newPage();
+  /* the afterEach re-boots at `/`, and `/` resumes the last doc this browser
+     opened (ADR 0035) — so every case would start on the previous case's
+     document instead of the first one. See `forgetLastDoc`. */
+  page = await forgetLastDoc(await browser.newPage());
   await page.setViewport({ width: 1440, height: 900 });
   page.on("pageerror", (e) => pageErrors.push(e.message));
   page.on("console", (m) => {
