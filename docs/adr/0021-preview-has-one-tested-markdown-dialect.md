@@ -41,7 +41,7 @@ real-browser regression.**
   corpus renders the complete set, exercises interactions and hostile input,
   verifies computed strike styling, and re-reads the file byte-for-byte.
   Focused Mermaid, link, line-break and code-fence suites remain the deeper
-  security/behavior checks.
+  security/behavior checks. A list item whose text begins with `>` is a quote inside the item (`- > said`), and a `>` line indented at least to that item's text column continues it rather than ending the list.
 
 ## Consequences
 

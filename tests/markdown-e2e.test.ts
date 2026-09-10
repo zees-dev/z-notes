@@ -93,6 +93,14 @@ const SOURCE = [
   "> crlf\r",
   "> u2028\u2028tail",
   "",
+  /* A quote UNDER A BULLET is typed with the marker after the bullet, and its
+     next lines indented to the item's text; a `>` line indented past the
+     bullet is the quote going on, not the list ending. */
+  "- > quoted item",
+  "  > still quoted",
+  "  - > nested quoted",
+  "- plain after",
+  "",
 ].join("\n");
 
 /** the source line a fixture line was written on, so the quote assertions
@@ -103,6 +111,7 @@ const QUOTE_LINES = {
   nested: lineOf("> outer"),
   aside: lineOf("    > aside"),
   terminators: lineOf("> crlf\r"),
+  inList: lineOf("- > quoted item"),
 };
 
 const SEED: SeedMap = {
@@ -255,6 +264,15 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
           /* the CR the HTML parser may have turned into a newline is not the
              point — that the line rendered AT ALL is */
           terminators: plines(terminators, ".pline").map((t) => t!.replace(/[\r\n]+$/, "")),
+          /* the quoted item: its quote holds the continuation line, the nested
+             item holds its own, the list is still one list, and the item's
+             blockquote is not inset the way a document-level `    > aside` is */
+          inList: plines(md.querySelector(`li[data-line="${Q.inList}"]`)!, ":scope > .tx > blockquote > .pline"),
+          inListNested: plines(md.querySelector(`li[data-line="${Q.inList + 2}"]`)!, ":scope > .tx > blockquote > .pline"),
+          inListLines: [...md.querySelector(`li[data-line="${Q.inList}"]`)!.querySelectorAll(":scope > .tx > blockquote > .pline")].map((n) => n.getAttribute("data-line")),
+          listIntact:
+            md.querySelector(`li[data-line="${Q.inList}"]`)!.parentElement === md.querySelector(`li[data-line="${Q.inList + 3}"]`)!.parentElement,
+          inListInset: inset(md.querySelector(`li[data-line="${Q.inList}"] blockquote`) as HTMLElement),
         },
         table: {
           heads: md.querySelectorAll("thead th").length,
@@ -364,6 +382,11 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
       markersPrinted: 0,
       asideIsInset: true,
       terminators: ["crlf", "u2028\u2028tail"],
+      inList: ["quoted item", "still quoted"],
+      inListNested: ["nested quoted"],
+      inListLines: [QUOTE_LINES.inList, QUOTE_LINES.inList + 1].map(String),
+      listIntact: true,
+      inListInset: 0,
     });
     expect(m.table).toEqual({ heads: 3, rows: 1, cells: 3 });
     expect(m.code).toEqual({ language: "ts", text: "const value = 42;", lines: 1, keywords: 1, numbers: 1 });

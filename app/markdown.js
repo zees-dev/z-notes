@@ -75,12 +75,21 @@ function codeEl(lang, src) {
   return w;
 }
 
+/** Leading whitespace as columns: a tab reaches the next multiple of four, the
+    way `listLine` has always counted a nested item's indent. */
+function columns(ws) {
+  let n = 0;
+  for (const c of ws) n = c === "\t" ? n + (4 - (n % 4)) : n + 1;
+  return n;
+}
+
 function listLine(raw) {
   const m = RE_LIST.exec(raw);
   if (!m) return null;
-  let indent = 0;
-  for (const c of m[1]) indent = c === "\t" ? indent + (4 - (indent % 4)) : indent + 1;
-  return { indent, marker: m[2], text: m[4] };
+  const indent = columns(m[1]);
+  /* `col` is where the item's TEXT starts — the column a continuation line
+     has to reach to belong to this item rather than to the document */
+  return { indent, col: indent + m[2].length + columns(m[3]), marker: m[2], text: m[4] };
 }
 
 /**
@@ -103,12 +112,68 @@ function listLine(raw) {
 function quoteInfo(line) {
   const m = /^(\s*)((?:>[ ]?)+)([\s\S]*)$/.exec(line);
   if (!m) return null;
-  let indent = 0;
-  for (const c of m[1]) indent = c === "\t" ? indent + (4 - (indent % 4)) : indent + 1;
-  return { indent, depth: (m[2].match(/>/g) || []).length, text: m[3] };
+  return { indent: columns(m[1]), depth: (m[2].match(/>/g) || []).length, text: m[3] };
 }
 
-function listItemEl(doc, item, lineNo) {
+/**
+ * The quote block for a run of consecutive `RE_QUOTE` lines starting at source
+ * line `start` — one blockquote per DEPTH (spec 0019). `stack` is the blocks
+ * currently open (a deeper line opens one, a shallower line closes one) and
+ * `run` the lines waiting for whichever is on top; a run flushes on every depth
+ * change, so each block keeps its own lines in source order around the nested
+ * block that interrupted them. The lines are consecutive, which is what lets
+ * `lineSpans` number them from one start.
+ *
+ * `inset`: the indent before the first marker is structural, like a list
+ * item's — CSS owns the width of one level and the renderer supplies how many
+ * (`--quote-in`, base.css), the bargain `--fold-depth` already strikes. Four
+ * columns is one level, the same four a nested list is written with. A quote
+ * INSIDE a list item is positioned by the item and asks for none. Whitespace
+ * after the markers is the author's and is preserved by CSS instead, so nothing
+ * inside the quote is stripped.
+ */
+function quoteBlock(qlines, start, inset) {
+  const outer = el("blockquote");
+  const head = quoteInfo(qlines[0]);
+  const lead = inset && head ? head.indent / 4 : 0;
+  if (lead) outer.style.setProperty("--quote-in", lead);
+  const stack = [outer];
+  let run = [];
+  let runStart = start;
+  const flush = () => {
+    if (!run.length) return;
+    stack[stack.length - 1].insertAdjacentHTML("beforeend", lineSpans(run, runStart));
+    run = [];
+  };
+  for (let k = 0; k < qlines.length; k++) {
+    const q = quoteInfo(qlines[k]);
+    /* `quoteInfo` is total for every line `RE_QUOTE` admits, so this is
+       unreachable today. It is a guard against the two ever parting again (a
+       CR- or U+2028-terminated line is where they last did): ending the run
+       costs one quote's shape, and throwing here costs the whole document —
+       and, on `/`, the boot. */
+    if (!q) break;
+    if (q.depth !== stack.length) {
+      flush();
+      while (stack.length > q.depth) stack.pop();
+      while (stack.length < q.depth) {
+        const inner = el("blockquote");
+        stack[stack.length - 1].appendChild(inner);
+        stack.push(inner);
+      }
+    }
+    if (!run.length) runStart = start + k;
+    run.push(q.text);
+  }
+  flush();
+  return outer;
+}
+
+/** A list item whose text begins with a quote marker IS a quote — `- > said`
+    is the shape a quote under a bullet is actually typed in. */
+const RE_ITEM_QUOTE = /^(?:>[ ]?)+/;
+
+function listItemEl(doc, item, lineNo, quoteLines) {
   const t = item.text;
   const box = /^\[([ xX])\]\s*/.exec(t);
   if (box) {
@@ -128,7 +193,10 @@ function listItemEl(doc, item, lineNo) {
   const li = el("li", ordered ? "ord" : "bul");
   if (ordered) li.appendChild(el("span", "li-marker", esc(item.marker)));
   const sp = el("span", "tx");
-  sp.innerHTML = inline(t);
+  /* the item's text, or the quote the item is — with the continuation lines
+     the list loop gathered for it, numbered from the item's own line */
+  if (quoteLines) sp.appendChild(quoteBlock(quoteLines, lineNo, false));
+  else sp.innerHTML = inline(t);
   li.appendChild(sp);
   return li;
 }
@@ -284,57 +352,9 @@ export function renderPreview(doc, host) {
     }
 
     if (RE_QUOTE.test(line)) {
-      /* One blockquote per DEPTH (spec 0019). `stack` is the blocks currently
-         open — a deeper line opens one, a shallower line closes one — and
-         `run` is the lines waiting for whichever is on top. A run flushes on
-         every depth change, so each block keeps its own lines in source order
-         around the nested block that interrupted them. Within a run the source
-         lines are consecutive, which is what lets `lineSpans` number them from
-         one start. */
-      const outer = el("blockquote");
-      /* The indent before the first marker is structural, like a list item's:
-         CSS owns the width of one level and the renderer supplies how many
-         (`--quote-in`, base.css) — the bargain `--fold-depth` already strikes.
-         Four columns is one level, the same four a nested list is written
-         with. Whitespace AFTER the markers is the author's and is preserved by
-         CSS instead, so nothing inside the quote is stripped. */
-      const head = quoteInfo(line);
-      const lead = (head ? head.indent : 0) / 4;
-      if (lead) outer.style.setProperty("--quote-in", lead);
-      const stack = [outer];
-      let run = [];
-      let runStart = start;
-      const flush = () => {
-        if (!run.length) return;
-        stack[stack.length - 1].insertAdjacentHTML("beforeend", lineSpans(run, runStart));
-        run = [];
-      };
-      while (i < lines.length && RE_QUOTE.test(lines[i])) {
-        /* the line is consumed BEFORE it is read, so the guard below can end
-           the block without leaving `i` where the outer loop would re-enter
-           this same branch forever */
-        const at = i++;
-        const q = quoteInfo(lines[at]);
-        /* `quoteInfo` is total for every line `RE_QUOTE` admits, so this is
-           unreachable today. It is a guard against the two ever parting again
-           (a CR- or U+2028-terminated line is where they last did): ending
-           the run costs one quote's shape, and throwing here costs the whole
-           document — and, on `/`, the boot. */
-        if (!q) break;
-        if (q.depth !== stack.length) {
-          flush();
-          while (stack.length > q.depth) stack.pop();
-          while (stack.length < q.depth) {
-            const inner = el("blockquote");
-            stack[stack.length - 1].appendChild(inner);
-            stack.push(inner);
-          }
-        }
-        if (!run.length) runStart = at;
-        run.push(q.text);
-      }
-      flush();
-      put(outer, start);
+      const qlines = [];
+      while (i < lines.length && RE_QUOTE.test(lines[i])) qlines.push(lines[i++]);
+      put(quoteBlock(qlines, start, true), start);
       continue;
     }
 
@@ -366,11 +386,26 @@ export function renderPreview(doc, host) {
           top = { indent: item.indent, list: nested, last: null };
           stack.push(top);
         }
-        const li = listItemEl(doc, item, i);
+        /* A quoted item keeps the quote lines under it: a `>` line that is
+           not itself an item and is indented at least to the item's text
+           column is the quote going on, not the list ending. A task item
+           (`- [ ] > x`) is not a quote; its box comes first. */
+        let quoteLines = null;
+        let next = i + 1;
+        if (RE_ITEM_QUOTE.test(item.text)) {
+          quoteLines = [item.text];
+          while (next < lines.length && !listLine(lines[next]) && RE_QUOTE.test(lines[next])) {
+            const lead = /^\s*/.exec(lines[next])[0];
+            if (columns(lead) < item.col) break;
+            quoteLines.push(lines[next].slice(lead.length));
+            next++;
+          }
+        }
+        const li = listItemEl(doc, item, i, quoteLines);
         li.dataset.line = i;
         top.list.appendChild(li);
         top.last = li;
-        i++;
+        i = next;
       }
       put(ul, start);
       continue;

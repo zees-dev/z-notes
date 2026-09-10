@@ -1099,6 +1099,9 @@ code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; bord
 .md ul ul ul ul ul ul li.bul::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bullet-bg); }
 .md li.ord > .li-marker { flex: 0 0 auto; min-width: 2ch; text-align: right; color: var(--muted); font-family: var(--mono); }
 .md li > .tx { flex: 1 1 0; min-width: 0; }
+/* a quoted item (`- > said`): the quote is the item's text, so it sits where the
+   text would and the bullet's own gap is the only inset (spec 0019) */
+.md li > .tx > blockquote { margin: 0; }
 /* A nested source indent becomes a nested DOM list instead of another
    top-level sibling. `flex-basis:100%` puts the child hierarchy below the
    parent row even though bullet/task rows use flex for their marker. */
