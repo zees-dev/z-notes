@@ -179,8 +179,8 @@ describe("external links render as real links", () => {
 
      · PLACEMENT — a `button.lcp` immediately after EVERY `a.xl` and after
        nothing else. The pass lives in `renderPreview`, not in `inline()`, so a
-       chat bubble never grows one; a `.wl` pill navigates in-app and is not a
-       URL to take.
+       chat bubble never grows one, and a `.wl` pill navigates in-app rather
+       than carrying a URL to take.
      · THE HREF, NOT THE LABEL — measured off the REAL system clipboard, with
        the same grant and realness probe `ux-e2e` uses, and a mailto: arrives
        without its scheme.
@@ -248,21 +248,16 @@ describe("a link in Preview carries a copy button", () => {
     );
   }, 90000);
 
-  test("clicking one copies the href, and does not open Raw", async () => {
+  test("clicking one copies the href, a mailto: without its scheme, and neither opens Raw", async () => {
     await open(EXT);
     await clipboardSession();
+
     await copyLink("https://example.com/docs");
-
     expect(`clipboard: ${await clip()}`).toBe("clipboard: https://example.com/docs");
-    expect(`Raw opened on a copy click: ${!!(await page.$("#rawArea"))}`).toBe("Raw opened on a copy click: false");
-  }, 90000);
-
-  test("a mailto: copies the bare address", async () => {
-    await open(EXT);
-    await clipboardSession();
     await copyLink("mailto:z@example.com");
-
     expect(`clipboard: ${await clip()}`).toBe("clipboard: z@example.com");
+
+    expect(`Raw opened on a copy click: ${!!(await page.$("#rawArea"))}`).toBe("Raw opened on a copy click: false");
     expect(`page errors: ${pageErrors.join(" | ")}`).toBe("page errors: ");
   }, 90000);
 

@@ -20,7 +20,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { type Browser, type Page } from "puppeteer-core";
 import { startServer, type TestServer } from "./helpers";
-import { launchTestBrowser, newAppPage, appDriver, ensureMode, type AppDriver } from "./browser";
+import { callTool, launchTestBrowser, newAppPage, appDriver, ensureMode, type AppDriver } from "./browser";
 
 const PHONE = { width: 390, height: 844 };
 const DOC = "keybar/list.md";
@@ -99,22 +99,6 @@ async function rawWithKeyboard(pos = CARET) {
   await page.waitForFunction(() => getComputedStyle(document.getElementById("keybar")!).display === "flex", {
     timeout: 8000,
   });
-}
-
-/** one tool call through the catalogue an agent reads (ADR 0031) */
-async function callTool(name: string, input: Record<string, unknown> = {}): Promise<any> {
-  const json = await page.evaluate(
-    async (n: string, arg: any) => {
-      const mc = (document as any).modelContext;
-      const list = await mc.getTools();
-      const tool = list.find((t: any) => t.name === n);
-      if (!tool) throw new Error("no such tool: " + n);
-      return await mc.executeTool(tool, arg);
-    },
-    name,
-    input
-  );
-  return JSON.parse(json as string);
 }
 
 describe("the soft keyboard's editing bar", () => {
@@ -221,7 +205,7 @@ describe("the soft keyboard's editing bar", () => {
   test("indent_lines is the same edit through the agent's door", async () => {
     await app.boot("/d/" + DOC);
     /* Preview: the tool answers with the API's error shape rather than throwing */
-    expect(await callTool("indent_lines", {})).toEqual({
+    expect(await callTool(page, "indent_lines")).toEqual({
       error: "not-raw",
       message: "The raw editor is not open. Switch to Raw first.",
     });
@@ -233,9 +217,9 @@ describe("the soft keyboard's editing bar", () => {
       ta.setSelectionRange(p, p);
     }, CARET);
 
-    expect(await callTool("indent_lines", { outdent: false })).toEqual({ ok: true });
+    expect(await callTool(page, "indent_lines", { outdent: false })).toEqual({ ok: true });
     await waitBuffer(INDENTED);
-    expect(await callTool("indent_lines", { outdent: true })).toEqual({ ok: true });
+    expect(await callTool(page, "indent_lines", { outdent: true })).toEqual({ ok: true });
     await waitBuffer(SRC);
     expect(pageErrors).toEqual([]);
   }, 45000);

@@ -363,10 +363,9 @@ describe("click-to-edit reaches the clicked line, not the block's first", () => 
     await page.click('.pline[data-line="1"]');
     await page.waitForSelector("#rawArea", { timeout: 10000 });
     const caret = await page.evaluate(() => (document.getElementById("rawArea") as HTMLTextAreaElement).selectionStart);
+    /* the block it sits in is the OUTER quote, whose own answer would be 0 */
     const want = offsetOf(QNEST_SRC, 1);
     expect(`caret at ${caret} (line 1 starts at ${want})`).toBe(`caret at ${want} (line 1 starts at ${want})`);
-    /* the block it sits in is the OUTER quote, whose own answer is line 0 */
-    expect(`the block would have said ${offsetOf(QNEST_SRC, 0)}`).toBe("the block would have said 0");
   }, 90000);
 
   test("clicking the first line still opens Raw at the first line", async () => {

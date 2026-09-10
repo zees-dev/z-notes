@@ -417,7 +417,7 @@ describe("phone editing regressions", () => {
   test("typing in the middle of a long Raw doc keeps the same line under the caret", async () => {
     await enterRaw(LONG_EDIT_DOC);
     const before = await page.$eval("#rawArea", (n) => {
-      const ta = n as HTMLTextAreaElement;
+      const ta = n as any;
       const sc = document.getElementById("scroll")!;
       const line = 105;
       const caret = ta.value.split("\n").slice(0, line).join("\n").length + line;
@@ -445,32 +445,35 @@ describe("phone editing regressions", () => {
   test("typing at the end of a long Raw doc scrolls the caret above the soft keyboard", async () => {
     await enterRaw(LONG_EDIT_DOC);
     const before = await page.$eval("#rawArea", (n) => {
-      const ta = n as HTMLTextAreaElement;
+      const ta = n as any;
       const sc = document.getElementById("scroll")!;
       const keyboard = 336;
       document.documentElement.style.setProperty("--kb", keyboard + "px");
       ta.focus({ preventScroll: true });
       ta.setSelectionRange(ta.value.length, ta.value.length);
       sc.scrollTop += ta.getBoundingClientRect().bottom - (innerHeight - 30);
+      /* the CARET'S ROW, not the editor's box: since ADR 0032 the editor is a
+         block per line, and keeping the caret clear of the keyboard is the
+         promise `revealRawCaret` makes about that row */
       return {
         visibleBottom: innerHeight - keyboard,
-        caretBottom: ta.getBoundingClientRect().bottom,
+        caretBottom: ta.boxAt(ta.selectionEnd).bottom,
       };
     });
     expect(before.caretBottom).toBeGreaterThan(before.visibleBottom);
 
     await page.keyboard.type("x");
     await page.waitForFunction(() => {
-      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
+      const ta = document.getElementById("rawArea") as any;
       const keyboard = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--kb"));
-      return ta.getBoundingClientRect().bottom <= innerHeight - keyboard - 12;
-      /* the suite's usual budget: `keepRawCaretVisible` rechecks once the
+      return ta.boxAt(ta.selectionEnd).bottom <= innerHeight - keyboard - 12;
+      /* 8s, the suite's usual budget: `keepRawCaretVisible` rechecks once the
          viewport has settled (220ms after the keystroke), and a loaded machine
          can spend longer than 3s getting to it */
     }, { timeout: 8000 });
     const after = await page.$eval("#rawArea", (n) => ({
       visibleBottom: innerHeight - parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--kb")),
-      caretBottom: (n as HTMLTextAreaElement).getBoundingClientRect().bottom,
+      caretBottom: (n as any).boxAt((n as any).selectionEnd).bottom,
     }));
     expect(after.caretBottom).toBeLessThanOrEqual(after.visibleBottom - 12);
     expect(pageErrors).toEqual([]);

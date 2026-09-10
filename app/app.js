@@ -576,12 +576,17 @@ function wire() {
     connect();
   });
 
+  /* `[contenteditable]:not([contenteditable=false])`, not
+     `[contenteditable=true]`: the Raw editor carries `plaintext-only`
+     (ADR 0032), and a conflict veil can open on its own while the caret is
+     still in it — under the narrower selector that Enter pressed Overwrite
+     instead of starting a line. */
+  const EDITABLE = '[contenteditable]:not([contenteditable="false"])';
   /* Everything that has its own answer to Enter, as one selector: a control, a
      link, a field, the shell's own regions and every floating layer. What is
      left is the document pane and the page itself — the only place Enter is
      free to mean "resume editing" (ADR 0036). */
-  const RESUME_BLOCKED =
-    'button, a, input, textarea, select, [contenteditable]:not([contenteditable="false"]), #sidebar, .chat, .topbar, .statusbar, .modal, .veil, .pop';
+  const RESUME_BLOCKED = "button, a, input, textarea, select, " + EDITABLE + ", #sidebar, .chat, .topbar, .statusbar, .modal, .veil, .pop";
 
   const typing = () => {
     const a = document.activeElement;
@@ -598,16 +603,10 @@ function wire() {
     /* Enter activates the visible modal's declared primary action even when
        focus is on the dialog container (the safe choice for a modal raised
        from under a caret). A focused button keeps its native Enter, and a text
-       surface keeps its newline.
-
-       `[contenteditable]:not([contenteditable=false])`, not
-       `[contenteditable=true]`: the Raw editor carries `plaintext-only`
-       (ADR 0032), and a conflict veil can open on its own while the caret is
-       still in it — under the narrower selector that Enter pressed Overwrite
-       instead of starting a line. */
+       surface keeps its newline. */
     if (e.key === "Enter" && !e.defaultPrevented && !e.isComposing && !e.repeat) {
       const target = e.target;
-      if (target && target.closest && !target.closest('button, textarea, [contenteditable]:not([contenteditable="false"])')) {
+      if (target && target.closest && !target.closest("button, textarea, " + EDITABLE)) {
         const sel = VEILS.find(isOpen);
         const primary = sel && $$("[data-default]", $(sel)).find((b) => !b.hidden && !b.disabled && b.offsetParent !== null);
         if (primary) {
@@ -623,19 +622,9 @@ function wire() {
          `rowKeys`), a [[link]] pill still follows, and a settings field, the
          chat composer, the terminal line and every modal button keep their own
          Enter. Modifiers are excluded outright — none of them mean this. */
-      if (
-        state.view === "doc" &&
-        state.mode === "preview" &&
-        !overlayOpen() &&
-        !mod &&
-        !e.altKey &&
-        !e.shiftKey &&
-        target &&
-        target.closest &&
-        !target.closest(RESUME_BLOCKED)
-      ) {
-        if (resumeRaw()) e.preventDefault();
-      }
+      const free =
+        state.view === "doc" && state.mode === "preview" && !overlayOpen() && !mod && !e.altKey && !e.shiftKey;
+      if (free && target && target.closest && !target.closest(RESUME_BLOCKED) && resumeRaw()) e.preventDefault();
     }
     /* ⇧F10 / the Menu key — the keyboard equivalent of the right-click, and the
        reason the menu is not a pointer-only affordance. Scoped to the sidebar:
@@ -902,11 +891,10 @@ export async function start() {
      That is what lets a leaf drive editor.js and tree.js without importing
      either of them. */
   wireHistory((entry, undoing) => (entry.kind === "text" ? applyTextHistory(entry, undoing) : applyFileHistory(entry, undoing)));
-  /* BEFORE THE FIRST AWAIT. The pinch ladder (ADR 0033) is the app's
-     replacement for a gesture index.html has already switched off in the
-     viewport meta and in `touch-action`, so anything that can leave it unwired
-     leaves a phone with no way to change the text size at all — and a settings
-     fetch that fails or hangs is exactly that. It needs nothing the server
+  /* BEFORE THE FIRST AWAIT. The pinch ladder (ADR 0033) replaces a gesture
+     index.html has already switched off in the viewport meta and in
+     `touch-action`, so a settings fetch that fails or hangs would leave a phone
+     with no way to change the text size at all. It needs nothing the server
      says: `localStorage` and `#scroll`, both of which are here already. */
   initZoom();
   /* settings first: they decide the theme, and a wrong theme flashing is worse

@@ -783,8 +783,8 @@ export function urlSettings() {
    `znotes.last-doc` is a CACHE OF A PLACE, not a setting: per browser, never
    synced, and an entry naming a doc the tree no longer has is skipped and
    overwritten by the next open rather than pruned on delete. A store that
-   cannot be used at all (private mode, storage disabled) degrades to today's
-   behaviour — the first doc — which is why every access is wrapped.
+   cannot be used at all (private mode, storage disabled) falls to the rungs
+   below it, which is why every access is wrapped.
    ============================================================ */
 const LAST_DOC = "znotes.last-doc";
 
@@ -822,13 +822,7 @@ function lastDoc() {
  * this may only be called once the tree has loaded.
  */
 export function bootDoc(wanted) {
-  const has = (p) => !!p && state.docPaths.has(p);
-  if (has(wanted)) return wanted;
-  const last = lastDoc();
-  if (has(last)) return last;
-  const home = homeTarget();
-  if (has(home)) return home;
-  return firstDoc() || "";
+  return [wanted, lastDoc(), homeTarget()].find((p) => p && state.docPaths.has(p)) || firstDoc() || "";
 }
 
 /* Entries carry a monotonic `i` purely so a popstate can tell BACK from
@@ -1354,8 +1348,8 @@ export function paintHome() {
 
 /** Whatever is first in the tree, in the first vault that has one, preferring a
     doc with something in it — never a folder path (see findDoc), and `null`
-    when there is nothing to open. The bottom rung of `bootDoc`'s ladder and the
-    home button's fallback are the same rule, so they are the same function. */
+    when there is nothing to open. `bootDoc`'s bottom rung and the home button's
+    fallback are the same rule, so they are one function. */
 function firstDoc() {
   return findDocAcross((n) => !n.empty) || findDocAcross(() => true);
 }
@@ -1581,8 +1575,7 @@ export function wireVisualViewport(onChange) {
     document.documentElement.style.setProperty("--kb", kb + "px");
     /* …and the same fact as a class, because a stylesheet cannot ask how long a
        length is. This is the only place in the app that can say "a soft
-       keyboard is up", and the editing bar (ADR 0034) is drawn on it —
-       measured, so a tablet with a hardware keyboard never qualifies.
+       keyboard is up", and the editing bar (ADR 0034) is drawn on it.
 
        60px, not "anything at all": a soft keyboard is never under ~60px tall,
        a URL-bar animation's sub-pixel wobble always is, and an iPad's shortcut

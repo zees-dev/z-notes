@@ -5,8 +5,8 @@
 <!-- The APP owns the pinch (ADR 0033): a two-finger gesture over the document
      steps its TEXT up a fixed ladder (app/zoom.js) instead of letting the
      browser scale the whole layout, chrome and all. `maximum-scale` and
-     `user-scalable` are what stop the two fighting over one gesture; the
-     replacement reaches 200 %, which is the trade that makes them acceptable. -->
+     `user-scalable` stop the two fighting over one gesture; the replacement
+     reaches 200 %, which is the trade that makes them acceptable. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <!-- Kept in step with app.js applyColorScheme(): the resolved scheme goes here
      so the UA paints form controls, scrollbars and the canvas to match. -->
@@ -826,8 +826,7 @@
          key for — Tab, ⇧Tab, ⌘Z/⌘⇧Z and the ⌘E that leaves Raw — on a bar
          pinned to the keyboard's own top edge. It appears only while a soft
          keyboard is really covering the viewport AND the caret is in the Raw
-         editor (`.app.kb-up.raw-focus`, base.css §8a), so the desktop and a
-         tablet with a hardware keyboard never see it.
+         editor (`.app.kb-up.raw-focus`, base.css §8a).
 
          `tabindex="-1"` on every button: this is a thumb's affordance, and a
          keyboard that could tab to it already has the chords. `hidden` is the

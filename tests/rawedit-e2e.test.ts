@@ -70,7 +70,16 @@ async function openRaw(path = DOC) {
   await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 8000 });
 }
 
-/** put the caret at `pos`, the way ux-e2e's `seed` does — what is measured is
+/** the class and size of the `.ln` holding `needle` */
+const lineFor = (needle: string) =>
+  page.evaluate((n) => {
+    const ln = (Array.from(document.querySelectorAll("#rawArea .ln")) as HTMLElement[]).find((x) =>
+      (x.textContent ?? "").includes(n)
+    );
+    return { cls: ln?.className, size: ln ? getComputedStyle(ln).fontSize : "" };
+  }, needle);
+
+/** put the caret at `pos`, the way ux-e2e's `seed` does: what is measured is
     the editing, not how the caret got there */
 async function caretAt(pos: number) {
   await page.evaluate((p) => {
@@ -148,12 +157,7 @@ describe("rawedit — a Raw line is the size of the Preview block it would rende
     await page.keyboard.type("# ");
     await sleep(120);
 
-    const grown = await page.evaluate((needle) => {
-      const ln = (Array.from(document.querySelectorAll("#rawArea .ln")) as HTMLElement[]).find((n) =>
-        (n.textContent ?? "").includes(needle)
-      );
-      return { cls: ln?.className, size: ln ? getComputedStyle(ln).fontSize : "" };
-    }, "body [x]");
+    const grown = await lineFor("body [x]");
     expect(`the line became: ${grown.cls}`).toBe("the line became: ln h1");
     expect(`bytes after typing: ${JSON.stringify(await buffer())}`).toBe(
       `bytes after typing: ${JSON.stringify(SRC.slice(0, bodyAt) + "# " + SRC.slice(bodyAt))}`
@@ -162,12 +166,7 @@ describe("rawedit — a Raw line is the size of the Preview block it would rende
     await page.keyboard.press("Backspace");
     await page.keyboard.press("Backspace");
     await sleep(120);
-    const shrunk = await page.evaluate((needle) => {
-      const ln = (Array.from(document.querySelectorAll("#rawArea .ln")) as HTMLElement[]).find((n) =>
-        (n.textContent ?? "").includes(needle)
-      );
-      return { cls: ln?.className, size: ln ? getComputedStyle(ln).fontSize : "" };
-    }, "body [x]");
+    const shrunk = await lineFor("body [x]");
     expect(`the line went back to: ${shrunk.cls}`).toBe("the line went back to: ln");
     expect(`and so did its size: ${shrunk.size !== grown.size}`).toBe("and so did its size: true");
     expect(`bytes after deleting: ${JSON.stringify(await buffer())}`).toBe(`bytes after deleting: ${JSON.stringify(SRC)}`);

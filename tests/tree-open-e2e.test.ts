@@ -2,18 +2,18 @@
    tree-open-e2e.test.ts — which folders are open survives a reload (spec 0012).
 
    Disclosure is a VIEW choice: the server's `folders` table only ever seeds a
-   folder OPEN, and the client never writes a close back, so before this the
+   folder OPEN and the client never writes a close back, so before this the
    tree reopened everything on every reload. It is now mirrored per browser in
-   `znotes.tree-open`, the twin of Preview's `znotes.folds` (ADR 0023) — which
-   is why this needs a real browser: the claims are "the row came back closed"
-   and "localStorage was left holding the reason".
+   `znotes.tree-open`, the twin of Preview's `znotes.folds` (ADR 0023), which
+   is why this needs a real browser: the claims are that the row came back
+   closed and that localStorage was left holding the reason.
 
    Six claims: a close survives a reload, so does re-opening it, an untouched
    folder still takes the server's word and costs no storage, a folder that
    left the tree takes its key with it, an unreadable blob means no memory
-   rather than a broken sidebar — and a REVEAL is not a choice: opening a doc
-   inside a collapsed folder shows it for this session without ever writing
-   `true` over the close the user asked for.
+   rather than a broken sidebar, and a REVEAL is not a choice: opening a doc
+   inside a collapsed folder shows it for this session without writing `true`
+   over the close the user asked for.
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
@@ -62,12 +62,14 @@ afterAll(async () => {
 
 const row = (path: string) => `#tree .row.folder[data-path="${path}"]`;
 
-async function boot() {
-  await page.goto(srv.base + "/d/" + HOME, { waitUntil: "domcontentloaded" });
+/** Load `doc` and wait until the tree has drawn `folder`'s row. */
+async function bootAt(doc: string, folder: string) {
+  await page.goto(srv.base + "/d/" + doc, { waitUntil: "domcontentloaded" });
   await waitForApp(page);
-  await page.waitForSelector(row(FOLDER), { timeout: 15000 });
+  await page.waitForSelector(row(folder), { timeout: 15000 });
   await sleep(120);
 }
+const boot = () => bootAt(HOME, FOLDER);
 
 /** How a folder row is drawn right now: is the row `.open`, and is the
     `.children` box beside it `.closed`? The two must always disagree. */
@@ -141,10 +143,7 @@ describe("a renamed folder does not leave a ghost behind", () => {
     const r = await srv.api("PATCH", "/api/docs/" + FOLDER, { to: FOLDER + "-elsewhere" });
     expect(`PATCH → ${r.status}`).toBe("PATCH → 200");
 
-    await page.goto(srv.base + "/d/" + HOME, { waitUntil: "domcontentloaded" });
-    await waitForApp(page);
-    await page.waitForSelector(row(FOLDER + "-elsewhere"), { timeout: 15000 });
-    await sleep(120);
+    await bootAt(HOME, FOLDER + "-elsewhere");
     expect(`remembered: ${await remembered()}`).toBe("remembered: {}");
   }, 90000);
 });
@@ -162,10 +161,7 @@ describe("a store this version cannot read means the server's answer", () => {
     }, STORE);
     pageErrors.length = 0;
 
-    await page.goto(srv.base + "/d/" + HOME, { waitUntil: "domcontentloaded" });
-    await waitForApp(page);
-    await page.waitForSelector(row(UNTOUCHED), { timeout: 15000 });
-    await sleep(120);
+    await bootAt(HOME, UNTOUCHED);
 
     expect(`renamed folder: ${await drawn(FOLDER + "-elsewhere")}`).toBe("renamed folder: open=true closed=false");
     expect(`untouched folder: ${await drawn(UNTOUCHED)}`).toBe("untouched folder: open=true closed=false");
@@ -182,10 +178,7 @@ describe("opening a doc inside a collapsed folder does not un-collapse it for go
   const INSIDE = "deep/three.md";
 
   test("the close survives the reload that reveals the doc, and the row is closed elsewhere", async () => {
-    await page.goto(srv.base + "/d/" + INSIDE, { waitUntil: "domcontentloaded" });
-    await waitForApp(page);
-    await page.waitForSelector(row(REVEALED), { timeout: 15000 });
-    await sleep(120);
+    await bootAt(INSIDE, REVEALED);
     expect(`with the doc open inside it: ${await drawn(REVEALED)}`).toBe(
       "with the doc open inside it: open=true closed=false"
     );
@@ -196,17 +189,11 @@ describe("opening a doc inside a collapsed folder does not un-collapse it for go
 
     /* the same URL again: `openDoc` reveals the active doc's ancestors on every
        boot, so this is the load that used to write the close back to `true` */
-    await page.goto(srv.base + "/d/" + INSIDE, { waitUntil: "domcontentloaded" });
-    await waitForApp(page);
-    await page.waitForSelector(row(REVEALED), { timeout: 15000 });
-    await sleep(120);
+    await bootAt(INSIDE, REVEALED);
     expect(`after the reveal: ${await remembered()}`).toBe(`after the reveal: {"${REVEALED}":false}`);
 
     /* …and away from that doc the row is drawn the way it was clicked */
-    await page.goto(srv.base + "/d/" + HOME, { waitUntil: "domcontentloaded" });
-    await waitForApp(page);
-    await page.waitForSelector(row(REVEALED), { timeout: 15000 });
-    await sleep(120);
+    await bootAt(HOME, REVEALED);
     expect(`elsewhere: ${await drawn(REVEALED)}`).toBe("elsewhere: open=false closed=true");
     expect(`page errors: ${pageErrors.join(" | ")}`).toBe("page errors: ");
   }, 120000);

@@ -1,25 +1,23 @@
 /* ============================================================
    keybar.js — the soft keyboard carries an editing bar (ADR 0034).
 
-   A phone editing markdown is missing four verbs, and they are not small ones.
-   There is no Tab, so a list item cannot be nested — the commonest structural
-   edit in a notes app. There is no ⇧Tab to unnest it. There is no ⌘Z. And the
-   statusbar chip that leaves Raw is underneath the keyboard, which is the one
-   place a thumb cannot reach. This module is those four verbs, on a bar pinned
-   to the keyboard's top edge.
+   A phone editing markdown is missing four verbs. There is no Tab, so a list
+   item cannot be nested — the commonest structural edit in a notes app. There
+   is no ⇧Tab to unnest it. There is no ⌘Z. And the statusbar chip that leaves
+   Raw is underneath the keyboard, which is the one place a thumb cannot reach.
+   This module is those four verbs, on a bar pinned to the keyboard's top edge.
 
    IT EXISTS ONLY WHERE A SOFT KEYBOARD DOES, and that is a MEASURED condition
    rather than a guess about the device: `kb-up` is `wireVisualViewport`
    reporting that the visual viewport is actually covered, `raw-focus` is this
    file reporting that the caret is in the editor, and base.css §8a shows the
    bar when both hold. So a tablet with a hardware keyboard, and the desktop,
-   never see it — and §11's "one axis, viewport width" rule is untouched,
-   because the question here is the keyboard, not the screen.
+   never see it, and §11's "one axis, viewport width" rule is untouched.
 
-   THE TAP MUST NOT MOVE THE FOCUS. That is the whole trick and everything else
-   is arithmetic: the moment the editor blurs, the keyboard drops, the bar goes
-   with it and the selection the button was about to act on is gone. So the
-   bar swallows the pointer's default action and the buttons are never focused.
+   THE TAP MUST NOT MOVE THE FOCUS. Everything else here is arithmetic: the
+   moment the editor blurs, the keyboard drops, the bar goes with it and the
+   selection the button was about to act on is gone. So the bar swallows the
+   pointer's default action and the buttons are never focused.
 
    No action lives here. Indent and Outdent are `indentSelection` — the very
    function Tab calls — Undo and Redo are the app's one timeline (ADR 0014),

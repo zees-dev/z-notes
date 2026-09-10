@@ -93,21 +93,17 @@ function listLine(raw) {
 }
 
 /**
- * `> > text` → `{ indent, depth, text }` (spec 0019).
+ * `> > text` → `{ indent, depth, text }` (spec 0019). `indent` is the columns
+ * before the first marker, counted the way `listLine` counts an item's, because
+ * that indent is structural like an item's. `depth` is the number of `>`
+ * markers, each allowed to eat ONE space after it; every other byte after the
+ * markers is the author's whitespace and stays in `text`.
  *
- * `indent` counts the columns BEFORE the first marker — a tab to the next
- * multiple of four, the way `listLine` counts them — because that indent is
- * structural, like a list item's. `depth` is the number of `>` markers, each
- * allowed to eat ONE space after it; everything else after the markers is the
- * author's whitespace and stays in `text`.
- *
- * The leading class is `\s*`, matching `RE_QUOTE`'s exactly, and the tail is
- * `[\s\S]*` rather than `.*`, so this answers for every line the block-start
- * test admits. `.` and `$` stop at a CR or a U+2028/U+2029 — which a CRLF file
- * (read back byte for byte by the server) puts at the end of EVERY line — and
- * a null here is dereferenced two lines into the branch: Preview threw, the
- * doc rendered empty, and a doc stored as the one to resume (ADR 0035) took
- * the boot down with it.
+ * The leading class matches `RE_QUOTE`'s and the tail is `[\s\S]*` rather than
+ * `.*`, so this answers for every line that test admits. `.` and `$` stop at a
+ * CR or a U+2028, which a CRLF file (served back byte for byte) puts at the end
+ * of EVERY line, and a null here threw the render away: the doc came up empty,
+ * and a doc stored as the one to resume took the boot with it (ADR 0035).
  */
 function quoteInfo(line) {
   const m = /^(\s*)((?:>[ ]?)+)([\s\S]*)$/.exec(line);
@@ -116,26 +112,25 @@ function quoteInfo(line) {
 }
 
 /**
- * The quote block for a run of consecutive `RE_QUOTE` lines starting at source
- * line `start` — one blockquote per DEPTH (spec 0019). `stack` is the blocks
- * currently open (a deeper line opens one, a shallower line closes one) and
- * `run` the lines waiting for whichever is on top; a run flushes on every depth
+ * One blockquote per DEPTH for a run of consecutive `RE_QUOTE` lines starting at
+ * source line `start` (spec 0019). `stack` is the blocks open at each depth and
+ * `run` the lines waiting for the innermost; a run flushes on every depth
  * change, so each block keeps its own lines in source order around the nested
- * block that interrupted them. The lines are consecutive, which is what lets
- * `lineSpans` number them from one start.
+ * block that interrupted them. Consecutive lines are what let `lineSpans` number
+ * them from one start.
  *
- * `inset`: the indent before the first marker is structural, like a list
- * item's — CSS owns the width of one level and the renderer supplies how many
- * (`--quote-in`, base.css), the bargain `--fold-depth` already strikes. Four
- * columns is one level, the same four a nested list is written with. A quote
- * INSIDE a list item is positioned by the item and asks for none. Whitespace
- * after the markers is the author's and is preserved by CSS instead, so nothing
- * inside the quote is stripped.
+ * `inset` applies the indent before the first marker, which is structural like a
+ * list item's: CSS owns the width of one level and the renderer says how many
+ * (`--quote-in`, base.css), four columns to a level, the same four a nested list
+ * is written with. A quote INSIDE a list item is positioned by the item and asks
+ * for none. The whitespace after the markers is the author's and CSS preserves
+ * it, so the parser strips nothing.
  */
 function quoteBlock(qlines, start, inset) {
   const outer = el("blockquote");
-  const head = quoteInfo(qlines[0]);
-  const lead = inset && head ? head.indent / 4 : 0;
+  /* total for every line `RE_QUOTE` admits, which is all either caller passes */
+  const quotes = qlines.map((l) => quoteInfo(l));
+  const lead = inset ? quotes[0].indent / 4 : 0;
   if (lead) outer.style.setProperty("--quote-in", lead);
   const stack = [outer];
   let run = [];
@@ -145,14 +140,7 @@ function quoteBlock(qlines, start, inset) {
     stack[stack.length - 1].insertAdjacentHTML("beforeend", lineSpans(run, runStart));
     run = [];
   };
-  for (let k = 0; k < qlines.length; k++) {
-    const q = quoteInfo(qlines[k]);
-    /* `quoteInfo` is total for every line `RE_QUOTE` admits, so this is
-       unreachable today. It is a guard against the two ever parting again (a
-       CR- or U+2028-terminated line is where they last did): ending the run
-       costs one quote's shape, and throwing here costs the whole document —
-       and, on `/`, the boot. */
-    if (!q) break;
+  quotes.forEach((q, k) => {
     if (q.depth !== stack.length) {
       flush();
       while (stack.length > q.depth) stack.pop();
@@ -164,13 +152,12 @@ function quoteBlock(qlines, start, inset) {
     }
     if (!run.length) runStart = start + k;
     run.push(q.text);
-  }
+  });
   flush();
   return outer;
 }
 
-/** A list item whose text begins with a quote marker IS a quote — `- > said`
-    is the shape a quote under a bullet is actually typed in. */
+/** `- > said` is how a quote under a bullet is typed: its text IS the quote. */
 const RE_ITEM_QUOTE = /^(?:>[ ]?)+/;
 
 function listItemEl(doc, item, lineNo, quoteLines) {
@@ -193,8 +180,8 @@ function listItemEl(doc, item, lineNo, quoteLines) {
   const li = el("li", ordered ? "ord" : "bul");
   if (ordered) li.appendChild(el("span", "li-marker", esc(item.marker)));
   const sp = el("span", "tx");
-  /* the item's text, or the quote the item is — with the continuation lines
-     the list loop gathered for it, numbered from the item's own line */
+  /* the lines the list loop gathered are the item's text; the item already
+     positions them, so the quote asks for no inset of its own (spec 0019) */
   if (quoteLines) sp.appendChild(quoteBlock(quoteLines, lineNo, false));
   else sp.innerHTML = inline(t);
   li.appendChild(sp);
@@ -238,33 +225,30 @@ function lineSpans(lines, start) {
     .join("<br>");
 }
 
-/* THE URL IS WHAT A READER WANTS OUT OF A LINK (spec 0016), and taking it was
-   a right-click on the desktop and, on a phone, a long-press that opens the
-   link half the time. So every external anchor is followed by the code block's
-   own `I.copy`, quiet until hover (`.lcp` in base.css).
+/* THE URL IS WHAT A READER WANTS OUT OF A LINK (spec 0016), and taking it was a
+   right-click on the desktop and, on a phone, a long-press that opens the link
+   half the time. So every external anchor is followed by the code block's own
+   `I.copy`, quiet until hover (`.lcp` in base.css).
 
    A DOM PASS OVER THE FINISHED DOCUMENT, not a branch in `inline()`: chat
    bubbles render through `inline()` too, and an assistant's answer is not a
    document to take URLs out of. Inserting AFTER the anchor keeps the button
    inside the same `[data-line]` span, so the line mapping click-to-edit and
-   revealLine ride on (ADR 0015) is untouched.
-
-   `stopPropagation` because the click-away handlers that put Preview into Raw
-   are bound at `#scroll`: `previewClickToEdit` already ignores a `button`, but
-   a click that REACHES #scroll is a click outside the document. */
+   revealLine ride on (ADR 0015) is untouched. `stopPropagation` because a click
+   that reaches `#scroll`, where the click-away handlers that put Preview into
+   Raw are bound, is a click outside the document. */
 function copyLinkButton(a) {
   const b = el("button", "lcp", I.copy);
-  b.type = "button";
   b.setAttribute("aria-label", "Copy link");
   b.title = "Copy link";
   b.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     /* THE ATTRIBUTE, not the property: `a.href` is the parser's normalisation
-       of the URL — a trailing slash on a bare host, an IDN host punycoded, a
-       path percent-encoded — and what belongs on the clipboard is the URL the
-       author wrote. The address, not the scheme, either: a mailto: puts on the
-       clipboard what the reader would have typed into a To: field. */
+       (a trailing slash on a bare host, an IDN host punycoded, a path
+       percent-encoded) and what belongs on the clipboard is the URL the author
+       wrote. The address, not the scheme, either: a mailto: copies what the
+       reader would have typed into a To: field. */
     copyText((a.getAttribute("href") || "").replace(/^mailto:/i, ""));
   });
   return b;
@@ -386,20 +370,15 @@ export function renderPreview(doc, host) {
           top = { indent: item.indent, list: nested, last: null };
           stack.push(top);
         }
-        /* A quoted item keeps the quote lines under it: a `>` line that is
-           not itself an item and is indented at least to the item's text
-           column is the quote going on, not the list ending. A task item
-           (`- [ ] > x`) is not a quote; its box comes first. */
         let quoteLines = null;
         let next = i + 1;
         if (RE_ITEM_QUOTE.test(item.text)) {
+          /* a `>` line that is not itself an item and reaches the item's text
+             column is the quote going on, not the list ending (spec 0019). A
+             task item (`- [ ] > x`) never gets here: its box comes first. */
+          const carriesOn = (l) => RE_QUOTE.test(l) && !listLine(l) && quoteInfo(l).indent >= item.col;
           quoteLines = [item.text];
-          while (next < lines.length && !listLine(lines[next]) && RE_QUOTE.test(lines[next])) {
-            const lead = /^\s*/.exec(lines[next])[0];
-            if (columns(lead) < item.col) break;
-            quoteLines.push(lines[next].slice(lead.length));
-            next++;
-          }
+          while (next < lines.length && carriesOn(lines[next])) quoteLines.push(lines[next++]);
         }
         const li = listItemEl(doc, item, i, quoteLines);
         li.dataset.line = i;
@@ -422,7 +401,6 @@ export function renderPreview(doc, host) {
   }
 
   host.appendChild(md);
-  /* one pass over the built document — see copyLinkButton (spec 0016) */
   md.querySelectorAll("a.xl").forEach((a) => a.insertAdjacentElement("afterend", copyLinkButton(a)));
   wireFolds(doc, md);
 }

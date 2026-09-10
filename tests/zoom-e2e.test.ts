@@ -17,8 +17,8 @@
        a browser that honours the other still fighting the app for the gesture.
      · `set_text_zoom` is the same choice without a hand (ADR 0031), and an
        off-ladder percent comes back as data in the API's error shape.
-     · Raw is zoomed exactly as Preview is — the parity spec 0014 buys, skipped
-       here until that spec lands and `#rawArea` stops being a textarea.
+     · Raw is zoomed exactly as Preview is — the parity ADR 0032 buys by making
+       the source a line editor rather than a textarea.
 
    Touch is dispatched over CDP: puppeteer's mouse cannot produce a second
    finger. Prior art for the transport is tests/mobile-e2e.test.ts.
@@ -27,7 +27,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { type Browser, type Page } from "puppeteer-core";
 import { sleep, startServer, type SeedMap, type TestServer } from "./helpers";
-import { ensureMode, launchTestBrowser, newAppPage, waitForApp } from "./browser";
+import { callTool, ensureMode, launchTestBrowser, newAppPage, waitForApp } from "./browser";
 
 const PHONE = { width: 390, height: 844, hasTouch: true, isMobile: true };
 
@@ -50,28 +50,17 @@ afterAll(async () => {
 });
 
 /**
- * A phone page with a real touch screen. `forget` is the default: every test
- * but the reload one starts from an unzoomed browser, and `localStorage` is
- * per ORIGIN, so a page that did not clear it would inherit the rung the
- * previous test left behind.
+ * A phone page with a real touch screen. `localStorage` is per ORIGIN, so the
+ * harness's default reset is what stops each test inheriting the rung the last
+ * one pinched to; only the persistence case asks for `resume`, because the
+ * reset would also wipe the store across the reload it measures.
  */
-async function phone(opts: { forget?: boolean } = {}): Promise<Page> {
+async function phone(opts: { resume?: boolean } = {}): Promise<Page> {
   const page = await newAppPage(browser, {
     width: PHONE.width,
     height: PHONE.height,
     onPageError: (m) => pageErrors.push(m),
-    /* this suite manages `znotes.zoom` itself (below); the harness reset would
-       also wipe it on the reload the persistence case measures */
-    resume: true,
-    ...(opts.forget === false
-      ? {}
-      : {
-          beforeLoad: () => {
-            try {
-              localStorage.removeItem("znotes.zoom");
-            } catch {}
-          },
-        }),
+    resume: opts.resume,
   });
   await page.setViewport(PHONE);
   await load(page);
@@ -121,24 +110,6 @@ async function pinch(p: Page, ...spans: number[]): Promise<void> {
     await cdp.detach().catch(() => {});
   }
   await sleep(80);
-}
-
-/** `set_text_zoom` called the way an agent calls it — the result is a STRING. */
-async function callTool(p: Page, input: Record<string, unknown>): Promise<any> {
-  await p.waitForFunction(
-    async () => {
-      const mc = (document as any).modelContext;
-      if (!mc || typeof mc.getTools !== "function") return false;
-      return (await mc.getTools()).some((t: any) => t.name === "set_text_zoom");
-    },
-    { timeout: 25000 }
-  );
-  const json = await p.evaluate(async (arg: any) => {
-    const mc = (document as any).modelContext;
-    const tool = (await mc.getTools()).find((t: any) => t.name === "set_text_zoom");
-    return await mc.executeTool(tool, arg);
-  }, input);
-  return JSON.parse(json as string);
 }
 
 /** the rendered size is the rung times the theme's body size, to within a
@@ -201,10 +172,10 @@ describe("pinch in — the text steps down, and stops", () => {
 
 describe("the rung is remembered", () => {
   test("a reload has --doc-zoom on <html> before the app boots", async () => {
-    /* the one page here with no `beforeLoad`: the store has to survive this
-       test's own reload, so the rung the previous test left is cleared by hand
-       and the clean state is reached with a navigation instead */
-    const p = await phone({ forget: false });
+    /* the one page here that keeps the store across its own reload, so the rung
+       the previous test left is cleared by hand and the clean state reached
+       with a navigation instead */
+    const p = await phone({ resume: true });
     await p.evaluate(() => {
       try {
         localStorage.removeItem("znotes.zoom");
@@ -267,12 +238,12 @@ describe("set_text_zoom", () => {
   test("takes a percent off the ladder and refuses anything else as data", async () => {
     const p = await phone();
 
-    const ok = await callTool(p, { percent: 150 });
+    const ok = await callTool(p, "set_text_zoom", { percent: 150 });
     expect(`set_text_zoom(150) → ${JSON.stringify(ok)}`).toBe('set_text_zoom(150) → {"percent":150}');
     expect(`--doc-zoom after the tool: ${await zoom(p)}`).toBe("--doc-zoom after the tool: 1.5");
     expectRendered(await docSize(p), 1.5, "at 150 %");
 
-    const bad = await callTool(p, { percent: 140 });
+    const bad = await callTool(p, "set_text_zoom", { percent: 140 });
     expect(`set_text_zoom(140) → ${JSON.stringify(bad)}`).toBe(
       `set_text_zoom(140) → ${JSON.stringify({
         error: "invalid-arg",
@@ -282,11 +253,7 @@ describe("set_text_zoom", () => {
     expect(`the refusal moved nothing: ${await zoom(p)}`).toBe("the refusal moved nothing: 1.5");
 
     /* the app's own state answers with the percent, not the multiplier */
-    const state = await p.evaluate(async () => {
-      const mc = (document as any).modelContext;
-      const tool = (await mc.getTools()).find((t: any) => t.name === "get_app_state");
-      return JSON.parse(await mc.executeTool(tool, {}));
-    });
+    const state = await callTool(p, "get_app_state");
     expect(`get_app_state.textZoom: ${state.textZoom}`).toBe("get_app_state.textZoom: 150");
   }, 90000);
 });
@@ -302,15 +269,9 @@ describe("Raw at zoom", () => {
 
     const prose = await p.evaluate(() => parseFloat(getComputedStyle(document.querySelector("#doc .md p")!).fontSize));
     await ensureMode(p, "raw", { settle: 200 });
-    const raw = await p.evaluate(() => {
-      const n = document.getElementById("rawArea")!;
-      return { tag: n.tagName, size: parseFloat(getComputedStyle(n).fontSize) };
-    });
-
-    if (raw.tag === "TEXTAREA") {
-      console.log("skipped: #rawArea is still a TEXTAREA — spec 0014 (Raw is a line editor) has not landed yet");
-      return;
-    }
-    expect(`Raw ${raw.size}px = Preview ${prose}px`).toBe(`Raw ${prose}px = Preview ${prose}px`);
+    const raw = await p.evaluate(() =>
+      parseFloat(getComputedStyle(document.getElementById("rawArea")!).fontSize)
+    );
+    expect(`Raw ${raw}px = Preview ${prose}px`).toBe(`Raw ${prose}px = Preview ${prose}px`);
   }, 90000);
 });

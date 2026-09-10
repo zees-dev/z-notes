@@ -8,21 +8,19 @@
    viewport meta and `touch-action` switch the browser's version off, and this
    module puts the two fingers on a fixed ladder of text sizes instead.
 
-   A LADDER, not a free-flowing scale. Every rung is a size someone chose and
-   the theme still reads correctly at, the step is legible on a 4" screen, and
-   the value is short enough to say out loud in a toast. A continuous factor
-   would land on 1.0736 and stay there.
+   A LADDER, not a free-flowing scale. Every rung is a size the theme still
+   reads correctly at, the step is legible on a 4" screen, and the value is
+   short enough to say out loud in a toast. A continuous factor would land on
+   1.0736 and stay there.
 
    ONE published number: `--doc-zoom` on `<html>`. base.css multiplies the
    document's own sizes by it (§7) and NOTHING else reads it, which is what
    keeps the chrome still while the note grows. The persisted value is the
-   MULTIPLIER, never an index into the array below — a later change to the
+   MULTIPLIER, never an index into the array below, so a later change to the
    ladder still reads an old store, to the nearest rung.
 
-   This module is a leaf in everything but name: it imports `ui.js` and
-   touches `document` and `localStorage`. It knows nothing about docs, modes
-   or the editor, because the zoom is a property of the READER, not of the
-   file — there is deliberately no per-document zoom.
+   The rung is a property of the READER, not of the file: there is deliberately
+   no per-document zoom, and this module knows nothing about docs or modes.
    ============================================================ */
 "use strict";
 
@@ -113,21 +111,19 @@ export function initZoom() {
   apply(stored == null ? 1 : nearest(stored), false);
 
   const sc = $("#scroll");
-  /* the finger separation the current rung was bought at, so a long slow pinch
-     keeps stepping instead of measuring everything against where it started */
+  /* the finger separation the current rung was bought at, 0 when no pinch is
+     under way */
   let d0 = 0;
   const spread = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
 
-  sc.addEventListener(
-    "touchstart",
-    (e) => {
-      /* `>= 2`, not `=== 2`: a third finger landing changes which two fingers
-         `spread` is measuring, and a gap measured across that change is not a
-         gap anybody's hand opened. Re-measure on every arrival instead. */
-      if (e.touches.length >= 2) d0 = spread(e.touches);
-    },
-    { passive: true }
-  );
+  /* `>= 2`, not `=== 2`, and on every arrival AND departure: a third finger
+     landing, or a 3→2 lift, changes which two fingers `spread` is measuring,
+     and a gap measured across that change is not one anybody's hand opened. */
+  const gauge = (e) => {
+    d0 = e.touches.length >= 2 ? spread(e.touches) : 0;
+  };
+  for (const type of ["touchstart", "touchend", "touchcancel"]) sc.addEventListener(type, gauge, { passive: true });
+
   sc.addEventListener(
     "touchmove",
     (e) => {
@@ -138,24 +134,15 @@ export function initZoom() {
       e.preventDefault();
       const d = spread(e.touches);
       const r = d / d0;
-      if (r >= GROW) {
-        stepZoom(1);
-        d0 = d;
-      } else if (r <= SHRINK) {
-        stepZoom(-1);
+      if (r >= GROW || r <= SHRINK) {
+        stepZoom(r >= GROW ? 1 : -1);
+        /* the rung was bought at THIS separation, so a long slow pinch keeps
+           stepping instead of measuring everything against where it started */
         d0 = d;
       }
     },
     { passive: false }
   );
-  const lift = (e) => {
-    /* the same re-measure the other way round: a 3→2 lift leaves a pinch still
-       in progress between two fingers whose gap was never the one `d0` holds */
-    if (e.touches.length >= 2) d0 = spread(e.touches);
-    else d0 = 0;
-  };
-  sc.addEventListener("touchend", lift, { passive: true });
-  sc.addEventListener("touchcancel", lift, { passive: true });
 
   /* Safari's proprietary pinch, which is NOT a touch event and arrives even
      where `touch-action` has already spoken. A browser that never fires these

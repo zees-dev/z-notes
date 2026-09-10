@@ -40,32 +40,30 @@ const guideX = (parentDepth) => rowPad(parentDepth) + 7 + "px";
 
 /* ---------- disclosure memory ----------
 
-   WHICH ROWS ARE OPEN IS A VIEW CHOICE, remembered per browser — the twin of
+   Which rows are open is a VIEW CHOICE, remembered per browser: the twin of
    Preview's fold store one pane over (`znotes.folds`, ADR 0023). The server's
-   `folders.open` column only ever SEEDS a folder open; nothing here writes a
-   close back to it, so without this store every reload reopened all forty
-   folders of a vault the user keeps three of.
+   `folders.open` column only ever SEEDS a folder open and nothing here writes
+   a close back to it, so without this store every reload reopened every folder
+   the user had collapsed.
 
-   Precedence when a row is first seen in a session: what this store remembers,
-   then what the server said, then open. Only a USER action writes — seeding
-   reads — so a folder nobody has touched keeps taking the server's word for it
-   rather than freezing today's answer forever. An unreadable store means no
-   memory at all: the tree renders as the server says, which is the safe
-   direction to fail. */
+   Precedence the first time a row is seen: what this store remembers, then
+   what the server said, then open. Only a USER action writes; seeding reads,
+   and so does a reveal (see `revealFolder`). An unreadable store means no
+   memory at all, so the tree renders as the server says. */
 const OPEN_STORE = "znotes.tree-open";
 /** `{ folders: {path: bool}, vaults: {id: bool} }` — loaded once, lazily. */
 let openStore = null;
-
-const isPlain = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+/** the `state` map each half of the store mirrors; iterating it names the halves */
+const openMaps = { folders: state.folderOpen, vaults: state.vaultOpen };
 
 function loadOpenStore() {
   if (!openStore) {
     openStore = { folders: {}, vaults: {} };
     try {
       const raw = JSON.parse(localStorage.getItem(OPEN_STORE) || "{}");
-      if (isPlain(raw)) {
-        if (isPlain(raw.folders)) openStore.folders = raw.folders;
-        if (isPlain(raw.vaults)) openStore.vaults = raw.vaults;
+      for (const kind in openMaps) {
+        const map = raw && raw[kind];
+        if (map && typeof map === "object" && !Array.isArray(map)) openStore[kind] = map;
       }
     } catch (_) {
       /* private mode, or a shape some later version wrote */
@@ -82,50 +80,38 @@ function persistOpenStore() {
   }
 }
 
-/** What `kind` ("folders"/"vaults") remembers for `key`, or undefined. */
-function storedOpen(kind, key) {
+/** First sight of a row this session: what this browser remembers, else what
+    the caller was told. Seeding never writes back. */
+function seedOpen(kind, key, fallback) {
+  if (openMaps[kind].has(key)) return;
   const v = loadOpenStore()[kind][key];
-  return typeof v === "boolean" ? v : undefined;
+  openMaps[kind].set(key, typeof v === "boolean" ? v : fallback);
 }
 
-/* The two writers, and they are the two USER CHOICES: the row click and the
-   drag-dwell. Every site that merely seeds disclosure reads `storedOpen`, and
-   a reveal moves `state` alone (see `revealFolder`) — what the store holds is
-   what somebody asked for, never what the app inferred. A write that changes
-   nothing does not touch storage. */
-function remember(kind, key, open) {
-  const map = loadOpenStore()[kind];
-  if (map[key] === open) return;
-  map[key] = open;
+/** The one writer, and its callers are the two USER CHOICES: the row click and
+    the drag-dwell. The store holds what somebody asked for, never what the app
+    inferred. A write that changes nothing does not touch storage. */
+function setOpen(kind, key, open) {
+  openMaps[kind].set(key, open);
+  const store = loadOpenStore()[kind];
+  if (store[key] === open) return;
+  store[key] = open;
   persistOpenStore();
 }
 
-function setFolderOpen(path, open) {
-  state.folderOpen.set(path, open);
-  remember("folders", path, open);
-}
-
-function setVaultOpen(id, open) {
-  state.vaultOpen.set(id, open);
-  remember("vaults", id, open);
-}
-
 /** Drop what the freshly indexed tree no longer has, so a renamed or deleted
-    folder ages out instead of accumulating. (Its disclosure is lost with it —
-    the same honest reading a renamed doc's folds get.) */
+    folder ages out instead of accumulating. Its disclosure goes with it, the
+    same honest reading a renamed doc's folds get. */
 function pruneOpenStore(folders) {
   const store = loadOpenStore();
-  const ids = new Set(state.vaults.map((v) => v.id));
+  const live = { folders, vaults: new Set(state.vaults.map((v) => v.id)) };
   let dropped = false;
-  const dropMissing = (map, lives) => {
-    for (const key of Object.keys(map)) {
-      if (lives(key)) continue;
-      delete map[key];
+  for (const kind in openMaps)
+    for (const key of Object.keys(store[kind])) {
+      if (live[kind].has(key)) continue;
+      delete store[kind][key];
       dropped = true;
     }
-  };
-  dropMissing(store.folders, (path) => folders.has(path));
-  dropMissing(store.vaults, (id) => ids.has(id));
   if (dropped) persistOpenStore();
 }
 
@@ -133,7 +119,7 @@ function indexTree(nodes, seen, bySlug, folders) {
   nodes.forEach((n) => {
     if (n.type === "folder") {
       folders.add(n.path);
-      if (!state.folderOpen.has(n.path)) state.folderOpen.set(n.path, storedOpen("folders", n.path) ?? !!n.open);
+      seedOpen("folders", n.path, !!n.open);
       indexTree(n.children, seen, bySlug, folders);
     } else {
       seen.add(n.path);
@@ -297,8 +283,8 @@ function wireDropTarget(row, path, kind, kids) {
       row,
       timer: setTimeout(() => {
         dwell = null;
-        if (kind === "vault") setVaultOpen(row.dataset.vault, true);
-        else setFolderOpen(path, true);
+        if (kind === "vault") setOpen("vaults", row.dataset.vault, true);
+        else setOpen("folders", path, true);
         row.classList.add("open");
         kids.classList.remove("closed");
       }, 600),
@@ -600,7 +586,7 @@ export function renderTree() {
       row.addEventListener("click", () => {
         state.pick = { path: n.path, kind: "folder" };
         const now = !(state.folderOpen.get(n.path) !== false);
-        setFolderOpen(n.path, now);
+        setOpen("folders", n.path, now);
         row.classList.toggle("open", now);
         kids.classList.toggle("closed", !now);
       });
@@ -644,9 +630,8 @@ export function renderTree() {
      the sentence about the directory staying on disk fits. Its children are its
      own tree, one step in. */
   state.vaults.forEach((v) => {
-    /* the vault rows' seed, and the only one the server has no opinion about:
-       what this browser remembers, else open */
-    if (!state.vaultOpen.has(v.id)) state.vaultOpen.set(v.id, storedOpen("vaults", v.id) ?? true);
+    /* the one seed the server has no opinion about: what this browser remembers, else open */
+    seedOpen("vaults", v.id, true);
     const open = state.vaultOpen.get(v.id) !== false;
     const rootKey = vaultRootKey(v.id);
     const wrap = el("div", "rowwrap");
@@ -672,7 +657,7 @@ export function renderTree() {
     row.addEventListener("click", () => {
       pickRoot();
       const now = !(state.vaultOpen.get(v.id) !== false);
-      setVaultOpen(v.id, now);
+      setOpen("vaults", v.id, now);
       row.classList.toggle("open", now);
       kids.classList.toggle("closed", !now);
     });
@@ -821,11 +806,9 @@ function createParent() {
  * CLOSED got opened — the only reason a repaint is owed, which is all
  * `revealInTree` wanted from its own copy of this walk.
  *
- * IN `state` ONLY, never through the writers above: a reveal is a consequence,
- * not a choice. `openDoc` reveals the active doc on every boot, so writing
- * through here would rewrite a folder the user had collapsed around their open
- * doc back to `true` on the next reload — spec 0012's store remembers what was
- * clicked, and this session's answer dies with the session.
+ * IN `state` ONLY, never through `setOpen`: a reveal is a consequence, not a
+ * choice. `openDoc` reveals the active doc on every boot, so a write here would
+ * undo the close the user clicked around their own open doc (spec 0012).
  *
  * The write stays unconditional even when nothing changed: `commitCreate` pins
  * a brand-new folder open BEFORE `loadTree`, and `indexTree` only seeds a key

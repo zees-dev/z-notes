@@ -158,7 +158,7 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
     expect(untouched.status).toBe(200);
     expect(untouched.body.markdown).toBe(SOURCE);
 
-    const m = await page.evaluate((Q: { spaced: number; nested: number; aside: number; terminators: number }) => {
+    const m = await page.evaluate((Q: typeof QUOTE_LINES) => {
       const md = document.querySelector("#doc .md") as HTMLElement;
       const at = (line: number) => md.querySelector(`[data-line="${line}"]`) as HTMLElement | null;
       const line = (n: number) => md.querySelector(`.pline[data-line="${n}"]`) as HTMLElement | null;
@@ -170,11 +170,13 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
       const quote = md.querySelector("blockquote")!;
       const quoteStyle = getComputedStyle(quote);
       const quoteAt = (n: number) => md.querySelector(`blockquote[data-line="${n}"]`) as HTMLElement;
+      const QUOTED_ITEM = ":scope > .tx > blockquote > .pline";
       const spaced = quoteAt(Q.spaced);
       const nested = quoteAt(Q.nested);
       const terminators = quoteAt(Q.terminators);
       const inset = (node: HTMLElement) => parseFloat(getComputedStyle(node).marginLeft);
       const plines = (node: Element, sel: string) => [...node.querySelectorAll(sel)].map((n) => n.textContent);
+      const plineNos = (node: Element, sel: string) => [...node.querySelectorAll(sel)].map((n) => n.getAttribute("data-line"));
       const divider = md.querySelector(".divider") as HTMLElement;
       const diagram = md.querySelector(".mmd-body svg") as SVGElement | null;
       const diagramRect = diagram?.getBoundingClientRect();
@@ -245,7 +247,7 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
         },
         quoteAndRule: {
           lines: plines(quote, ".pline"),
-          dataLines: [...quote.querySelectorAll(".pline")].map((n) => n.getAttribute("data-line")),
+          dataLines: plineNos(quote, ".pline"),
           strike: md.querySelector("blockquote del")?.textContent ?? null,
           border: parseFloat(quoteStyle.borderLeftWidth) > 0,
           divider: divider.getBoundingClientRect().height > 0,
@@ -254,7 +256,7 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
            the markers say, and the indent before them (spec 0019) */
         quotes: {
           spacing: plines(spaced, ".pline"),
-          spacingLines: [...spaced.querySelectorAll(".pline")].map((n) => n.getAttribute("data-line")),
+          spacingLines: plineNos(spaced, ".pline"),
           whiteSpace: getComputedStyle(spaced.querySelector(".pline")!).whiteSpace,
           outerLines: plines(nested, ":scope > .pline"),
           innerLines: plines(nested, ":scope > blockquote > .pline"),
@@ -267,12 +269,11 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
           /* the quoted item: its quote holds the continuation line, the nested
              item holds its own, the list is still one list, and the item's
              blockquote is not inset the way a document-level `    > aside` is */
-          inList: plines(md.querySelector(`li[data-line="${Q.inList}"]`)!, ":scope > .tx > blockquote > .pline"),
-          inListNested: plines(md.querySelector(`li[data-line="${Q.inList + 2}"]`)!, ":scope > .tx > blockquote > .pline"),
-          inListLines: [...md.querySelector(`li[data-line="${Q.inList}"]`)!.querySelectorAll(":scope > .tx > blockquote > .pline")].map((n) => n.getAttribute("data-line")),
-          listIntact:
-            md.querySelector(`li[data-line="${Q.inList}"]`)!.parentElement === md.querySelector(`li[data-line="${Q.inList + 3}"]`)!.parentElement,
-          inListInset: inset(md.querySelector(`li[data-line="${Q.inList}"] blockquote`) as HTMLElement),
+          inList: plines(item(Q.inList)!, QUOTED_ITEM),
+          inListNested: plines(item(Q.inList + 2)!, QUOTED_ITEM),
+          inListLines: plineNos(item(Q.inList)!, QUOTED_ITEM),
+          listIntact: item(Q.inList)!.parentElement === item(Q.inList + 3)!.parentElement,
+          inListInset: inset(item(Q.inList)!.querySelector("blockquote") as HTMLElement),
         },
         table: {
           heads: md.querySelectorAll("thead th").length,

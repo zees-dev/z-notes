@@ -3,38 +3,36 @@
 
    A `<textarea>` has exactly one font size. Preview does not: an `h1` is
    `--h1-size`, body copy is `--d-font`, and a link is the accent colour. So
-   every ⌘E and every click-to-edit resized the whole document, which is the
-   one thing ADR 0027 could not fix — it keeps the LINE under the reader, not
-   the line's size. Per-line typography is not expressible in a textarea at
-   all, so the textarea is gone.
-
-   What replaces it is one `contenteditable` root with one block element per
-   SOURCE LINE, styled by what that line is, and links painted through the CSS
-   Custom Highlight API so no inline DOM ever changes under the caret.
+   every ⌘E and every click-to-edit resized the whole document, the one thing
+   ADR 0027 could not fix: it keeps the LINE under the reader, not the line's
+   size. Per-line typography is not expressible in a textarea at all, so the
+   textarea is gone. What replaces it is one `contenteditable` root with one
+   block element per SOURCE LINE, styled by what that line is, and links
+   painted through the CSS Custom Highlight API so no inline DOM ever changes
+   under the caret.
 
    THE SEAM IS THE TEXTAREA'S OWN VOCABULARY. This element answers to `value`,
    `selectionStart`/`selectionEnd`, `setSelectionRange`, `placeholder`, `wrap`
    and `focus`, and it fires `input`, `select`, `copy`, `cut` and `paste`, so
-   editor.js keeps calling exactly what it called before — Tab, list
+   editor.js keeps calling exactly what it called before: Tab, list
    continuation, the whole-line clipboard (ADR 0013), ⌘⇧E, the mode-switch
    anchoring. The one thing a textarea gave that this cannot is the browser's
    native undo stack, and ADR 0014 took ⌘Z away from the browser two releases
-   ago: the app owns one timeline across documents, so there was nothing left
-   to lose.
+   ago.
 
    THERE ARE EXACTLY TWO WRITE PATHS, and no third:
 
-     `replaceRange`  — every edit this app makes, and every edit a cancelable
-                       `beforeinput` describes IN FULL. Model first, then only
-                       the line nodes that changed.
-     `reconcile`     — what the browser did without asking: an IME composition,
-                       an edit that arrived with no cancelable `beforeinput`,
-                       and a delete the browser would not say the extent of —
-                       a collapsed-caret ⌫/⌥⌫/⌘⌫ arrives here with EMPTY
-                       `getTargetRanges()`, so the browser performs it with its
-                       own word, line and grapheme boundaries and this reads
-                       the result. Reads the DOM, believes it, and normalises
-                       the shape back when it is safe to.
+     `replaceRange`: every edit this app makes, and every edit a cancelable
+                     `beforeinput` describes IN FULL. Model first, then only
+                     the line nodes that changed.
+     `reconcile`:    what the browser did without asking. An IME composition,
+                     an edit that arrived with no cancelable `beforeinput`, and
+                     a delete the browser would not say the extent of (a
+                     collapsed-caret ⌫/⌥⌫/⌘⌫ arrives here with EMPTY
+                     `getTargetRanges()`, so the browser performs it with its
+                     own word, line and grapheme boundaries and this reads the
+                     result). Reads the DOM, believes it, and normalises the
+                     shape back when it is safe to.
 
    If a browser quirk surfaces that neither covers, the fix belongs in the
    reconcile's normalisation, never in a special case in editor.js.
@@ -48,8 +46,8 @@ import { $, trimUrlTail } from "./ui.js";
 
    Both restate rules that live in markdown.js / ui.js rather than importing
    them: this module is a LEAF of the editor, not a peer of the renderer, and
-   the renderer's versions work on escaped HTML mid-emission. Keep them in
-   step with their sources — the citations below name them.
+   the renderer's versions work on escaped HTML mid-emission. Keep them in step
+   with the sources the citations below name.
    ============================================================ */
 
 /* app/markdown.js's own two, verbatim. Preview renders only `#`–`###` as
@@ -550,12 +548,9 @@ export function createRawEditor() {
     if (!e.cancelable) return;
 
     if (t === "historyUndo" || t === "historyRedo") {
-      /* An iOS keyboard's undo key, shake-to-undo, the Edit menu — the app owns
-         the timeline (ADR 0014), so these arrive here rather than at the chord.
-         A BELT, not the door: a browser only fires these when its own undo
-         manager has an entry, and this editor cancels every cancelable edit,
-         so that stack is empty except for what a composition put in it. The
-         phone's undo is the keyboard bar's (ADR 0034). */
+      /* An iOS keyboard's undo key, shake-to-undo, the Edit menu: the app owns
+         the timeline (ADR 0014), so these are the host's to answer rather than
+         the browser's to perform. `renderRaw` says what is on the other end. */
       e.preventDefault();
       if (typeof root.onHistory === "function") root.onHistory(t === "historyRedo");
       return;

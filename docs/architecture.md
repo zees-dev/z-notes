@@ -82,33 +82,29 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   `armor.js`, `entropy.js`, `crypto-worker.js` (the plaintext jail). Leaves
   import only leaves.
 - **Features** — `tree, editor, markdown, rawedit, secrets, chat, terminal,
-  trash, settings, shell, webmcp, zoom, keybar`, composed by `app.js` (`start()`). These are
-  mutually entangled (14 mutual import pairs, a legacy of the single-file
-  split); new cross-feature needs should go through `state.js`, an injected
-  callback, or a DOM event rather than adding pairs. No `export let` anywhere
-  in `app/`.
-  `mermaid.js` is the newest and is deliberately the cleanest: `markdown.js`
-  imports it, it imports `ui.js` and nothing else, and it owns its own theme
-  observer rather than making `settings.js` learn about diagrams (ADR 0010).
-  `rawedit.js` is the next cleanest and the only one that is a leaf of a
-  FEATURE rather than a peer of one: it imports `ui.js` and nothing else, and
-  `editor.js` is the only file that imports it. It builds the Raw surface — a
-  `contenteditable` with one block per source line, so a heading is drawn at
-  the heading's size and a link in the link's colour (ADR 0032) — behind the
-  textarea's own vocabulary (`value`, `selectionStart`, `setSelectionRange`,
-  `input`/`select`/`copy`/`cut`), plus two verbs of its own: `replaceRange`,
-  the single write primitive every edit goes through, and `boxAt`, where
-  ADR 0027's measurement now happens.
-  `keybar.js` is the newest, and shallow on purpose: `ui.js`, `history.js` and
-  `editor.js` in, `app.js` the only importer, and no logic of its own. It owns
-  the bar that stands on the soft keyboard's top edge (ADR 0034) — Outdent,
-  Indent, Undo, Redo and Done, for a phone that has none of those keys — but
-  builds none of it (the markup is static in `index.html`) and implements none
-  of it: every button calls the function its missing chord calls. What it does
-  own is the CONDITION, `raw-focus` on `#app`, which together with
-  `wireVisualViewport`'s `kb-up` is what base.css §8a draws the bar on, and
-  `--keybar`, the bar's measured height, which `revealRawCaret` subtracts
-  alongside `--kb`.
+  trash, settings, shell, webmcp, zoom, keybar`, composed by `app.js`
+  (`start()`). These are mutually entangled (14 mutual import pairs, a legacy
+  of the single-file split); new cross-feature needs should go through
+  `state.js`, an injected callback, or a DOM event rather than adding pairs.
+  No `export let` anywhere in `app/`.
+  `mermaid.js` is deliberately the cleanest: `markdown.js` imports it, it
+  imports `ui.js` and nothing else, and it owns its own theme observer rather
+  than making `settings.js` learn about diagrams (ADR 0010). `rawedit.js` is a
+  leaf of a FEATURE rather than a peer of one: `ui.js` in, `editor.js` its only
+  importer. It builds the Raw surface, a `contenteditable` with one block per
+  source line so a heading is drawn at the heading's size and a link in the
+  link's colour (ADR 0032), behind the textarea's own vocabulary (`value`,
+  `selectionStart`, `setSelectionRange`, `input`/`select`/`copy`/`cut`) plus
+  two verbs of its own: `replaceRange`, the write primitive every edit goes
+  through, and `boxAt`, where ADR 0027's measurement happens. `keybar.js` is
+  the newest and shallow on purpose: `ui.js`, `history.js` and `editor.js` in,
+  `app.js` its only importer, no logic of its own. It owns the bar on the soft
+  keyboard's top edge (ADR 0034), where a phone gets the Outdent, Indent, Undo,
+  Redo and Done its keyboard has not got; the markup is static in `index.html`
+  and every button calls the function its missing chord calls. What it owns is
+  the CONDITION `raw-focus` on `#app`, which with `wireVisualViewport`'s
+  `kb-up` is what base.css §8a draws the bar on, and `--keybar`, the bar's
+  measured height, which `revealRawCaret` subtracts alongside `--kb`.
 - **Static, not modules** — `index.html`, `themes/*.css`, `manifest.json`,
   `icons/*.png` and `vendor/mermaid.js`. All are written by GENERATORS run by
   hand and committed, never by a build step: `scripts/make-icons.ts` draws the
@@ -118,39 +114,37 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   `age.<hash>.js` is built in memory at boot and has no file, everything else
   is an ordinary file under `app/vendor/`.
 
-**Where the frontend's state lives.** `state.js` holds all of it, and two
-entries in it are VIEW choices the server has no opinion about, so each is
-mirrored per browser in `localStorage` by its one writer: `state.folds` →
-`znotes.folds` (Preview's collapsed sections, markdown.js, ADR 0023) and
+**Where the frontend's state lives.** `state.js` holds all of it. Two entries
+are VIEW choices the server has no opinion about, so each is mirrored per
+browser in `localStorage` by its one writer: `state.folds` → `znotes.folds`
+(Preview's collapsed sections, markdown.js, ADR 0023) and
 `state.folderOpen`/`state.vaultOpen` → `znotes.tree-open` (folder and vault-row
-disclosure, tree.js,
-[spec 0012](specs/done/0012-folder-disclosure-persists.md)). Both are
-write-through on a user action only — seeding reads, and so does a reveal
-(`revealFolder` opens a doc's ancestors in `state` alone, because opening a doc
-is not a choice about the folder) — both age
-their keys out rather than accumulating (the folds by a document cap, the tree
-by pruning to the tree that just loaded), and both treat an unreadable store as
-no memory rather than an error.
+disclosure, tree.js, [spec 0012](specs/done/0012-folder-disclosure-persists.md)).
+Both write through on a user action only: seeding reads, and so does a reveal (`revealFolder`
+opens a doc's ancestors in `state` alone, because opening a doc is not a choice
+about the folder). Both age their keys out rather than accumulating, the folds
+by a document cap and the tree by pruning to the tree that just loaded, and
+both treat an unreadable store as no memory rather than an error.
 
 **The look, resolved before the first paint.** Four axes are cached in
 `localStorage` and applied by the inline script at the top of `app/index.html`,
-so a reload never flashes the wrong one: `znotes.scheme`, `znotes.theme` and
+so a reload never flashes the wrong one. `znotes.scheme`, `znotes.theme` and
 `znotes.density` are caches of a SETTING the server owns (`start()` re-applies
-the real value within a tick), while `znotes.zoom` is owned by the browser
-alone — the pinch ladder's rung (ADR 0033), published as `--doc-zoom` on
-`<html>` and read only by base.css — `.doc`'s font-size and the px-sized code
-tokens inside the document (`.code pre`, `.mmd-err`). `zoom.js` owns
-the gesture, the ladder and that property; nothing else may write it.
+the real value within a tick). `znotes.zoom` is owned by the browser alone: the
+pinch ladder's rung (ADR 0033), published as `--doc-zoom` on `<html>` and read
+only by base.css, for `.doc`'s font-size and the px-sized code tokens inside
+the document (`.code pre`, `.mmd-err`). `zoom.js` owns the gesture, the ladder
+and that property; nothing else may write it.
 
 **Where `/` goes.** The bare root is a request for the default PLACE, not a
 place: `shell.js bootDoc()` resolves it at boot against the tree that just
-loaded — the doc a `/d/` URL named, else the last doc this browser opened
-(`znotes.last-doc`, written by `openDoc` beside `state.active` for every open),
-else `editor.homeDoc`, else the first doc — and `openDoc` replaces the address
+loaded, taking the doc a `/d/` URL named, else the last doc this browser opened
+(`znotes.last-doc`, written by `openDoc` beside `state.active` on every open),
+else `editor.homeDoc`, else the first doc; `openDoc` then replaces the address
 with that doc's `/d/` URL (ADR 0035). The store is per browser and never
-synced; an entry the tree no longer has is skipped by the ladder rather than
-pruned on delete, and a store that cannot be read at all degrades to the last
-two rungs. The e2e harness clears it before every boot (`tests/browser.ts`), so
+synced. An entry the tree no longer has is skipped by that walk rather than
+pruned on delete, and a store that cannot be read degrades to its last two
+steps. The e2e harness clears it before every boot (`tests/browser.ts`), so
 suites measure the first doc unless they ask to `resume`.
 
 **Agents.** `webmcp.js` is the agent's `app.js` (ADR 0031). One table registers

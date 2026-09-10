@@ -425,8 +425,6 @@ describe("routing — the root resumes", () => {
   let rui: AppDriver;
   let errs: string[];
 
-  const store = (p: string) =>
-    rp.evaluate((v) => localStorage.setItem("znotes.last-doc", v as string), p);
   /** a resuming page, and the driver bound to it */
   async function open() {
     rp = await newAppPage(browser, { resume: true, onPageError: (m) => errs.push(m) });
@@ -436,7 +434,6 @@ describe("routing — the root resumes", () => {
     const r = await srv.api("PUT", "/api/settings", { editor: { homeDoc: doc } });
     expect(`PUT editor.homeDoc=${doc} → ${r.status}`).toBe(`PUT editor.homeDoc=${doc} → 200`);
   };
-  const home = () => srv.get("/api/settings").then((r) => r.body?.settings?.editor?.homeDoc);
 
   beforeEach(async () => {
     errs = [];
@@ -487,7 +484,8 @@ describe("routing — the root resumes", () => {
     /* the shipped default (`index.md`) is in no test vault, which is why every
        other boot in this file lands on the first doc; the afterEach puts it
        back */
-    expect(`the home doc starts at the shipped default: ${await home()}`).toBe(
+    const stored = (await srv.get("/api/settings")).body?.settings?.editor?.homeDoc;
+    expect(`the home doc starts at the shipped default: ${stored}`).toBe(
       `the home doc starts at the shipped default: ${DEFAULTS.editor.homeDoc}`
     );
     await setHome(C);
@@ -498,7 +496,7 @@ describe("routing — the root resumes", () => {
     expect(await rui.shown()).toBe(C);
 
     /* …and equally when the store names a doc that is not in the tree */
-    await store("gone/never.md");
+    await rp.evaluate(() => localStorage.setItem("znotes.last-doc", "gone/never.md"));
     await rui.boot("/");
     expect(await rui.shown()).toBe(C);
   }, 60000);

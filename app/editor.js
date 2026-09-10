@@ -186,15 +186,12 @@ export function exitGuardDiscard() {
     doc.markdown = doc.diskText;
     const ta = $("#rawArea");
     if (ta && state.mode === "raw" && state.active === g.path) {
-      /* `value =` puts the caret at the END (textarea semantics, kept by
-         ADR 0032's surface) — and the forced `setMode("preview")` this route
-         proceeds into records that as the caret Enter resumes at (ADR 0036),
-         which sent the reader to the bottom of a doc they were editing halfway
-         down. Clamped, because the reverted text is shorter than what was
-         typed over it. */
+      /* `value =` puts the caret at the END (textarea semantics, kept by ADR
+         0032's surface), and the forced `setMode("preview")` this route
+         proceeds into records that as the caret Enter resumes at (ADR 0036).
+         Clamped: the reverted text is shorter than what was typed over it. */
       const at = ta.selectionStart;
       ta.value = doc.markdown;
-      autoGrow(ta);
       const back = Math.max(0, Math.min(at, ta.value.length));
       ta.setSelectionRange(back, back);
     }
@@ -240,34 +237,22 @@ export async function exitGuardSave() {
 
 /* ============================================================
    RAW MODE
+
+   EVERY STRUCTURAL EDIT THIS FILE MAKES GOES THROUGH `ta.replaceRange`, the
+   Raw surface's own write primitive (ADR 0032): the one path into the buffer
+   that keeps the model and the DOM agreeing, and it fires the `input` event
+   itself, so the listener in `renderRaw` still runs (dirty, meta, the caret)
+   without anyone dispatching one by hand. It used to be `document.execCommand`,
+   for one reason that no longer exists: reaching a textarea's undo stack. ⌘Z
+   has been the app's one timeline since ADR 0014.
    ============================================================ */
 export function autoGrow(ta) {
-  /* Raw is a contenteditable now (ADR 0032) and a block grows by itself. The
-     composer and the `.secret-edit` reveal editor are still textareas, and
-     this is still the only way to size one. */
+  /* Raw is a contenteditable now (ADR 0032) and grows by itself; the composer
+     and the `.secret-edit` reveal editor are still textareas that do not. */
   if (!(ta instanceof HTMLTextAreaElement)) return;
-  /* Measuring an auto-growing textarea means briefly collapsing it. In a long
-     Raw doc that collapse clamps the OUTER scroll container; restoring the
-     textarea's height does not restore the line the user was looking at. Keep
-     the container's position across the measurement so one character cannot
-     move the doc out from under its own caret. */
-  const sc = ta.id === "rawArea" ? $("#scroll") : null;
-  const keep = sc ? sc.scrollTop : 0;
   ta.style.height = "auto";
   ta.style.height = ta.scrollHeight + "px";
-  if (sc) sc.scrollTop = keep;
 }
-
-/** A character offset has no DOM box of its own — but the LINE holding it
- * does, and every one of them is a real element now (ADR 0032). So the answer
- * is a `Range` in the live editor rather than a mirror of the textarea's one
- * typography: a heading line is taller than a body line, and no single-font
- * mirror could ever have said so. ADR 0027's "measured, never multiplied" is
- * unchanged; what it measures is. */
-const rawBoxAt = (ta, offset) => ta.boxAt(offset);
-
-/** Where the caret is, in viewport coordinates. */
-const rawCaretBox = (ta) => rawBoxAt(ta, ta.selectionEnd);
 
 function revealRawCaret() {
   const ta = $("#rawArea");
@@ -286,7 +271,7 @@ function revealRawCaret() {
   const visibleBottom =
     Math.min(sc.getBoundingClientRect().bottom, vvBottom, window.innerHeight - cssKeyboard - cssKeybar) - 12;
   if (visibleBottom <= visibleTop) return;
-  const caret = rawCaretBox(ta);
+  const caret = ta.boxAt(ta.selectionEnd);
   /* CEILED, both ways: these are sub-pixel box coordinates and `scrollTop`
      lands on a device pixel, so a delta of 11.6 leaves the caret a fraction of
      a pixel short of clear — true, invisible, and enough to fail an assertion
@@ -308,28 +293,9 @@ export function keepRawCaretVisible() {
   caretSettle = setTimeout(revealRawCaret, 220);
 }
 
-/* EVERY STRUCTURAL EDIT THIS FILE MAKES GOES THROUGH THE ADAPTER'S OWN WRITE
-   PRIMITIVE (ADR 0032), which is the only path into the Raw buffer that keeps
-   the model and the DOM agreeing.
-
-   It used to go through `document.execCommand`, and for one reason: that was
-   the only way onto a TEXTAREA'S UNDO STACK. There is no textarea any more,
-   and there has been no reason to reach that stack since ADR 0014 — ⌘Z is the
-   app's one timeline across documents, and a per-element stack could never
-   have expressed it. What the adapter keeps is the other half of what
-   `execCommand` gave: it fires the `input` event itself, so the listener in
-   `renderRaw` still runs (dirty, meta, the caret) without anyone dispatching
-   one by hand. */
-function applyRawEdit(ta, start, end, text) {
-  if (start === end && !text) return;
-  ta.replaceRange(start, end, text);
-}
-
 function applyWordWrap(ta) {
-  if (!ta) return;
-  ta.wrap = state.wordWrap ? "soft" : "off";
-  ta.classList.toggle("no-wrap", !state.wordWrap);
-  autoGrow(ta);
+  /* the surface's own `wrap` setter carries the `no-wrap` class with it */
+  if (ta) ta.wrap = state.wordWrap ? "soft" : "off";
 }
 
 export function syncWrapUI() {
@@ -453,9 +419,9 @@ function continueMarkdownLine(e, ta) {
     /* An empty list item already IS the next line. Enter exits the list by
        removing its prefix instead of producing an endless run of markers —
        one level of it: an empty bullet inside a quote leaves the quote. */
-    applyRawEdit(ta, next.lineStart, a, next.emptyPrefix);
+    ta.replaceRange(next.lineStart, a, next.emptyPrefix);
   } else {
-    applyRawEdit(ta, a, b, "\n" + next.prefix);
+    ta.replaceRange(a, b, "\n" + next.prefix);
   }
 }
 
@@ -496,7 +462,7 @@ export function indentSelection(outdent) {
   const currentLine = block.slice(0, block.indexOf("\n") < 0 ? block.length : block.indexOf("\n"));
 
   if (!outdent && !multi && !RAW_LIST.test(currentLine) && a === b) {
-    applyRawEdit(ta, a, b, spaces);
+    ta.replaceRange(a, b, spaces);
     return true;
   }
 
@@ -506,7 +472,7 @@ export function indentSelection(outdent) {
   if (replacement === block) return true;
   const firstDelta = changed[0].length - lines[0].length;
   const totalDelta = replacement.length - block.length;
-  applyRawEdit(ta, lineStart, lineEnd, replacement);
+  ta.replaceRange(lineStart, lineEnd, replacement);
   if (a === b) {
     const caret = Math.max(lineStart, a + firstDelta);
     ta.setSelectionRange(caret, caret);
@@ -550,10 +516,9 @@ function moveListGutterCaret(ta) {
    given us the native clipboard for free: those events do not fire at all when
    the selection is COLLAPSED, which is the entire case this exists for. (A
    browser with nothing selected has nothing to cut.) So the gesture is
-   recognised as a chord, the document edit goes through `applyRawEdit` — the
-   browser's own editing command, so ⌘Z still gets the line back — and the
-   clipboard write goes through `copyText`, the app's one clipboard writer,
-   already best-effort on a browser that refuses.
+   recognised as a chord, the document edit goes through the surface's own
+   `replaceRange` (ADR 0032), and the clipboard write through `copyText`, the
+   app's one clipboard writer, already best-effort on a browser that refuses.
 
    A SELECTION is never touched: with one, ⌘X/⌘C are the browser's, unchanged.
    ============================================================ */
@@ -600,7 +565,7 @@ function editRawLineClipboard(e, ta) {
   /* The last line of the file has no newline of its own, so it takes the one
      BEFORE it — otherwise cutting it leaves the empty line it used to follow. */
   const from = terminated ? start : Math.max(0, start - 1);
-  applyRawEdit(ta, from, end, "");
+  ta.replaceRange(from, end, "");
   /* THE CARET LANDS AT THE START OF THE LINE that moved up into this row.
 
      Not the column it held — which is what a code editor does, and what this
@@ -625,7 +590,7 @@ function pasteRawLine(e, ta) {
   e.preventDefault();
   const pos = ta.selectionStart;
   const { start } = lineRange(ta.value, pos);
-  applyRawEdit(ta, start, start, text);
+  ta.replaceRange(start, start, text);
   const caret = pos + text.length;
   ta.setSelectionRange(caret, caret);
 }
@@ -660,16 +625,12 @@ function renderRaw(doc, host) {
      its own emptiness says nothing the blank page did not already say */
   ta.placeholder = "# " + doc.title;
   ta.style.tabSize = String(settingAt("editor.tabSize"));
-  /* A phone keyboard's undo key, shake-to-undo and the Edit menu reach the
-     editor as `historyUndo`/`historyRedo` rather than as ⌘Z, and they mean the
-     same thing (ADR 0014): the app's timeline, not the browser's.
-
-     A BELT, not the phone's undo door. A browser fires these only when its own
-     undo manager has an entry to spend, and the Raw editor cancels every
-     cancelable edit, so that stack stays empty — measured: `execCommand
-     ("undo")` answers false after typing into it. What the phone actually
-     undoes with is the keyboard bar (ADR 0034); this stays for the entries a
-     composition can still leave behind. */
+  /* A phone keyboard's undo key, shake-to-undo and the Edit menu arrive as
+     `historyUndo`/`historyRedo` rather than as ⌘Z, and they mean the same
+     thing (ADR 0014): the app's timeline, not the browser's. A BELT, not the
+     phone's undo door, which is the keyboard bar (ADR 0034) — the browser
+     fires these only for what its own undo manager holds, and rawedit.js
+     cancels every cancelable edit, so that is a composition's leavings. */
   ta.onHistory = (redo) => {
     flushTextRun();
     if (pendingHistory(redo)) stepHistory(redo);
@@ -679,7 +640,6 @@ function renderRaw(doc, host) {
        run left, and opening the run has to happen while that is still true. */
     noteTextEdit(doc.path);
     doc.markdown = ta.value;
-    autoGrow(ta);
     markDirty();
     updateMeta();
     keepRawCaretVisible();
@@ -736,7 +696,6 @@ export function syncRawFromModel(doc) {
   try {
     ta.setSelectionRange(Math.min(a, n), Math.min(b, n));
   } catch (_) {}
-  autoGrow(ta);
   /* The model moved for a reason that was not typing (a re-encrypt, an
      accepted proposal), so this is where the next run starts from — recording
      it as an edit would put a ciphertext swap on the user's undo timeline. */
@@ -1157,7 +1116,7 @@ function scrollRawTo(offset, anchor) {
   const sc = $("#scroll");
   if (!ta || !sc) return;
   const want =
-    sc.scrollTop + (rawBoxAt(ta, offset).top - sc.getBoundingClientRect().top) - (anchor != null ? anchor : 120);
+    sc.scrollTop + (ta.boxAt(offset).top - sc.getBoundingClientRect().top) - (anchor != null ? anchor : 120);
   sc.scrollTop = Math.max(0, Math.min(want, sc.scrollHeight - sc.clientHeight));
 }
 
@@ -1205,7 +1164,7 @@ function rawAnchor() {
   const ta = $("#rawArea");
   const sc = $("#scroll");
   if (!ta || !sc) return null;
-  const box = rawBoxAt(ta, ta.selectionStart);
+  const box = ta.boxAt(ta.selectionStart);
   const r = sc.getBoundingClientRect();
   if (box.bottom < r.top || box.top > r.bottom) return null;
   return { line: ta.value.slice(0, ta.selectionStart).split("\n").length - 1, anchor: box.top - r.top };
@@ -1225,22 +1184,19 @@ function alignPreview(at) {
 
 /* ---------- the way back in (ADR 0036) ----------
 
-   Where the caret was when Raw was last left, per doc — Esc is only half a
-   round trip until something remembers the far end of it. `setMode` is the one
-   door out, and the last moment the caret exists: `renderDoc` is about to
-   replace the editor holding it.
+   Where the caret was when Raw was last left, per doc: Esc is only half a
+   round trip until something remembers the far end of it.
 
-   Nothing clears this: a stale offset is clamped to the document's length on
+   Nothing clears this. A stale offset is clamped to the document's length on
    use (an SSE reload, an accepted proposal and an undo all change the text
    under it), and the map holds one number per doc opened this session. It is
-   deliberately NOT persisted — a reload starts the reading fresh. */
+   deliberately NOT persisted: a reload starts the reading fresh. */
 const rawCaret = new Map();
 
-/** Write the live Raw caret into the map under the doc that owns it.
-    TWO doors leave a mounted Raw editor behind, not one: `setMode` going to
-    Preview, and `openDoc` swapping the doc underneath a Raw that stays Raw —
-    editing A, clicking B, then coming back to A resumed at offset 0 while only
-    the first of them remembered. */
+/** Write the live Raw caret into the map under the doc that owns it. TWO doors
+    leave a mounted Raw editor behind: `setMode` going to Preview, and `openDoc`
+    swapping the doc underneath a Raw that stays Raw. Editing A, clicking B,
+    then coming back to A resumed at offset 0 while only the first remembered. */
 function rememberRawCaret() {
   const ta = $("#rawArea");
   if (ta) rawCaret.set(state.active, ta.selectionStart);
@@ -1460,20 +1416,15 @@ export function flushTextRun() {
 }
 
 /**
- * Whether a step is there to be taken RIGHT NOW — what an Undo/Redo control
- * has to answer to decide whether it is live (ADR 0034).
+ * Whether a step is there to take RIGHT NOW, which is what an Undo/Redo
+ * control needs to know to decide whether it is live (ADR 0034). The chords
+ * never had to ask: they flush the open run first, then look.
  *
- * `pendingHistory` alone is not that answer for undo: the run still open under
- * the caret is not on the timeline until something flushes it, so a fresh doc
- * being typed into reads as "nothing to undo" for as long as the idle window
- * lasts — and a button greyed out at exactly the moment the user wants it is
- * worse than no button. The chords never had to ask, because they flush first
- * and then look.
- *
- * The open run is the opposite answer for REDO. That same flush records a new
- * text entry, and a new entry drops the redo branch — so a Redo lit while
- * somebody is typing is a button that does nothing when it is tapped. Redo is
- * live only when there is no run to flush.
+ * `pendingHistory` alone is not the answer, because the run still open under
+ * the caret is not on the timeline until a flush records it. It counts AS an
+ * undo, or a doc being typed into reads as "nothing to undo" for the whole
+ * idle window; it counts AGAINST redo, because that flush records a new entry
+ * and a new entry drops the redo branch.
  */
 export function canStepHistory(redo) {
   return redo ? runPath == null && !!pendingHistory(true) : runPath != null || !!pendingHistory(false);
@@ -1530,7 +1481,6 @@ export async function applyTextHistory(entry, undoing) {
     const ta = $("#rawArea");
     if (ta) {
       ta.value = target;
-      autoGrow(ta);
       try {
         ta.focus();
         ta.setSelectionRange(caret, caret);

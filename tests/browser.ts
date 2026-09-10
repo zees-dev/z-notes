@@ -89,11 +89,9 @@ export interface NewPageOptions {
   /** runs before ANY app code — for instrumentation the app must not know about */
   beforeLoad?: () => void;
   /**
-   * Keep this browser's per-profile memories — `znotes.last-doc` (ADR 0035),
-   * `znotes.tree-open` (spec 0012) and `znotes.zoom` (ADR 0033) — across the
-   * pages and reloads this page performs. Only a suite MEASURING one of those
-   * memories wants that; see `forgetBrowserState` for why the default is to
-   * clear them.
+   * Keep this browser's per-profile memories across the pages and reloads this
+   * page performs. Only a suite MEASURING one of them wants that; see
+   * `forgetBrowserState` for why the default is to clear them.
    */
   resume?: boolean;
 }
@@ -111,7 +109,7 @@ export interface NewPageOptions {
  * it pinched to. Returns the page, so a direct `browser.newPage()` can be
  * wrapped where it stands.
  */
-export const BROWSER_MEMORIES = ["znotes.last-doc", "znotes.tree-open", "znotes.zoom"];
+const BROWSER_MEMORIES = ["znotes.last-doc", "znotes.tree-open", "znotes.zoom"];
 export async function forgetBrowserState(p: Page): Promise<Page> {
   await p.evaluateOnNewDocument((keys: string[]) => {
     try {
@@ -453,4 +451,34 @@ export async function waitForFocusedInput(p: Page, selector: string, timeout = 5
     { timeout },
     selector
   );
+}
+
+/**
+ * Call a WebMCP tool the way an agent does (ADR 0031): find the registered tool
+ * in `getTools()` and hand it back to `executeTool`, which resolves to a JSON
+ * STRING. The parse is the caller's, deliberately — an agent gets text.
+ *
+ * The wait is part of the call: `registerTool` is awaited per tool, so a booted
+ * app is not yet a registered catalogue.
+ */
+export async function callTool(p: Page, name: string, input: Record<string, unknown> = {}): Promise<any> {
+  await p.waitForFunction(
+    async (n: string) => {
+      const mc = (document as any).modelContext;
+      if (!mc || typeof mc.getTools !== "function") return false;
+      return (await mc.getTools()).some((t: any) => t.name === n);
+    },
+    { timeout: 25000 },
+    name
+  );
+  const json = await p.evaluate(
+    async (n: string, arg: any) => {
+      const mc = (document as any).modelContext;
+      const tool = (await mc.getTools()).find((t: any) => t.name === n);
+      return await mc.executeTool(tool, arg);
+    },
+    name,
+    input
+  );
+  return JSON.parse(json as string);
 }

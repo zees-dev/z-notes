@@ -395,8 +395,8 @@ const extLink = (href, label) =>
    `)` only when the URL does not own it (a Wikipedia "…_(disambiguation)" keeps
    its close-paren because the URL also carries the open).
 
-   Exported for rawedit.js (ADR 0032), which asks the same question of the
-   UNESCAPED source line: the entity branch simply never matches there. */
+   Exported for rawedit.js (ADR 0032), which asks the same of the UNESCAPED
+   source line, where the entity branch never matches. */
 export function trimUrlTail(u) {
   for (;;) {
     const ent = /&(amp|lt|gt|quot|#39);$/.exec(u);

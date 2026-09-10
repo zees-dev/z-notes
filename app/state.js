@@ -21,8 +21,7 @@ export const state = {
   vaults: [],
   /* Vault row disclosure — id → bool, default true. Client-only, deliberately:
      the server's `folders` table is per-vault and knows nothing about the rows
-     that now sit above it. tree.js is its only writer and mirrors it into
-     localStorage (`znotes.tree-open`). */
+     that now sit above it. tree.js mirrors it into `znotes.tree-open`. */
   vaultOpen: new Map(),
   docs: new Map(), // path → { …meta, markdown, rev, loaded }
   docPaths: new Set(), // every doc path the tree knows — the link resolver's world
@@ -32,9 +31,8 @@ export const state = {
      vault's list is still a COLLISION, not a winner. */
   slugs: new Map(),
   /* Folder disclosure — qualified path → bool (survives tree refetches).
-     Seeded from the server's `folders.open`, but tree.js is its only writer and
-     mirrors every user toggle into localStorage (`znotes.tree-open`), so the
-     shape the tree was left in survives a reload. */
+     Seeded from the server's `folders.open`; tree.js mirrors every user toggle
+     into `znotes.tree-open`, so a reload draws the tree as it was left. */
   folderOpen: new Map(),
   /* Preview's collapsed sections — qualified path → Set of fold keys (ADR
      0023). The twin of `folderOpen` one pane over: a view choice the server has
