@@ -436,6 +436,7 @@ describe("routing — the root resumes", () => {
     const r = await srv.api("PUT", "/api/settings", { editor: { homeDoc: doc } });
     expect(`PUT editor.homeDoc=${doc} → ${r.status}`).toBe(`PUT editor.homeDoc=${doc} → 200`);
   };
+  const home = () => srv.get("/api/settings").then((r) => r.body?.settings?.editor?.homeDoc);
 
   beforeEach(async () => {
     errs = [];
@@ -444,6 +445,10 @@ describe("routing — the root resumes", () => {
 
   afterEach(async () => {
     if (rp) await rp.close().catch(() => {});
+    /* the home doc is a RUNG of the boot ladder now, so a test that sets it
+       must not leave it set for the rest of the file — and a `finally` inside
+       the test is not enough, since a timed-out test never reaches one */
+    await setHome(DEFAULTS.editor.homeDoc);
   });
 
   test("/ opens the doc this browser last had on screen", async () => {
@@ -479,20 +484,23 @@ describe("routing — the root resumes", () => {
   }, 60000);
 
   test("with nothing to resume, / opens the configured home doc", async () => {
+    /* the shipped default (`index.md`) is in no test vault, which is why every
+       other boot in this file lands on the first doc; the afterEach puts it
+       back */
+    expect(`the home doc starts at the shipped default: ${await home()}`).toBe(
+      `the home doc starts at the shipped default: ${DEFAULTS.editor.homeDoc}`
+    );
     await setHome(C);
-    try {
-      await rui.boot("/");
-      await rp.evaluate(() => localStorage.removeItem("znotes.last-doc"));
-      await rui.boot("/");
-      expect(await rui.shown()).toBe(C);
 
-      /* …and equally when the store names a doc that is not in the tree */
-      await store("gone/never.md");
-      await rui.boot("/");
-      expect(await rui.shown()).toBe(C);
-    } finally {
-      await setHome(DEFAULTS.editor.homeDoc);
-    }
+    await rui.boot("/");
+    await rp.evaluate(() => localStorage.removeItem("znotes.last-doc"));
+    await rui.boot("/");
+    expect(await rui.shown()).toBe(C);
+
+    /* …and equally when the store names a doc that is not in the tree */
+    await store("gone/never.md");
+    await rui.boot("/");
+    expect(await rui.shown()).toBe(C);
   }, 60000);
 
   test("a page without `resume` boots on the first doc — the harness reset works", async () => {

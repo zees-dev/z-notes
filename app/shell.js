@@ -379,8 +379,10 @@ export function connect() {
             if (cached) state.docs.set(d.to, Object.assign({}, cached, { path: d.to, name: d.to.split("/").pop() }));
             await loadTree().catch(() => {});
             /* the buffer stays put but its address changed — the one place a
-               re-home cannot go through openDoc, so the URL is followed here */
+               re-home cannot go through openDoc, so the URL and the resume
+               store (ADR 0035) are both followed here instead */
             routeDoc(d.to, true);
+            rememberLastDoc(d.to);
             renderDoc({ noFade: true });
             /* sticky for the same reason the deleted half is: the doc under an
                unsaved buffer changed address, and the user has to be able to
@@ -703,8 +705,8 @@ export function dismissTop() {
 
      `/` — not a third shape but a request for the DEFAULT place: boot resolves
      it through `bootDoc` below and replaces it with that doc's `/d/` URL, so
-     the bare root never survives a page load and nothing ever routes back to
-     it.
+     nothing ever routes back to the bare root. A vault with no docs at all is
+     the one page that stays on it, because there is nothing to put there.
 
      `/settings`, `/settings/<section>` — the settings page. It is the pane's
      other content, not an overlay, so it is a real address: deep-linkable,
@@ -797,8 +799,9 @@ export function rememberLastDoc(path) {
   }
 }
 
-/** …and read it back: `""` when there is none, or when the store is unusable. */
-export function lastDoc() {
+/** …and read it back: `""` when there is none, or when the store is unusable.
+    Module-local: `bootDoc` is the only thing that ever asks. */
+function lastDoc() {
   try {
     return localStorage.getItem(LAST_DOC) || "";
   } catch (e) {
