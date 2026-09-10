@@ -136,7 +136,7 @@ server-side value over HTTP — never `page.evaluate` of internal state.
 ## Further Notes
 
 - The user's word for the chip was "pill"; the codebase and this spec say
-  **model chip** (`.model-chip`). `docs/glossary.md` defines the related
+  **model chip** (`.model-chip`). `CONTEXT.md` defines the related
   ladder/rung/probe vocabulary — reuse it in comments.
 - `ai.effort` is deliberately not validated against `meta.efforts`
   server-side; the menu is what makes the open field feel like an enum, which

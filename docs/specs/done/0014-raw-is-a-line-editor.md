@@ -295,7 +295,7 @@ Container parity (`tests/e2e.test.ts` "⌘E and container parity",
 
 ### Docs
 
-- New ADR `docs/decisions/0032-raw-is-a-line-editor.md` (check the next free
+- New ADR `docs/adr/0032-raw-is-a-line-editor.md` (check the next free
   number): the decision, why the textarea could not do it, why the app-owned
   timeline (ADR 0014) is what made native undo dispensable, the
   textarea-shaped surface as the seam, Highlight API for links (no DOM under
@@ -303,7 +303,7 @@ Container parity (`tests/e2e.test.ts` "⌘E and container parity",
   0013 (the editing command is the adapter's, not `execCommand`) and ADR 0027
   (measured on the real DOM).
 - `docs/architecture.md` frontend section: add `rawedit` to the feature list
-  with one sentence; `docs/glossary.md`: "Raw" entry, if present, notes it is
+  with one sentence; `CONTEXT.md`: "Raw" entry, if present, notes it is
   a line editor, not a textarea. `AGENTS.md`'s decision digest gets the 0032
   sentence.
 - Move this spec to `docs/specs/done/`.

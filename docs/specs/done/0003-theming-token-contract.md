@@ -2,7 +2,7 @@
 
 > Founding document, retrofitted into the spec template when the repo adopted
 > the agent-first shape (ADR 0001 era). Archived here as a completed spec:
-> staleness is harmless, durable decisions live in `docs/decisions/`.
+> staleness is harmless, durable decisions live in `docs/adr/`.
 
 ## Problem Statement
 
@@ -10,7 +10,7 @@ Multiple visual identities (modern / minimal / terminal) must coexist over one D
 
 ## Solution
 
-A theme is ONE CSS file that sets custom properties, loaded after `themes/base.css` and swapped by replacing a `<link>` href. Two independent axes: `data-theme` picks the palette file, `data-scheme` (dark/light) picks the palette inside it. ADR [0003](../../decisions/0003-themes-are-css-token-contracts.md) records the durable rules.
+A theme is ONE CSS file that sets custom properties, loaded after `themes/base.css` and swapped by replacing a `<link>` href. Two independent axes: `data-theme` picks the palette file, `data-scheme` (dark/light) picks the palette inside it. ADR [0003](../../adr/0003-themes-are-css-token-contracts.md) records the durable rules.
 
 ## User Stories
 

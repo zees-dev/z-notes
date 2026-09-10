@@ -6,7 +6,7 @@ Work items for the `/spec` → `/implement` pipeline (see `AGENTS.md` §Workflow
   shaping conversation; self-sufficient by contract (the implementer gets no
   other context). Transient: implementing moves the file.
 - `done/` — the archive. Kept verbatim for traceability; staleness here is
-  harmless because durable decisions were promoted to `docs/decisions/` when
+  harmless because durable decisions were promoted to `docs/adr/` when
   the spec landed.
 
 File names are `NNNN-slug.md`, numbered across both directories. Every spec

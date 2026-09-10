@@ -22,7 +22,7 @@ scar": many comments cite the bug that forced the shape
 
 ## Naming and errors
 
-- Vocabulary comes from `docs/glossary.md` — a `doc`, a `proposal`, a `rev`,
+- Vocabulary comes from `CONTEXT.md` — a `doc`, a `proposal`, a `rev`,
   never synonyms.
 - API error bodies are `fail(status, slug, {message, ...})` →
   `{error, message, ...extra}`. Slugs are stable contract (`rev-conflict`,

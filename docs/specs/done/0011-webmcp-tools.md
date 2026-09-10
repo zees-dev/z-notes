@@ -311,7 +311,7 @@ the same `headers` object, so they carry them too.
 
 ### Docs (same change)
 
-- `docs/decisions/0031-the-agent-gets-the-same-doors.md` — format as
+- `docs/adr/0031-the-agent-gets-the-same-doors.md` — format as
   ADR 0030. Decision: every UI operation is a WebMCP tool wrapping the
   function the UI calls; the catalogue lives in `app/webmcp.js`; a browser
   without `document.modelContext` gets an in-page one; errors are data in
@@ -329,7 +329,7 @@ the same `headers` object, so they carry them too.
   the registration order, the polyfill, and that errors are data.
 - `docs/specs/done/0002-http-api-v0.md` App shell → `GET /d/{path}`: one
   sentence naming the two headers the shell carries and why.
-- `docs/glossary.md` Infrastructure: **tool** (a WebMCP tool: a named,
+- `CONTEXT.md` Infrastructure: **tool** (a WebMCP tool: a named,
   schema'd operation in `app/webmcp.js`; *not* the AI relay's upstream tool
   calls, which stay "edits"/"proposals") and **agent** (whatever calls
   tools through `document.modelContext`).

@@ -8,7 +8,7 @@
 
    `mermaid.default` is the whole API the app uses — `initialize`, `parse` and
    `render`. Nothing else is imported, and nothing else should be added here
-   without the ADR that justifies it (docs/decisions/0010).
+   without the ADR that justifies it (docs/adr/0010).
    ============================================================ */
 
 export { default } from "mermaid";

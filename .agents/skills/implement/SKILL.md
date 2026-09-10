@@ -32,11 +32,13 @@ pointers reach — the spec's Out of Scope section is binding.
 6. **Archive + promote:** `git mv` the spec to `docs/specs/done/`. If the
    spec encoded a durable decision — a schema, an API-contract addition, an
    architectural choice, a new dependency — write it up as a one-page ADR in
-   `docs/decisions/NNNN-slug.md` (next free number) in the same change. This
+   `docs/adr/NNNN-slug.md` (next free number) in the same change. This
    promotion is what keeps specs from becoming a shadow doc system. Update
-   `docs/architecture.md` / `docs/glossary.md` if the change moved a seam or
+   `docs/architecture.md` / `CONTEXT.md` if the change moved a seam or
    coined a term.
-7. **Commit to the current branch** — one commit, message explaining the why,
+7. **Clean up:** apply the repo's `clean-code` skill to the files you touched,
+   then re-run `bun run gates` and `bun run lint:docs`.
+8. **Commit to the current branch** — one commit, message explaining the why,
    referencing the spec number.
 
 ## Rules

@@ -2,7 +2,7 @@
 
 > Founding document, retrofitted into the spec template when the repo adopted
 > the agent-first shape (ADR 0001 era). Archived here as a completed spec:
-> staleness is harmless, durable decisions live in `docs/decisions/`.
+> staleness is harmless, durable decisions live in `docs/adr/`.
 
 ## Problem Statement
 
@@ -10,7 +10,7 @@ The frontend, tests and any future client need one exact, versioned description 
 
 ## Solution
 
-A v0 contract: JSON bodies, opaque doc revs with 409 CAS conflicts, stable error slugs in `{error, message, ...extra}` bodies, and an SSE bus. The full contract is under Implementation Decisions; ADR [0002](../../decisions/0002-http-api-v0-error-shape.md) records its durable rules.
+A v0 contract: JSON bodies, opaque doc revs with 409 CAS conflicts, stable error slugs in `{error, message, ...extra}` bodies, and an SSE bus. The full contract is under Implementation Decisions; ADR [0002](../../adr/0002-http-api-v0-error-shape.md) records its durable rules.
 
 ## User Stories
 
@@ -568,11 +568,11 @@ dropped onto the sidebar tree may have: a **comma-separated string**, healed on 
 on `PUT` to lowercase, dot-less, de-duplicated tokens (` .MD, Txt,,md ` → `md, txt`). The
 response carries what was stored, exactly as a clamped number does. `""` is legal and
 means nothing may be dropped. The server does **not** gate `POST /api/docs` by it: what a
-doc is stays [ADR 0019](../../decisions/0019-an-explicit-file-extension-is-literal.md)'s
+doc is stays [ADR 0019](../../adr/0019-an-explicit-file-extension-is-literal.md)'s
 question, and the sidebar's own inline create legitimately makes `report.txt`. This is the
 client's drop filter, published so both surfaces read one list. There is no upload route;
 a dropped file is `POST /api/docs` carrying its text
-([ADR 0030](../../decisions/0030-a-dropped-file-is-a-doc.md)).
+([ADR 0030](../../adr/0030-a-dropped-file-is-a-doc.md)).
 
 *Real backend, additive (SPEC §13):* `settings.terminal` configures the command runner.
 `shell` and `startupCwd` are absolute paths or `""` (meaning `$SHELL`, else `/bin/sh`; and

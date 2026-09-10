@@ -18,8 +18,8 @@ implementation cannot proceed without.
 2. **Ground every claim in the repo as it is now.** Read the touched modules
    (start from `docs/architecture.md`'s table). File paths, type signatures,
    route entries and test names in the spec must be copied from current code,
-   not remembered. Use `docs/glossary.md` vocabulary throughout. Check
-   `docs/decisions/` for ADRs touching the same area — do not re-litigate
+   not remembered. Use `CONTEXT.md` vocabulary throughout. Check
+   `docs/adr/` for ADRs touching the same area — do not re-litigate
    them silently; if the spec contradicts one, say so explicitly and get the
    user's sign-off.
 3. **Propose the test seams before writing.** Prefer seams that already exist

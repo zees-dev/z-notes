@@ -8,15 +8,18 @@
      1. AGENTS.md exists and stays ≤ 100 lines (a map, not a manual)
      2. CLAUDE.md starts with the @AGENTS.md pointer (Claude-specific
         addon content may follow — it applies to Claude sessions only)
-     3. every relative link in AGENTS.md and docs/ resolves to a real file
+     3. every relative link in AGENTS.md, CONTEXT.md and docs/ resolves to a real file
      4. specs in docs/specs/{open,done} carry all seven template sections
      5. server/ layering is forward-only (the table below IS the law;
         docs/architecture.md restates it for humans — keep both in sync)
      6. app/ leaf modules import only leaves; no `export let` in app/
+     7. every agent commit path runs clean-code first
+     8. every .agents/skills entry is a skill dir mirrored by a symlink in
+        .claude/skills — skills are canonical in .agents/, harness dirs link
    ============================================================ */
 
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { readFileSync, readdirSync, existsSync, statSync, lstatSync, realpathSync } from "node:fs";
+import { dirname, join, resolve, relative } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
 let failures = 0;
@@ -62,7 +65,7 @@ function mdFiles(dir: string): string[] {
 const rel = (p: string) => p.slice(ROOT.length + 1);
 
 /* ---------- 3. relative links resolve ---------- */
-const linkSources = [agentsPath, ...(existsSync(join(ROOT, "docs")) ? mdFiles(join(ROOT, "docs")) : [])];
+const linkSources = [agentsPath, join(ROOT, "CONTEXT.md"), ...(existsSync(join(ROOT, "docs")) ? mdFiles(join(ROOT, "docs")) : [])];
 const LINK = /\[[^\]]*\]\(([^)\s]+)\)/g;
 for (const src of linkSources) {
   if (!existsSync(src)) continue;
@@ -97,7 +100,7 @@ for (const bucket of ["open", "done"]) {
     const text = readFileSync(join(dir, f), "utf8");
     for (const s of SPEC_SECTIONS)
       if (!text.includes(s))
-        fail(`docs/specs/${bucket}/${f}`, `missing section "${s}"`, "add the section (all seven are mandatory; write 'None.' rather than omitting) — template lives in .claude/skills/spec/SKILL.md");
+        fail(`docs/specs/${bucket}/${f}`, `missing section "${s}"`, "add the section (all seven are mandatory; write 'None.' rather than omitting) — template lives in .agents/skills/spec/SKILL.md");
   }
 }
 
@@ -149,6 +152,48 @@ for (const f of readdirSync(appDir)) {
   }
   if (/^\s*export let /m.test(text))
     fail(`app/${f}`, "`export let` live binding", "shared mutable state belongs in state.js (or the module's session object); export functions or const objects instead");
+}
+
+/* ---------- 7. clean-code before every commit ---------- */
+{
+  const policies: [string, string][] = [
+    ["AGENTS.md", "before any `git commit`"],
+    [".agents/skills/clean-code/SKILL.md", "before every commit"],
+  ];
+  for (const [file, marker] of policies) {
+    const body = existsSync(join(ROOT, file)) ? readFileSync(join(ROOT, file), "utf8") : "";
+    if (!(body.includes("clean-code") && body.includes(marker)))
+      fail(file, `lost the "${marker}" clean-code rule`, "restore clean-code as the final pass before any agent commit");
+  }
+  const impl = join(ROOT, ".agents/skills/implement/SKILL.md");
+  const body = existsSync(impl) ? readFileSync(impl, "utf8") : "";
+  const cleanAt = body.indexOf("clean-code");
+  const commitAt = body.indexOf("Commit to the current branch");
+  if (cleanAt < 0 || commitAt < 0 || cleanAt > commitAt)
+    fail(".agents/skills/implement/SKILL.md", "does not run clean-code before its commit step", "add the clean-code step immediately before the commit step");
+}
+
+/* ---------- 8. skills: canonical in .agents/skills, symlinked from .claude/skills ---------- */
+{
+  const canonical = join(ROOT, ".agents", "skills");
+  const mirror = join(ROOT, ".claude", "skills");
+  const names = existsSync(canonical) ? readdirSync(canonical).filter((n) => !n.startsWith(".")) : [];
+  for (const name of names) {
+    const target = join(canonical, name);
+    if (!existsSync(join(target, "SKILL.md"))) {
+      fail(`.agents/skills/${name}`, "has no SKILL.md", "every entry is a skill directory");
+      continue;
+    }
+    const link = join(mirror, name);
+    let mirrored = false;
+    try { mirrored = lstatSync(link).isSymbolicLink() && realpathSync(link) === realpathSync(target); } catch {}
+    if (!mirrored)
+      fail(`.claude/skills/${name}`, `must be a symlink to .agents/skills/${name}`, `run: ln -s ${relative(mirror, target)} .claude/skills/${name}`);
+  }
+  for (const name of existsSync(mirror) ? readdirSync(mirror) : []) {
+    if (!names.includes(name))
+      fail(`.claude/skills/${name}`, "is not a symlink to a canonical skill", `move it to .agents/skills/${name} and symlink it back`);
+  }
 }
 
 /* ---------- verdict ---------- */

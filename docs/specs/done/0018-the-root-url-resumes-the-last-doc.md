@@ -72,7 +72,7 @@ opening a doc behind the page — the same ladder decides which.
   `evaluateOnNewDocument` beside their `newPage()` is acceptable. Run every
   e2e suite once at the end; a suite that starts asserting the wrong doc is
   a missed reset, not a product bug.
-- **Docs**: ADR `docs/decisions/00NN-the-root-url-resumes-the-last-doc.md`
+- **Docs**: ADR `docs/adr/00NN-the-root-url-resumes-the-last-doc.md`
   (next free number): `/` means "where you were", the ladder, the reset the
   harness performs and why. Update the routing comment in shell.js (§ "the
   URL shape", ~line 697) and the boot comment in app.js. AGENTS.md digest:

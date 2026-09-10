@@ -85,7 +85,7 @@ it follows the link; in any field it is that field's Enter. Only the
   `./editor.js`. Keep the block's existing order: modal primary first.
 - **webmcp.js**: no new tool (`set_mode` covers it). The `set_mode` tool
   already accepts a caret? If it does not, leave it.
-- **Docs**: ADR `docs/decisions/00NN-esc-and-enter-are-a-round-trip.md`
+- **Docs**: ADR `docs/adr/00NN-esc-and-enter-are-a-round-trip.md`
   (next free number): the decision, the "nothing focused" scope, the caret
   memory per doc, the caret-line anchoring as a refinement of ADR 0027.
   One sentence in AGENTS.md's digest; `docs/architecture.md`'s guard/Back

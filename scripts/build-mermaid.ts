@@ -62,7 +62,7 @@ const sha = new Bun.CryptoHasher("sha256").update(js).digest("hex");
    of us can never have produced. */
 const banner =
   `/*! mermaid@${installed.version} — GENERATED, do not edit.\n` +
-  `    Regenerate: bun scripts/build-mermaid.ts (see docs/decisions/0010-mermaid-is-a-committed-bundle.md)\n` +
+  `    Regenerate: bun scripts/build-mermaid.ts (see docs/adr/0010-mermaid-is-a-committed-bundle.md)\n` +
   `    Entry: scripts/mermaid-entry.js · sha256(body)=${sha} */\n`;
 
 mkdirSync(dirname(OUT), { recursive: true });

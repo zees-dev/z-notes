@@ -152,7 +152,7 @@ that stick.
 
 ## Further Notes
 
-Promote to an ADR (`docs/decisions/0033-text-size-is-a-pinch-ladder.md`, next
+Promote to an ADR (`docs/adr/0033-text-size-is-a-pinch-ladder.md`, next
 free number at the time of writing — check): the decision is "the app owns
 pinch, and it steps text, not layout"; note the accessibility trade
 (user-scalable=no is acceptable only because the replacement reaches 200 %).

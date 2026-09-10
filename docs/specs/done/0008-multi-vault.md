@@ -522,7 +522,7 @@ strong in a theme, introduce `--tree-guide` in base.css defaulting to
   add a `### Vaults` section with the five routes and error codes; amend the
   Events section (`vaults-changed`, `sync-status.vault`, qualified
   `doc-changed` paths).
-- **New ADR `docs/decisions/0018-vaults-are-a-prefix.md`** (promoted by
+- **New ADR `docs/adr/0018-vaults-are-a-prefix.md`** (promoted by
   `/implement`): the durable rules — one primary vault with today's bare
   paths and all app-level state; secondary vaults are `@id/`-prefixed,
   filesystem-registered, per-vault stacks; `@` is a reserved path segment;
@@ -530,7 +530,7 @@ strong in a theme, introduce `--tree-guide` in base.css defaulting to
 - **`docs/architecture.md`**: `vaults.ts` row, updated layering line, env
   vars. **`scripts/lint-docs.ts`**: layer law gains `vaults` between
   `ai docs` and `index`.
-- **`docs/glossary.md`**: **primary vault**, **secondary vault**, **vault
+- **`CONTEXT.md`**: **primary vault**, **secondary vault**, **vault
   id**, **add / disconnect** (a vault; *banned:* "detach" for vaults —
   "attach" stays the remote-connection verb, "mount", "workspace").
 - **`AGENTS.md`**: layout line for `vaults.ts` + the vaults home; keep ≤ 100

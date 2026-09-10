@@ -166,7 +166,7 @@ accepted is a setting.**
   wanted, `.row.drop-target` is unchanged — the browser draws the copy badge
   from `dropEffect`.
 
-**ADR.** `docs/decisions/0030-a-dropped-file-is-a-doc.md` — the next free ADR number (0029 is taken by spec 0009; verify with `ls docs/decisions` and use the next free one if that has moved) — format as 0025:
+**ADR.** `docs/adr/0030-a-dropped-file-is-a-doc.md` — the next free ADR number (0029 is taken by spec 0009; verify with `ls docs/adr` and use the next free one if that has moved) — format as 0025:
 Decision — there is no upload route; a dropped file is `POST /api/docs`, the
 accepted-extension list is a client-side setting, and the server's definition
 of a doc stays ADR 0019's. Consequence — a name the server would refuse

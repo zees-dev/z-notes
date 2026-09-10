@@ -87,7 +87,7 @@ bun run lint:docs    # docs/link/layering enforcement
 
 The repo is documentation-heavy on purpose: [AGENTS.md](AGENTS.md) is the map,
 [docs/architecture.md](docs/architecture.md) the module structure,
-[docs/decisions/](docs/decisions/) the ADRs, and [docs/specs/](docs/specs/)
+[docs/adr/](docs/adr/) the ADRs, and [docs/specs/](docs/specs/)
 the specs that drove each change — including
 [the normative HTTP/SSE contract](docs/specs/done/0002-http-api-v0.md).
 

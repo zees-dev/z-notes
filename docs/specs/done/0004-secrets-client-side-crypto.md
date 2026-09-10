@@ -2,7 +2,7 @@
 
 > Founding document, retrofitted into the spec template when the repo adopted
 > the agent-first shape (ADR 0001 era). Archived here as a completed spec:
-> staleness is harmless, durable decisions live in `docs/decisions/`.
+> staleness is harmless, durable decisions live in `docs/adr/`.
 
 ## Problem Statement
 
@@ -10,7 +10,7 @@ Notes must be able to carry secrets (keys, credentials) in ordinary markdown fil
 
 ## Solution
 
-age v1 file format inside fenced ```age blocks, produced by the `age-encryption` (typage) library in the BROWSER: an X25519 vault key per block, the identity itself passphrase-wrapped (scrypt logN=18) in a committed keyring. The server stores and serves ciphertext, validates shape only. ADR [0004](../../decisions/0004-secrets-are-client-side-age.md) records the durable parameters.
+age v1 file format inside fenced ```age blocks, produced by the `age-encryption` (typage) library in the BROWSER: an X25519 vault key per block, the identity itself passphrase-wrapped (scrypt logN=18) in a committed keyring. The server stores and serves ciphertext, validates shape only. ADR [0004](../../adr/0004-secrets-are-client-side-age.md) records the durable parameters.
 
 ## User Stories
 

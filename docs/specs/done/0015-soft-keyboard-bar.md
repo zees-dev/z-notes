@@ -112,7 +112,7 @@ up and the selection is intact).
   `indentSelection(!!outdent)`; returns `{ ok: true }` or
   `{ error: "not-raw", message: "Switch to Raw first" }` when it returns
   false. Keep `tests/webmcp.test.ts` green.
-- ADR: `docs/decisions/00NN-the-soft-keyboard-carries-an-editing-bar.md` —
+- ADR: `docs/adr/00NN-the-soft-keyboard-carries-an-editing-bar.md` —
   short: the bar exists only where a soft keyboard does (`--kb`, measured,
   not a pointer query — consistent with base.css §11's "one axis" rule since
   the condition is the keyboard, not the device), focus never leaves the

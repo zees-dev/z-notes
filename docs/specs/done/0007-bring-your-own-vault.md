@@ -271,7 +271,7 @@ already names the paths. No new settings keys; the button is an action, like
   response = the sync-status object, the four error codes with statuses, and
   the non-destructive/atomic guarantee. Note under `GET /api/sync/status` is
   already correct (`remote: null` ⇒ "local only").
-- **ADR `docs/decisions/0017-the-vault-is-bring-your-own.md` already exists**
+- **ADR `docs/adr/0017-the-vault-is-bring-your-own.md` already exists**
   (committed with this spec) and is the durable record of these decisions —
   do not write a second one. It links to this spec at its `open/` path, so
   moving this spec to `done/` requires updating that link in the same change
@@ -281,7 +281,7 @@ already names the paths. No new settings keys; the button is an action, like
   secrecy rests on the passphrase's strength and the repo's visibility — both
   the user's choice, neither enforced or warned about by the app beyond the
   existing entropy advice at passphrase creation.
-- **`docs/glossary.md`** § Sync: add **attach** — connecting the vault
+- **`CONTEXT.md`** § Sync: add **attach** — connecting the vault
   directory to a remote repo (`POST /api/sync/remote` or `ZNOTES_VAULT_REPO`);
   *banned:* "clone" (the app never clones-into-place), "link".
 - **`docs/architecture.md`**: git.ts row mentions attach; document the two new

@@ -1,99 +1,99 @@
 # z-notes — agent map
 
-Single-user Markdown-oriented notes app; editable files on disk are the source of truth.
-One Bun process serves a no-build frontend, JSON/SSE API, client-side (age) secrets, git sync, AI edit relay and gated terminal.
+Single-user Markdown notes app; files on disk are the source of truth. One Bun process serves a
+no-build frontend, JSON/SSE API, client-side (age) secrets, git sync, AI edit relay and gated terminal.
 
 ## Layout
 
-- `server/` — the backend. Flat files, each a deep module with a deliberate export
-  surface; `index.ts` is the composition root + route table, `vaults.ts` the vault
-  registry it routes through. Forward-only layering (enforced by
-  `bun run lint:docs`): `vault db http sse` → `settings watch ai-edits` →
+- `server/` — the backend. Flat files, each a deep module with a deliberate export surface;
+  `index.ts` is the composition root + route table, `vaults.ts` the vault registry it routes through.
+  Forward-only layering (`bun run lint:docs`): `vault db http sse` → `settings watch ai-edits` →
   `trash ai-endpoint` → `git terminal` → `ai docs` → `vaults` → `index`.
 - `app/` — the frontend. ES modules, no build step, no runtime deps. Leaf modules
-  (`state ui api armor entropy dialogs crypto-worker history`) never import
-  feature modules — `history` reaches editor.js and tree.js through callbacks
-  the composition root injects (ADR 0014), the same shape `wireDialogs` uses. `webmcp.js` is the agent's `app.js`: it registers every UI operation as a WebMCP tool wrapping the very function the click calls (ADR 0031).
-  `manifest.json` + `icons/` make it installable (ADR 0007); the icons are drawn by
-  `bun scripts/make-icons.ts` and committed — regenerate them if the mark changes.
-  `vendor/mermaid.js` is the same deal (ADR 0010): a COMMITTED bundle written by
-  `bun scripts/build-mermaid.ts`, regenerated when the pinned mermaid version
-  moves. Both are generators, not build steps.
+  (`state ui api armor entropy dialogs crypto-worker history`) never import feature modules —
+  `history` reaches editor.js and tree.js through callbacks the composition root injects (ADR 0014).
+  `webmcp.js` registers every UI operation as a WebMCP tool wrapping the function the click calls
+  (ADR 0031). `icons/` and `vendor/mermaid.js` are COMMITTED generator output, never a build step
+  (ADRs 0007, 0010; see [architecture](docs/architecture.md)).
 - `docs/` — the knowledge base; [API](docs/specs/done/0002-http-api-v0.md) is
   normative and [product](docs/specs/done/0001-z-notes-v1.md) is the product spec.
-- `tests/` — black-box by default (spawn the real server / a real Chromium).
-  `helpers.ts` + `browser.ts` are the shared harness; `mock-upstream.ts` fakes the
-  AI endpoint. `bun run gates` = the five acceptance suites, plus
-  `mermaid-e2e` — a fence is untrusted input (ADR 0010) and its hardening is
-  the one thing here that must not regress quietly.
+- `tests/` — black-box by default (real server, real Chromium); `helpers.ts` +
+  `browser.ts` are the harness, `mock-upstream.ts` fakes the AI endpoint. `bun run
+  gates` = five acceptance suites plus `mermaid-e2e`: a fence is untrusted input
+  (ADR 0010) and its hardening must not regress quietly.
 - `deploy/` — Dockerfile + k3s manifests; `deploy/README.md` is the runbook.
-- `vaults/` — NOT part of this repo (gitignored). Vaults are bring-your-own
-  (ADR 0017) and plural (ADR 0018): `ZNOTES_VAULTS_DIR` (default `./vaults`) is
-  the home, one subdirectory per vault, the primary among them at
-  `ZNOTES_VAULT` (default `./vaults/vault`).
+- `.agents/skills/` — canonical skills (`spec implement clean-code`), symlinked from `.claude/skills/`.
+  `CONTEXT.md` is domain language only; `docs/` is design only; `scripts/lint-docs.ts` enforces the shape.
+- `vaults/` — NOT in this repo (gitignored). Bring-your-own (ADR 0017), plural (ADR 0018): `ZNOTES_VAULTS_DIR`
+  (default `./vaults`) holds one subdirectory per vault, the primary at `ZNOTES_VAULT` (default `./vaults/vault`).
 
 ## Commands
 
 ```sh
 bun run dev          # bun --hot server/index.ts on :4700
-bun test             # full suite (~5 min at --parallel=4: servers + headless Chromium)
-bun test tests/X.test.ts   # one file — do this while iterating
+bun test [tests/X.test.ts]  # full suite ~5 min (--parallel=4, servers + Chromium); one file while iterating
 bun run gates        # the 6 acceptance gates (~70 s) — run before every commit
 bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
 ```
 
 ## Docs taxonomy (five durable types + one transient)
 
-- [docs/architecture.md](docs/architecture.md) — module map, interfaces, layering,
-  where state lives. Start here before touching structure.
-- [docs/style.md](docs/style.md) — conventions linters can't enforce, and the
-  repo's sharp edges (read the "gotchas" section before sweeping the repo).
-- [docs/glossary.md](docs/glossary.md) — domain vocabulary + banned synonyms.
-  Use these words in code, docs, commits.
-- [docs/decisions/](docs/decisions/) — append-only one-page ADRs. Respect them;
-  new durable decisions get promoted here by `/implement`.
-- [docs/specs/](docs/specs/) — work specs. `open/` = transient, awaiting
-  implementation (written by `/spec`); `done/` = the archive. The five founding
-  specs live there: 0001 product, 0002 the normative HTTP/SSE contract, 0003
-  theming, 0004 secrets crypto, 0005 the Bun platform research. Their durable
-  rules are ADRs 0002–0004 — amended later by
-  0006 (0004's passphrase floor is advice, not a gate), 0007 (the app is
-  installable) and 0008 (on a phone, Back unwinds layers before it leaves).
-  0010 (mermaid is a committed bundle, and a fence is untrusted input) and
-  0011 (token counts are an estimate) came out of the dependency audit. 0012
-  moves 0001's save chrome (the topbar Save button and its permanent pill) to a
-  statusbar pip plus a topbar mark that appears only when there is something to
-  save; 0013 gives a collapsed caret in Raw the whole-line ⌘X/⌘C/⌘V; 0014
-  makes ⌘Z/⌘⇧Z ONE app-owned timeline across documents — text edits and file
-  operations in the order they happened, navigating to each step's doc, the
-  file ones behind a prompt (`app/history.js`). 0015 gives Preview the source's
-  line structure — one newline is one line break, one blank line one blank line
-  (amending 0001's soft-break and blank-multiplicity rules) — and every rendered
-  line its own `[data-line]`. 0016 renders external URLs as real new-tab
-  anchors — http(s)/mailto only; `javascript:` and the rest stay literal text.
-  0017 makes the vault bring-your-own — external to this repo, any directory
-  qualifies, and attach is the one place `git init` may run. 0018 makes vaults
-  plural: the primary keeps today's bare paths and all app-level state,
-  secondary vaults are `@id/`-prefixed stacks under the vaults home, and `@` is
-  a reserved path segment. 0019 makes explicit extensions literal, 0020 puts
-  moves on history, 0021 defines Preview's tested Markdown dialect, 0022 makes asking before a dirty Raw exit a default-on preference, 0023 folds Preview's sections without touching a byte, 0024 drags a folder with its subtree, 0025 moves the chat panel's second chord to ⌥C so ⌘C is always copy, 0026 makes sync bidirectional on the one auto-sync switch — upstream is polled, taken fast-forward-only, and "Sync" is a verb on the vault row — 0027 makes a mode switch keep the source line you were on, measured rather than multiplied, so click-to-edit does not move the document, and 0028 gives the one search box a second language — `/pattern/flags` (or `mode=regex`) is a regex, the palette's chips report which mode actually ran, and a document is rejected whole before its lines are scored. 0029 makes the proposal diff in-house: a line-level Myers diff in `server/ai-edits.ts`, bounded by a 1s deadline rather than by input size, and the `diff` package is gone. 0030 makes a file dropped on the tree a doc: there is no upload route, the drop is `POST /api/docs`, and the accepted extensions are a client-side setting, 0031 gives an agent the same doors as the hand: every UI operation is a WebMCP tool in `app/webmcp.js`, errors are data in 0002's shape, no tool touches a passphrase, and the shell carries `Origin-Agent-Cluster` and `Permissions-Policy: tools=(self)`, 0032 makes Raw a LINE EDITOR — `app/rawedit.js`, one contenteditable with one block per source line, so a heading is drawn at the heading's size and a link in the accent colour (a CSS highlight, never a node under the caret); the textarea is gone, its surface (`value`, the selection pair, `input`/`select`) is the seam `editor.js` still talks to, every edit goes through `replaceRange` or the reconcile, and `.raw` has left the 16px iOS floor, and 0033 gives the app the pinch — it steps the document's TEXT up a fixed ladder (`app/zoom.js`, one `--doc-zoom` on `<html>`) instead of letting the browser scale the layout. 0034 puts an editing bar on the soft keyboard's top edge (`app/keybar.js`) — Outdent, Indent, Undo, Redo and Done, drawn only where a keyboard is MEASURED to be covering a focused Raw editor, never taking the focus off it, every button calling the very function its missing chord calls, and 0036 makes Esc and Enter a ROUND TRIP: Raw remembers the caret it was left with, per doc, and Enter — the press nothing else has claimed, with the document showing and nothing focused — puts it back with its line where it already sits (ADR 0027, aimed at the caret's line rather than the pane's top one). 0035 makes the bare `/` resume the doc you left on — the last doc this browser opened, then `editor.homeDoc`, then the first doc — so the e2e harness clears `znotes.last-doc` before every boot unless a page asks to `resume`.
+- [docs/architecture.md](docs/architecture.md) — module map, interfaces, layering, where state
+  lives. Start here before touching structure.
+- [docs/style.md](docs/style.md) — conventions linters can't enforce, and the repo's sharp edges ("gotchas").
+- [CONTEXT.md](CONTEXT.md) — domain language only, with banned synonyms. Use these words.
+- [docs/adr/](docs/adr/) — one-page decisions that hold today; [README](docs/adr/README.md) is the narrative.
+- [docs/specs/](docs/specs/) — work specs. `open/` = transient, awaiting implementation (written by
+  `/spec`); `done/` = the archive, holding the five founding specs (0001 product, 0002 the normative
+  HTTP/SSE contract, 0003 theming, 0004 secrets crypto, 0005 the Bun platform research).
 
 ## Workflow
 
 Shaping happens in conversation → `/spec` writes `docs/specs/open/NNNN-slug.md`
 (self-sufficient; the implementing agent gets no other context) → `/implement`
 executes it TDD-at-the-agreed-seams, moves the spec to `done/`, and promotes any
-durable decision to an ADR in the same change.
+durable decision to an ADR in the same change. Features and major bug fixes take the
+pipeline below; small fixes and mechanical edits are done directly.
 
-## Hard rules
+| Harness | Coordinator | Implementers | Fresh independent reviewer | Delegation |
+| --- | --- | --- | --- | --- |
+| Claude | Fable (high) | Opus 5 (`opus`, max) | Fable (`fable`, high) | Workflows |
+| Codex | `gpt-6-astra` (high) | `gpt-6-astra` (medium) | `gpt-6-astra` (high) | native agent threads |
 
+Select child models explicitly and verify them through the harness's own controls; prompt text is not
+configuration. If a model or native delegation cannot be selected, stop and ask; no silent fallback.
+Delegation never authorizes super.engineering orchestration, worktrees, commits or deployment.
+
+1. **Coordinator researches, designs, decomposes**: reads code, ADRs and spec; settles decisions; defines
+   tasks, file ownership, dependencies and acceptance criteria. Analysis fan-out is fine.
+2. **Separate agents implement** from that brief, independent tasks in parallel, never two on one file.
+   The coordinator does not write the bulk of the code. Clean, minimal; an abstraction earns its keep.
+3. **Coordinator consolidates and validates** the merged diff against the spec, not the agents' reports.
+4. **A fresh agent reviews adversarially** with spec, constraints and diff, never a reused implementation
+   thread. The coordinator triages, delegates real fixes, and re-reviews until clean.
+5. **Coordinator verifies the running app** (`bun run dev`, the e2e harness) by measurement, never by
+   eye; then `/clean-code`, `bun run gates`. Report checks and blockers honestly.
+
+Never commit or push unless the user asks. Every agent applies the repo-owned `clean-code` skill
+before any `git commit`, then runs `bun run gates` and `bun run lint:docs`.
+
+## Principles
+
+- **Knob before code.** An existing setting, preference or seam before a new one.
+- **Smallest change that works**, in the layer that owns the boundary, reusing what exists.
+- **Documented behaviour is design, not a bug.** Changing it changes the ADR and spec too; say so.
+- **Deletion over addition, boring over clever.** Bare-minimal tests; do not gold-plate the suite.
+
+## Rules that bite
+
+- **Verify by measurement, never by eye**: browser assertions, byte comparisons, live probes.
 - The API contract is `docs/specs/done/0002-http-api-v0.md` — behavior-preserving unless a spec says
   otherwise. Error bodies are `{error, message, ...extra}`, key order included.
-- The server never sees a passphrase or plaintext secret. Nothing in
-  `server/` may import `age-encryption` — `tests/secrets.test.ts` enforces it.
-- The AI relay has no route to rename/delete — `tests/fileops.test.ts`
-  greps the source of all three `ai*.ts` modules to prove it.
-- One deploy replica, ever (sqlite + fs.watch + git working tree; see
-  `deploy/k3s/20-deployment.yaml`).
-- Zero runtime deps beyond `age-encryption`; no frontend build step.
-  Adding a dependency is an ADR-sized decision.
+- The server never sees a passphrase or plaintext secret. Nothing in `server/` may import
+  `age-encryption` — `tests/secrets.test.ts` enforces it.
+- The AI relay has no route to rename/delete (`tests/fileops.test.ts` greps all three `ai*.ts`); one
+  deploy replica, ever (sqlite + fs.watch + git working tree; `deploy/k3s/20-deployment.yaml`).
+- Zero runtime deps beyond `age-encryption`; no frontend build step. A dependency is an ADR.
+- Source-text tests (`docs/style.md` gotchas) fail on incidental reformatting of `server/ai*.ts`,
+  crypto imports and theme CSS. `tests/api.test.ts` holds NUL bytes: grep skips it silently.
+- `bun run lint:docs` enforces: this file ≤100 lines, resolving links, server layering, spec templates.

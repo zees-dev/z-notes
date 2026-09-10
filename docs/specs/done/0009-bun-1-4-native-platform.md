@@ -161,7 +161,7 @@ carries:
 - `AGENTS.md` hard rule: "Zero runtime deps beyond `age-encryption`; no
   frontend build step." Keep the file ≤ 100 lines (`bun run lint:docs`).
 - `docs/style.md`: if it names `diff` as a dependency, update the sentence.
-- New ADR `docs/decisions/0029-the-proposal-diff-is-in-house.md` (format: copy
+- New ADR `docs/adr/0029-the-proposal-diff-is-in-house.md` (format: copy
   `0025-the-chat-panel-answers-to-alt-c.md` — Status / Context / Decision /
   Consequences). Context: one call site, `node:util.diff` absent on Bun 1.4.0,
   the zero-dependency rule. Decision: the Myers implementation in

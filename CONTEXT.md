@@ -1,7 +1,8 @@
-# Glossary
+# z-notes
 
-The domain vocabulary. Use these words — in code, tests, commits, specs. Each
-entry lists banned synonyms where drift has happened or is likely.
+The domain language of a single-user Markdown notes app. Use these words exactly
+in code, tests, commits and specs. Each entry lists banned synonyms where drift
+has happened or is likely, because agents invent synonyms.
 
 ## The vault and docs
 

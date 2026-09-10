@@ -2,7 +2,7 @@
 
 > Founding document, retrofitted into the spec template when the repo adopted
 > the agent-first shape (ADR 0001 era). Archived here as a completed spec:
-> staleness is harmless, durable decisions live in `docs/decisions/`.
+> staleness is harmless, durable decisions live in `docs/adr/`.
 
 ## Problem Statement
 
