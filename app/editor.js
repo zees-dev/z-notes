@@ -186,8 +186,17 @@ export function exitGuardDiscard() {
     doc.markdown = doc.diskText;
     const ta = $("#rawArea");
     if (ta && state.mode === "raw" && state.active === g.path) {
+      /* `value =` puts the caret at the END (textarea semantics, kept by
+         ADR 0032's surface) — and the forced `setMode("preview")` this route
+         proceeds into records that as the caret Enter resumes at (ADR 0036),
+         which sent the reader to the bottom of a doc they were editing halfway
+         down. Clamped, because the reverted text is shorter than what was
+         typed over it. */
+      const at = ta.selectionStart;
       ta.value = doc.markdown;
       autoGrow(ta);
+      const back = Math.max(0, Math.min(at, ta.value.length));
+      ta.setSelectionRange(back, back);
     }
     if (g.path === state.active) {
       /* the debounce is armed against text that no longer exists */
@@ -368,6 +377,25 @@ function incrementDecimal(value) {
 }
 
 /**
+ * The list half of a continuation, read from the line's text — which is the
+ * whole line, or what is left of it after a quote's markers.
+ *
+ * Its own function precisely so a quoted list can be BOTH: `> - item` carries
+ * the markers and the bullet, and each half ends where it would have ended on
+ * its own.
+ */
+function listContinuation(text) {
+  const list = /^(?<indent>[ \t]*)(?:(?<bullet>[-*+])|(?<number>\d+)(?<delim>[.)]))(?<gap>[ \t]+)(?:\[(?<check>[ xX])\](?<checkGap>[ \t]*))?/.exec(text);
+  if (!list) return null;
+  const g = list.groups || {};
+  const marker = g.bullet || incrementDecimal(g.number) + g.delim;
+  return {
+    prefix: g.indent + marker + g.gap + (g.check == null ? "" : "[ ]" + (g.checkGap || " ")),
+    emptyItem: !text.slice(list[0].length).trim(),
+  };
+}
+
+/**
  * The prefix a markdown editor carries onto the next line.
  *
  * Whitespace is copied byte-for-byte. Quote markers repeat at the depth they
@@ -375,6 +403,9 @@ function incrementDecimal(value) {
  * items advance while retaining `.` versus `)`. A plain indented line keeps
  * only its indentation. Returning null means the browser should perform its
  * ordinary newline.
+ *
+ * `emptyPrefix` is what an empty item leaves behind when Enter ends it: the
+ * quote's own markers under a quoted bullet, nothing at all otherwise.
  */
 function markdownContinuation(value, caret) {
   const lineStart = value.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
@@ -387,21 +418,24 @@ function markdownContinuation(value, caret) {
   const quote = /^(?<indent>[ \t]*)(?<markers>(?:>[ ]?)+)/.exec(before);
   if (quote) {
     const g = quote.groups;
-    /* markers with nothing after them are an empty item: Enter ends the quote */
-    return { lineStart, prefix: g.indent + g.markers, emptyItem: !before.slice(quote[0].length).trim() };
-  }
-  const list = /^(?<indent>[ \t]*)(?:(?<bullet>[-*+])|(?<number>\d+)(?<delim>[.)]))(?<gap>[ \t]+)(?:\[(?<check>[ xX])\](?<checkGap>[ \t]*))?/.exec(before);
-  if (list) {
-    const g = list.groups || {};
-    const marker = g.bullet || incrementDecimal(g.number) + g.delim;
+    const rest = before.slice(quote[0].length);
+    /* A LIST INSIDE A QUOTE is both things, so both carry: `> - item` returns
+       `> - `, and the bullet is what an empty one drops — Enter on `> - `
+       leaves `> `, the way Enter on `  - ` leaves the outer level, and only a
+       bare `> ` ends the quote. */
+    const inner = listContinuation(rest);
+    const markers = g.indent + g.markers;
     return {
       lineStart,
-      prefix: g.indent + marker + g.gap + (g.check == null ? "" : "[ ]" + (g.checkGap || " ")),
-      emptyItem: !before.slice(list[0].length).trim(),
+      prefix: markers + (inner ? inner.prefix : ""),
+      emptyItem: inner ? inner.emptyItem : !rest.trim(),
+      emptyPrefix: inner ? markers : "",
     };
   }
+  const list = listContinuation(before);
+  if (list) return { lineStart, prefix: list.prefix, emptyItem: list.emptyItem, emptyPrefix: "" };
   const indent = /^[ \t]+/.exec(before);
-  return indent ? { lineStart, prefix: indent[0], emptyItem: false } : null;
+  return indent ? { lineStart, prefix: indent[0], emptyItem: false, emptyPrefix: "" } : null;
 }
 
 function continueMarkdownLine(e, ta) {
@@ -417,8 +451,9 @@ function continueMarkdownLine(e, ta) {
   const lineEnd = ta.value.indexOf("\n", a);
   if (next.emptyItem && a === b && (lineEnd < 0 || a === lineEnd)) {
     /* An empty list item already IS the next line. Enter exits the list by
-       removing its prefix instead of producing an endless run of markers. */
-    applyRawEdit(ta, next.lineStart, a, "");
+       removing its prefix instead of producing an endless run of markers —
+       one level of it: an empty bullet inside a quote leaves the quote. */
+    applyRawEdit(ta, next.lineStart, a, next.emptyPrefix);
   } else {
     applyRawEdit(ta, a, b, "\n" + next.prefix);
   }
@@ -782,6 +817,13 @@ export function renderDoc(opts) {
   host.innerHTML = "";
   if (!doc) return;
   host.classList.toggle("raw-mode", state.mode === "raw");
+  /* ONE TAB IS ONE WIDTH IN BOTH MODES. `.raw` carries the setting on its own
+     element (`renderRaw`), and Preview had no tab width at all until quotes
+     started keeping their whitespace (spec 0019) — a `pre-wrap` span with no
+     rule takes the UA's 8, so a tab-aligned quote reflowed 4x on ⌘E. The
+     shared container is where both inherit it from; `.code pre`'s tab-size: 4
+     is the code block's own and is left alone. */
+  host.style.tabSize = String(settingAt("editor.tabSize"));
 
   /* The `.mode-note` that used to end this line ("raw source · click outside to
      preview" / "preview · click a line to edit") is gone. It restated an
@@ -805,7 +847,23 @@ export function renderDoc(opts) {
     const e = el("div", "empty-doc");
     e.innerHTML = '<div class="ring">' + I.note + "</div><h3>" + esc(doc.title) + "</h3>";
     host.appendChild(e);
-  } else renderPreview(doc, host);
+  } else {
+    /* PREVIEW IS ALSO THE BOOT SCREEN. `/` opens the doc this browser left on
+       (ADR 0035), so a renderer that throws on ONE document does not merely
+       blank the pane — it strands the app on `#boot` with no way back that
+       does not involve knowing another doc's URL. The source is what the
+       reader came for and Raw still edits it, so a render that fails prints
+       it verbatim and says so. */
+    try {
+      renderPreview(doc, host);
+    } catch (err) {
+      console.error("Preview render failed for " + doc.path, err);
+      const pre = el("pre", "render-error");
+      pre.appendChild(el("div", "note", "Preview could not render this doc — Raw still works"));
+      pre.appendChild(document.createTextNode(String(doc.markdown ?? "")));
+      host.appendChild(pre);
+    }
+  }
 
   /* the entrance animation belongs to navigation; a mode switch must not
      translate or fade the container (amendment 11) */
@@ -978,6 +1036,10 @@ export async function openDoc(path, opts) {
     if (nav === navSeq) navPending = false;
   };
   syncRaw();
+  /* …and the caret with it, while the editor holding it is still mounted: the
+     app-level mode does not change here, so this navigation never passes
+     through `setMode`'s way out (ADR 0036). */
+  rememberRawCaret();
   if (state.dirty && state.active && state.active !== path) {
     /* the indicator is about to read "Saved" for the NEW doc — say so out loud
        if the old one did not actually reach disk */
@@ -1174,6 +1236,16 @@ function alignPreview(at) {
    deliberately NOT persisted — a reload starts the reading fresh. */
 const rawCaret = new Map();
 
+/** Write the live Raw caret into the map under the doc that owns it.
+    TWO doors leave a mounted Raw editor behind, not one: `setMode` going to
+    Preview, and `openDoc` swapping the doc underneath a Raw that stays Raw —
+    editing A, clicking B, then coming back to A resumed at offset 0 while only
+    the first of them remembered. */
+function rememberRawCaret() {
+  const ta = $("#rawArea");
+  if (ta) rawCaret.set(state.active, ta.selectionStart);
+}
+
 /**
  * Re-enter Raw at the caret Preview was entered from, with that caret's line
  * held where it already sits on screen — ADR 0027's rule aimed at the caret
@@ -1226,10 +1298,7 @@ export function setMode(m, opts) {
      (Esc, ⌘E, the chip, a click on the pane, Back on a phone), because Enter
      is the way back to it (ADR 0036). The anchor above is not enough: it is a
      LINE, and resuming halfway through a sentence is the whole point. */
-  if (m === "preview") {
-    const ta = $("#rawArea");
-    if (ta) rawCaret.set(state.active, ta.selectionStart);
-  }
+  if (m === "preview") rememberRawCaret();
   state.mode = m;
   syncModeUI();
   renderDoc({ noFade: true });

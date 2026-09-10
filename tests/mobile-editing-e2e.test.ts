@@ -230,6 +230,11 @@ describe("phone editing regressions", () => {
       ["quote", "> alpha", "> alpha\n> "],
       ["nested quote", "> > deep", "> > deep\n> > "],
       ["indented quote", "  > aside", "  > aside\n  > "],
+      /* a list inside a quote is BOTH: the markers carry and so does the
+         bullet, and an empty one drops a level at a time */
+      ["quoted bullet", "> - item", "> - item\n> - "],
+      ["quoted ordered item", "> 1. item", "> 1. item\n> 2. "],
+      ["empty quoted bullet drops the bullet, not the quote", "> - ", "> "],
       ["empty quote ends the quote", "> ", ""],
       ["empty task exits the list", "  - [ ] ", ""],
       ["empty task without a content gap exits the list", "- [ ]", ""],

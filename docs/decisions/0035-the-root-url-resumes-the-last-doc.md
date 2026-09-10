@@ -59,10 +59,12 @@ one "default page" the product has, was not honoured there either.
 - **The e2e harness has to forget.** A puppeteer profile is shared by every
   page a suite opens, so without a reset the second test of every suite would
   boot on whatever the first one happened to leave on screen.
-  `tests/browser.ts` therefore clears `znotes.last-doc` on every document a
-  `newAppPage` loads, before any app code runs; `forgetLastDoc(page)` does the
-  same for the suites that build their pages by hand. `newAppPage(browser,
-  { resume: true })` opts back in, and is what the resume tests use.
+  `tests/browser.ts` therefore clears every per-browser memory — `znotes.last-doc`
+  here, plus tree disclosure (spec 0012) and the zoom rung (ADR 0033) — on every
+  document a `newAppPage` loads, before any app code runs; `forgetBrowserState(page)`
+  does the same for the suites that build their pages by hand.
+  `newAppPage(browser, { resume: true })` opts back in, and is what the resume
+  tests use.
 - A vault whose `editor.homeDoc` names a real doc now decides where a fresh
   browser lands, not just where the home button goes. The shipped default
   (`index.md`) does not exist in most vaults, so it changes nothing until

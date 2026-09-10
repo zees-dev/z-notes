@@ -23,6 +23,14 @@ import { launchTestBrowser, newAppPage, appDriver, docMode, ensureMode, type App
 const ALPHA = "resume/alpha.md";
 const BETA = "resume/beta.md";
 const FRESH = "resume/fresh.md";
+const CRLF = "resume/crlf.md";
+
+/* A FILE FROM WINDOWS, kept byte for byte the way the vault keeps everything
+   (server/vault.ts). Its quote lines are the ones Preview's quote reader could
+   not read — and `/` renders whatever this browser last opened (ADR 0035), so
+   a doc that throws on render throws on the BOOT SCREEN, where there is no
+   pane to fall back to. */
+const CRLF_SRC = "> quoted\r\n> > deeper\r\nplain tail\r\n";
 
 /* One-line paragraphs separated by blank lines, taller than the pane: every
    source line a test aims at is its own rendered `[data-line]`, so the block
@@ -52,7 +60,7 @@ let app: AppDriver;
 const pageErrors: string[] = [];
 
 beforeAll(async () => {
-  srv = await startServer({ seed: { [ALPHA]: ALPHA_SRC, [BETA]: BETA_SRC, [FRESH]: doc("fresh") } });
+  srv = await startServer({ seed: { [ALPHA]: ALPHA_SRC, [BETA]: BETA_SRC, [FRESH]: doc("fresh"), [CRLF]: CRLF_SRC } });
   /* nothing here is about autosave, and a debounce landing mid-assertion turns
      the exit guard into a race (edit-exit-e2e makes the same trade) */
   expect((await srv.api("PUT", "/api/settings", { editor: { autosaveSeconds: 3600 } })).status).toBe(200);
@@ -182,6 +190,85 @@ describe("Enter resumes editing at the caret", () => {
     await app.boot("/d/" + FRESH);
     await enterToRaw();
     expect((await caretState(0)).caret).toBe(0);
+  }, 60000);
+
+  test("switching docs in Raw remembers the caret too — the mode never changes", async () => {
+    await app.boot("/d/" + ALPHA);
+    await enterRawAt(ALPHA_CARET);
+    /* B opens in Raw because Raw is where the app already was: this navigation
+       never passes through `setMode`, so `openDoc` is the second door out of a
+       mounted editor and has to remember what it leaves behind. */
+    await switchTo(BETA);
+    expect(await docMode(page)).toBe("raw");
+
+    await page.focus("#rawArea");
+    await escToPreview();
+    await switchTo(ALPHA);
+    await enterToRaw();
+    expect((await caretState(ALPHA_CARET)).caret).toBe(ALPHA_CARET);
+    expect(pageErrors).toEqual([]);
+  }, 60000);
+
+  test("Discard resumes at the caret, not at the end of the document it reverted", async () => {
+    await app.boot("/d/" + ALPHA);
+    await enterRawAt(ALPHA_CARET);
+    /* dirty AT the caret, so the offset under test is the one the typing left
+       behind rather than one the whole buffer was replaced around */
+    await page.evaluate((n) => {
+      const ta = document.getElementById("rawArea") as any;
+      ta.replaceRange(n, n, "typo");
+    }, ALPHA_CARET);
+    await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Unsaved changes", {
+      timeout: 8000,
+    });
+    const dirtyCaret = await page.$eval("#rawArea", (n) => (n as any).selectionStart as number);
+    expect(dirtyCaret).toBe(ALPHA_CARET + 4);
+
+    await page.keyboard.press("Escape");
+    await app.waitVeil("xgVeil", true);
+    await page.click('#xgVeil [data-act="xg-discard"]');
+    await app.waitVeil("xgVeil", false);
+    await page.waitForFunction(() => !document.getElementById("doc")!.classList.contains("raw-mode"), {
+      timeout: 8000,
+    });
+
+    await enterToRaw();
+    /* the reverted text is longer than this offset, so the clamp is the
+       identity here; what is asserted is that putting the saved bytes back did
+       not carry the caret to the end of them */
+    expect((await caretState(dirtyCaret)).caret).toBe(Math.min(dirtyCaret, ALPHA_SRC.length));
+    expect(pageErrors).toEqual([]);
+  }, 60000);
+});
+
+describe("a doc with CR line endings renders — and boots", () => {
+  test("/ resumes a CRLF doc: the quote renders and the boot completes", async () => {
+    /* `resume: true` keeps `znotes.last-doc` across this page's loads, which is
+       the whole point: the first boot stores the doc, the second one is the
+       bare root resolving it (ADR 0035). */
+    const errs: string[] = [];
+    const rp = await newAppPage(browser, { resume: true, onPageError: (m) => errs.push(m) });
+    const rui = appDriver(rp, srv.base);
+    try {
+      await rui.boot("/d/" + CRLF);
+      expect(await rui.shown()).toBe(CRLF);
+
+      await rui.boot("/");
+      expect(await rui.shown()).toBe(CRLF);
+      const rendered = await rp.evaluate(() => ({
+        quotes: document.querySelectorAll("#doc .md blockquote").length,
+        /* the CR the HTML parser may turn into a newline is not the point —
+           that the line rendered at all is */
+        first: (document.querySelector("#doc .md blockquote .pline")?.textContent ?? "").replace(/[\r\n]+$/, ""),
+        failed: document.querySelectorAll("#doc .render-error").length,
+      }));
+      expect(rendered).toEqual({ quotes: 2, first: "quoted", failed: 0 });
+      expect(errs).toEqual([]);
+      /* and not one byte of it was rewritten by being read */
+      expect((await srv.get("/api/docs/" + CRLF)).body.markdown).toBe(CRLF_SRC);
+    } finally {
+      await rp.close().catch(() => {});
+    }
   }, 60000);
 });
 

@@ -1449,6 +1449,12 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 /* the degraded-state explanation (no secure context / no worker) */
 .secret-note { padding: 9px 13px; border-top: var(--bd-2); font-size: 11.5px; line-height: 1.5; color: var(--warn); background: var(--warn-soft); }
 
+/* the renderer's last resort (editor.js renderDoc): a doc Preview threw on
+   still shows its own bytes, so one bad document costs a rendering and not the
+   pane — nor, on `/`, the boot */
+.render-error { margin: 0; font-family: var(--mono); font-size: calc(var(--d-code-fs) * var(--doc-zoom, 1)); line-height: var(--d-pre-lh); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.render-error .note { font-family: var(--font); color: var(--danger); margin-bottom: 10px; white-space: normal; }
+
 .empty-doc { text-align: center; padding: 60px 0; color: var(--muted); }
 .empty-doc .ring { width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 15px; display: grid; place-items: center; background: var(--panel-2); border: var(--bd); color: var(--muted-2); box-shadow: var(--sh-1); }
 /* no `p` rule: an empty note prints its name and nothing else (renderDoc) */

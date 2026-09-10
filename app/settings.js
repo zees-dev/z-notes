@@ -1468,9 +1468,16 @@ function applySavedSettings(paths) {
   applyLockPolicy(); // the crypto worker's idle / hidden / session clocks
   paintHome(); // editor.homeDoc — the vault button's target and title
   if (paths.indexOf("editor.tabSize") >= 0) {
+    const width = String(settingAt("editor.tabSize"));
+    /* BOTH modes: the container is what a Preview quote's `pre-wrap` spans
+       inherit their tab width from (renderDoc), the editor element what Raw
+       uses (renderRaw). Setting one and not the other is the reflow this pair
+       exists to avoid. */
+    const host = $("#doc");
+    if (host) host.style.tabSize = width;
     const ta = $("#rawArea");
     if (ta) {
-      ta.style.tabSize = String(settingAt("editor.tabSize"));
+      ta.style.tabSize = width;
       autoGrow(ta);
     }
   }

@@ -17,7 +17,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { type Browser, type Page } from "puppeteer-core";
 import { sleep, startServer, waitUntil, type SeedMap, type TestServer } from "./helpers";
-import { launchTestBrowser, newAppPage, waitForApp } from "./browser";
+import { ensureMode, launchTestBrowser, newAppPage, waitForApp } from "./browser";
 
 const DOC = "markdown/all.md";
 const TARGET = "target.md";
@@ -86,6 +86,13 @@ const SOURCE = [
   "- a list item",
   "    > aside",
   "",
+  /* A CRLF file is first-class — the vault reads bytes back verbatim — and so
+     is a line ending in U+2028. Both are lines `RE_QUOTE` admits, so the quote
+     reader has to answer for them: it once could not, and a doc with one in it
+     threw the whole render away (and, stored as the doc to resume, the boot). */
+  "> crlf\r",
+  "> u2028\u2028tail",
+  "",
 ].join("\n");
 
 /** the source line a fixture line was written on, so the quote assertions
@@ -95,6 +102,7 @@ const QUOTE_LINES = {
   spaced: lineOf("> keep    the   spaces"),
   nested: lineOf("> outer"),
   aside: lineOf("    > aside"),
+  terminators: lineOf("> crlf\r"),
 };
 
 const SEED: SeedMap = {
@@ -141,7 +149,7 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
     expect(untouched.status).toBe(200);
     expect(untouched.body.markdown).toBe(SOURCE);
 
-    const m = await page.evaluate((Q: { spaced: number; nested: number; aside: number }) => {
+    const m = await page.evaluate((Q: { spaced: number; nested: number; aside: number; terminators: number }) => {
       const md = document.querySelector("#doc .md") as HTMLElement;
       const at = (line: number) => md.querySelector(`[data-line="${line}"]`) as HTMLElement | null;
       const line = (n: number) => md.querySelector(`.pline[data-line="${n}"]`) as HTMLElement | null;
@@ -155,6 +163,7 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
       const quoteAt = (n: number) => md.querySelector(`blockquote[data-line="${n}"]`) as HTMLElement;
       const spaced = quoteAt(Q.spaced);
       const nested = quoteAt(Q.nested);
+      const terminators = quoteAt(Q.terminators);
       const inset = (node: HTMLElement) => parseFloat(getComputedStyle(node).marginLeft);
       const plines = (node: Element, sel: string) => [...node.querySelectorAll(sel)].map((n) => n.textContent);
       const divider = md.querySelector(".divider") as HTMLElement;
@@ -243,6 +252,9 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
           /* one marker per depth was consumed and no more: nothing prints a `>` */
           markersPrinted: [...md.querySelectorAll("blockquote .pline")].filter((n) => n.textContent!.includes(">")).length,
           asideIsInset: inset(quoteAt(Q.aside)) > inset(nested),
+          /* the CR the HTML parser may have turned into a newline is not the
+             point — that the line rendered AT ALL is */
+          terminators: plines(terminators, ".pline").map((t) => t!.replace(/[\r\n]+$/, "")),
         },
         table: {
           heads: md.querySelectorAll("thead th").length,
@@ -351,6 +363,7 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
       innerLines: ["inner"],
       markersPrinted: 0,
       asideIsInset: true,
+      terminators: ["crlf", "u2028\u2028tail"],
     });
     expect(m.table).toEqual({ heads: 3, rows: 1, cells: 3 });
     expect(m.code).toEqual({ language: "ts", text: "const value = 42;", lines: 1, keywords: 1, numbers: 1 });
@@ -381,6 +394,20 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
     expect(await page.$("#rawArea")).toBe(null);
     expect(await page.$eval('.md li[data-line="15"] > .cb', (n) => n.getAttribute("aria-pressed"))).toBe("true");
     expect((await srv.doc(DOC)).body.markdown).toBe(changed);
+
+    /* ONE TAB IS ONE WIDTH IN BOTH MODES. Keeping a quote's whitespace
+       (spec 0019) made `.md blockquote .pline` `pre-wrap`, and a `pre-wrap`
+       span with no tab-size takes the UA's 8 while `.raw` renders tabs at the
+       `editor.tabSize` setting — a tab-aligned quote reflowed on every ⌘E. */
+    const previewTab = await page.$eval(
+      `.md blockquote[data-line="${QUOTE_LINES.spaced}"] .pline`,
+      (n) => getComputedStyle(n).tabSize
+    );
+    await ensureMode(page, "raw");
+    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 8000 });
+    const rawTab = await page.$eval("#rawArea", (n) => getComputedStyle(n).tabSize);
+    expect(`preview ${previewTab} · raw ${rawTab}`).toBe(`preview ${rawTab} · raw ${rawTab}`);
+
     expect(pageErrors).toEqual([]);
   }, 120000);
 });

@@ -92,13 +92,16 @@ function listLine(raw) {
  * allowed to eat ONE space after it; everything else after the markers is the
  * author's whitespace and stays in `text`.
  *
- * The leading class is `\s*`, matching `RE_QUOTE`'s exactly, so this answers
- * for every line the block-start test admits: the render loop advances only
- * inside the branch it entered, and a quote line this could not read would
- * spin it.
+ * The leading class is `\s*`, matching `RE_QUOTE`'s exactly, and the tail is
+ * `[\s\S]*` rather than `.*`, so this answers for every line the block-start
+ * test admits. `.` and `$` stop at a CR or a U+2028/U+2029 — which a CRLF file
+ * (read back byte for byte by the server) puts at the end of EVERY line — and
+ * a null here is dereferenced two lines into the branch: Preview threw, the
+ * doc rendered empty, and a doc stored as the one to resume (ADR 0035) took
+ * the boot down with it.
  */
 function quoteInfo(line) {
-  const m = /^(\s*)((?:>[ ]?)+)(.*)$/.exec(line);
+  const m = /^(\s*)((?:>[ ]?)+)([\s\S]*)$/.exec(line);
   if (!m) return null;
   let indent = 0;
   for (const c of m[1]) indent = c === "\t" ? indent + (4 - (indent % 4)) : indent + 1;
@@ -295,7 +298,8 @@ export function renderPreview(doc, host) {
          Four columns is one level, the same four a nested list is written
          with. Whitespace AFTER the markers is the author's and is preserved by
          CSS instead, so nothing inside the quote is stripped. */
-      const lead = quoteInfo(line).indent / 4;
+      const head = quoteInfo(line);
+      const lead = (head ? head.indent : 0) / 4;
       if (lead) outer.style.setProperty("--quote-in", lead);
       const stack = [outer];
       let run = [];
@@ -306,7 +310,17 @@ export function renderPreview(doc, host) {
         run = [];
       };
       while (i < lines.length && RE_QUOTE.test(lines[i])) {
-        const q = quoteInfo(lines[i]);
+        /* the line is consumed BEFORE it is read, so the guard below can end
+           the block without leaving `i` where the outer loop would re-enter
+           this same branch forever */
+        const at = i++;
+        const q = quoteInfo(lines[at]);
+        /* `quoteInfo` is total for every line `RE_QUOTE` admits, so this is
+           unreachable today. It is a guard against the two ever parting again
+           (a CR- or U+2028-terminated line is where they last did): ending
+           the run costs one quote's shape, and throwing here costs the whole
+           document — and, on `/`, the boot. */
+        if (!q) break;
         if (q.depth !== stack.length) {
           flush();
           while (stack.length > q.depth) stack.pop();
@@ -316,9 +330,8 @@ export function renderPreview(doc, host) {
             stack.push(inner);
           }
         }
-        if (!run.length) runStart = i;
+        if (!run.length) runStart = at;
         run.push(q.text);
-        i++;
       }
       flush();
       put(outer, start);
