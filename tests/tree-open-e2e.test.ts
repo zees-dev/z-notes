@@ -46,7 +46,9 @@ const pageErrors: string[] = [];
 beforeAll(async () => {
   srv = await startServer({ seed: SEED });
   browser = await launchTestBrowser();
-  page = await newAppPage(browser, { onPageError: (m) => pageErrors.push(m) });
+  /* resume: this suite MEASURES `znotes.tree-open` surviving a reload, so the
+     harness must not clear it on every navigation */
+  page = await newAppPage(browser, { resume: true, onPageError: (m) => pageErrors.push(m) });
 }, 120000);
 
 afterAll(async () => {

@@ -28,7 +28,7 @@ import {
   clickWhenHittable,
   docMode,
   ensureMode as setMode,
-  forgetLastDoc,
+  forgetBrowserState,
   launchTestBrowser,
   newAppPage,
   pressChord,
@@ -885,7 +885,7 @@ describe("e2e — a doc deleted outside the app", () => {
 describe("e2e — boot with an all-empty vault", () => {
   test("opens a document, never a folder path", async () => {
     const fresh = await startServer({ seed: { "inbox.md": "", "notes/a.md": "" } });
-    const p = await forgetLastDoc(await browser.newPage());
+    const p = await forgetBrowserState(await browser.newPage());
     const errors: string[] = [];
     p.on("pageerror", (e) => errors.push(e.message));
     try {

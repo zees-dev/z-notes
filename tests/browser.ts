@@ -89,30 +89,35 @@ export interface NewPageOptions {
   /** runs before ANY app code — for instrumentation the app must not know about */
   beforeLoad?: () => void;
   /**
-   * Keep this browser's `znotes.last-doc`, so a boot at `/` resumes the doc a
-   * previous page opened (ADR 0035). Only the suite MEASURING the resume wants
-   * that; see `forgetLastDoc` for why the default is to clear it.
+   * Keep this browser's per-profile memories — `znotes.last-doc` (ADR 0035),
+   * `znotes.tree-open` (spec 0012) and `znotes.zoom` (ADR 0033) — across the
+   * pages and reloads this page performs. Only a suite MEASURING one of those
+   * memories wants that; see `forgetBrowserState` for why the default is to
+   * clear them.
    */
   resume?: boolean;
 }
 
 /**
- * Forget which doc this browser last opened, for every document it loads from
- * here on.
+ * Forget what this browser remembers between visits, for every document it
+ * loads from here on: the doc it last opened (`/` resumes it, ADR 0035), which
+ * folders were collapsed (spec 0012) and the pinch-zoom rung (ADR 0033).
  *
- * `/` resumes the last doc (ADR 0035), and localStorage belongs to the PROFILE,
- * not to the page: without this reset the second test of every suite — and
- * every extra page a suite opens — would boot on whatever the previous one
- * happened to leave on screen, instead of on the first doc these suites are
- * written against. Returns the page, so a direct `browser.newPage()` can be
+ * localStorage belongs to the PROFILE, not to the page: without this reset the
+ * second test of every suite — and every extra page a suite opens — would boot
+ * on whatever the previous one left on screen, with the folders it collapsed
+ * still collapsed (a row inside one is not clickable, which is how ten routing
+ * tests went red the day disclosure started persisting) and at the text size
+ * it pinched to. Returns the page, so a direct `browser.newPage()` can be
  * wrapped where it stands.
  */
-export async function forgetLastDoc(p: Page): Promise<Page> {
-  await p.evaluateOnNewDocument(() => {
+export const BROWSER_MEMORIES = ["znotes.last-doc", "znotes.tree-open", "znotes.zoom"];
+export async function forgetBrowserState(p: Page): Promise<Page> {
+  await p.evaluateOnNewDocument((keys: string[]) => {
     try {
-      localStorage.removeItem("znotes.last-doc");
+      for (const k of keys) localStorage.removeItem(k);
     } catch {}
-  });
+  }, BROWSER_MEMORIES);
   return p;
 }
 
@@ -172,7 +177,7 @@ export async function newAppPage(browser: Browser, opts: NewPageOptions = {}): P
   });
   /* BEFORE the caller's own `beforeLoad`: the reset is this harness's baseline,
      and instrumentation that runs at boot must see the same one every time. */
-  if (!opts.resume) await forgetLastDoc(page);
+  if (!opts.resume) await forgetBrowserState(page);
   if (opts.beforeLoad) await page.evaluateOnNewDocument(opts.beforeLoad);
   return page;
 }

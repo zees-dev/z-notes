@@ -60,6 +60,9 @@ async function phone(opts: { forget?: boolean } = {}): Promise<Page> {
     width: PHONE.width,
     height: PHONE.height,
     onPageError: (m) => pageErrors.push(m),
+    /* this suite manages `znotes.zoom` itself (below); the harness reset would
+       also wipe it on the reload the persistence case measures */
+    resume: true,
     ...(opts.forget === false
       ? {}
       : {

@@ -28,7 +28,7 @@ import { type Browser, type Page } from "puppeteer-core";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { startServer, type SeedMap, type TestServer } from "./helpers";
-import { ensureMode, forgetLastDoc, launchTestBrowser, pressChord, waitForFocusedInput } from "./browser";
+import { ensureMode, forgetBrowserState, launchTestBrowser, pressChord, waitForFocusedInput } from "./browser";
 
 /* ------------------------------------------------------------------
    fixtures
@@ -109,8 +109,8 @@ afterEach(async () => {
 async function instrument(p: Page): Promise<Page> {
   await p.setViewport({ width: 1440, height: 900 });
   /* page two boots at `/`, and `/` resumes the last doc THIS BROWSER opened
-     (ADR 0035) — which page one has already changed. See `forgetLastDoc`. */
-  await forgetLastDoc(p);
+     (ADR 0035) — which page one has already changed. See `forgetBrowserState`. */
+  await forgetBrowserState(p);
   p.on("pageerror", (e) => pageErrors.push(e.message));
   p.on("console", (m) => {
     if (m.type() === "error") console.error("[browser console]", m.text());

@@ -419,7 +419,7 @@ describe("routing — deep links and reloads", () => {
 
 /* `/` means "where you were" (ADR 0035): the last doc THIS BROWSER opened, then
    the configured home doc, then the first doc. These pages keep the store the
-   rest of the harness clears before every boot — see `forgetLastDoc`. */
+   rest of the harness clears before every boot — see `forgetBrowserState`. */
 describe("routing — the root resumes", () => {
   let rp: Page;
   let rui: AppDriver;

@@ -30,7 +30,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { type Browser, type Page } from "puppeteer-core";
 import { SEED_VAULT, sleep, startServer, waitUntil, type TestServer } from "./helpers";
-import { forgetLastDoc, launchTestBrowser, waitForApp } from "./browser";
+import { forgetBrowserState, launchTestBrowser, waitForApp } from "./browser";
 
 let srv: TestServer;
 let browser: Browser;
@@ -95,7 +95,7 @@ function blackHole(openFirst: boolean, speed: number) {
 }
 
 async function blackHolePage(openFirst: boolean): Promise<Page> {
-  const page = await forgetLastDoc(await browser.newPage());
+  const page = await forgetBrowserState(await browser.newPage());
   await page.setViewport({ width: 1440, height: 900 });
   page.on("console", (m) => {
     if (m.type() === "error") console.error("[browser console]", m.text());

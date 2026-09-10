@@ -26,7 +26,7 @@ import { proposeEdits, reply, startMockUpstream, turn, type MockUpstream } from 
 /* Phase 6 drives a REAL browser: vault-wide reveal means the plaintext of every
    block is live in a tab, and the only way to assert that it stays there is to
    put it there. Same harness every e2e file uses (tests/browser.ts). */
-import { forgetLastDoc, launchTestBrowser, pressChord, waitForApp } from "./browser";
+import { forgetBrowserState, launchTestBrowser, pressChord, waitForApp } from "./browser";
 
 const ARMOR_HEAD = "-----BEGIN AGE ENCRYPTED FILE-----";
 const ARMOR_TAIL = "-----END AGE ENCRYPTED FILE-----";
@@ -1235,7 +1235,7 @@ describe("leak canary — the vault is OPEN and every block is revealed (phase 6
     mock.reset();
 
     browser = await launchTestBrowser();
-    page = await forgetLastDoc(await browser.newPage());
+    page = await forgetBrowserState(await browser.newPage());
     await page.setViewport({ width: 1440, height: 900 });
     page.on("request", (req) => {
       const m = req.method().toUpperCase();
