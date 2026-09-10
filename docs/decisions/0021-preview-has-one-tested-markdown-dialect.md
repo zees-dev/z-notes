@@ -25,6 +25,9 @@ real-browser regression.**
   unordered/ordered/task lists, blockquotes, dividers, fenced code, Mermaid,
   tables, wiki-links, safe external links, inline code, bold, emphasis and
   `~~strikethrough~~`.
+- Amended by spec 0019: a blockquote keeps the whitespace typed after its
+  marker, `> >` nests a quote inside a quote, and the indent before the first
+  marker insets the block the way a list item's indent nests it.
 - Inline rendering is shared by prose, list text, blockquotes, headings, chat
   bubbles and table cells. Strike composes with bold/emphasis and rendered link
   labels, but markup inside inline code remains literal. Combined strong +

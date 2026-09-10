@@ -1299,6 +1299,22 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .modal.cf.safe .cf-ico .i-safe { display: block; }
 
 .md blockquote { margin: 0; padding: 2px 0 2px 16px; border-left: var(--quote-bd-w) var(--bd-style) var(--quote-bd); color: var(--quote-fg); font-style: var(--quote-style); line-height: var(--d-lh); }
+/* A QUOTE KEEPS ITS SHAPE (spec 0019). Whatever whitespace follows the marker
+   is the author's — a quoted snippet, an aligned list, a hanging indent — so
+   these lines are `pre-wrap` rather than collapsed. `pre-wrap` and not `pre`:
+   a line wider than the column still reflows, which is a property of the
+   column and not of the file (linebreaks-e2e measures both halves). */
+.md blockquote .pline { white-space: pre-wrap; }
+/* `> >` is a quote inside a quote — it inherits the border and inset above, so
+   nesting stacks a second one — and it sits tight under the line it follows
+   rather than a block gap away. */
+.md blockquote blockquote { margin-top: 2px; }
+/* …and the indent BEFORE the first marker insets the whole block, the way a
+   list item's indent nests it. `--quote-in` is how many levels the renderer
+   measured (markdown.js `quoteInfo`); the width of one restates `.md li > ul`'s
+   padding-left. Top-level only: the property inherits, and an inner quote's
+   inset is already its parent's. */
+.md > blockquote { margin-left: calc(var(--quote-in, 0) * (var(--bullet-size) + 10px)); }
 .divider { height: 1px; background: var(--divider-bg); margin: 8px 0; }
 
 .tblwrap { overflow-x: auto; border: var(--bd); border-radius: var(--r); box-shadow: var(--sh-1); background: var(--card-bg); }

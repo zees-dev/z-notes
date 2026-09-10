@@ -49,6 +49,10 @@ const GAPS_SRC = "one\ntwo\n\nthree\n\n\nfour\n\n\n\nfive\n";
    the join — it is a blank line and now renders as one */
 const QUOTE_SRC = "> one\n> two\n>\n> four\n";
 
+/* nesting is per line, and each line keeps its own [data-line] whatever depth
+   it lands at (spec 0019): 0 outer · 1 inner · 2 outer again */
+const QNEST_SRC = "> outer\n> > inner\n> outer again\n";
+
 /* far wider than any column this app is rendered in, and spaces throughout so
    a pass cannot come from `overflow-wrap: anywhere` chopping a giant token */
 const LONG =
@@ -66,6 +70,7 @@ const WRAPPY_SRC = Array.from({ length: 40 }, (_, k) => `p${k} — ` + LONG).joi
 const PARA = "lines/para.md";
 const GAPS = "lines/gaps.md";
 const QUOTE = "lines/quote.md";
+const QNEST = "lines/qnest.md";
 const LONG_DOC = "lines/long.md";
 const LEAD = "lines/lead.md";
 const PLAIN = "lines/plain.md";
@@ -76,6 +81,7 @@ const SEED: SeedMap = {
   [PARA]: PARA_SRC,
   [GAPS]: GAPS_SRC,
   [QUOTE]: QUOTE_SRC,
+  [QNEST]: QNEST_SRC,
   [LONG_DOC]: "# Long\n\n" + LONG + "\n",
   /* two leading blanks, and a trailing run — the two exceptions */
   [LEAD]: "\n\n# Top\n\nbody\n\n\n",
@@ -350,6 +356,17 @@ describe("click-to-edit reaches the clicked line, not the block's first", () => 
     expect(`clicked line moved ${drift <= after.lineHeight ? "≤1" : Math.round(drift)} line boxes`).toBe(
       "clicked line moved ≤1 line boxes"
     );
+  }, 90000);
+
+  test("a line inside a NESTED quote opens Raw at that line", async () => {
+    await open(QNEST);
+    await page.click('.pline[data-line="1"]');
+    await page.waitForSelector("#rawArea", { timeout: 10000 });
+    const caret = await page.evaluate(() => (document.getElementById("rawArea") as HTMLTextAreaElement).selectionStart);
+    const want = offsetOf(QNEST_SRC, 1);
+    expect(`caret at ${caret} (line 1 starts at ${want})`).toBe(`caret at ${want} (line 1 starts at ${want})`);
+    /* the block it sits in is the OUTER quote, whose own answer is line 0 */
+    expect(`the block would have said ${offsetOf(QNEST_SRC, 0)}`).toBe("the block would have said 0");
   }, 90000);
 
   test("clicking the first line still opens Raw at the first line", async () => {
