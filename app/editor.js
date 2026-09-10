@@ -264,12 +264,18 @@ function revealRawCaret() {
   const ta = $("#rawArea");
   const sc = $("#scroll");
   if (!ta || !sc || document.activeElement !== ta) return;
-  const cssKeyboard = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--kb")) || 0;
+  const root = getComputedStyle(document.documentElement);
+  const cssKeyboard = parseFloat(root.getPropertyValue("--kb")) || 0;
+  /* …and the editing bar standing on the keyboard's top edge (ADR 0034), which
+     is chrome the caret has to clear too. `keybar.js` publishes the bar's own
+     rendered height, so this is 0 at every moment the bar is not up. */
+  const cssKeybar = parseFloat(root.getPropertyValue("--keybar")) || 0;
   const vv = window.visualViewport;
   const vvTop = vv ? vv.offsetTop : 0;
   const vvBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
   const visibleTop = Math.max(sc.getBoundingClientRect().top, vvTop) + 12;
-  const visibleBottom = Math.min(sc.getBoundingClientRect().bottom, vvBottom, window.innerHeight - cssKeyboard) - 12;
+  const visibleBottom =
+    Math.min(sc.getBoundingClientRect().bottom, vvBottom, window.innerHeight - cssKeyboard - cssKeybar) - 12;
   if (visibleBottom <= visibleTop) return;
   const caret = rawCaretBox(ta);
   if (caret.bottom > visibleBottom) sc.scrollTop += caret.bottom - visibleBottom;
@@ -410,14 +416,20 @@ function leadingOutdent(line, size) {
   return m ? line.slice(Math.min(size, m[0].length)) : line;
 }
 
-/** Tab is source editing in Raw, never focus navigation. On a list line it
- * moves the whole item one hierarchy level; elsewhere it inserts configured
- * spaces. Shift-Tab removes one level from every touched line. */
-function editRawTab(e, ta) {
-  if (e.key !== "Tab" || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return false;
-  e.preventDefault();
-  e.stopPropagation();
-  if (overlayOpen()) return true;
+/**
+ * Move every line the selection touches one hierarchy level — the Tab edit,
+ * with no key attached to it. On a list line the whole item moves; elsewhere
+ * the configured spaces go on or come off. `outdent` is what ⇧ meant.
+ *
+ * Lifted out of the key handler because two doors now open onto it that have
+ * no Tab to press: the soft keyboard's editing bar (ADR 0034) and the agent's
+ * `indent_lines` (ADR 0031). One function, so a button and the chord cannot
+ * drift apart. `false` means there was nothing to act on — no Raw editor, or a
+ * dialog over it — which is what those callers report back as a refusal.
+ */
+export function indentSelection(outdent) {
+  const ta = $("#rawArea");
+  if (!ta || state.mode !== "raw" || overlayOpen()) return false;
   const size = Number(settingAt("editor.tabSize"));
   const spaces = " ".repeat(Number.isFinite(size) && size > 0 ? size : 2);
   const value = ta.value;
@@ -432,13 +444,13 @@ function editRawTab(e, ta) {
   const multi = block.includes("\n");
   const currentLine = block.slice(0, block.indexOf("\n") < 0 ? block.length : block.indexOf("\n"));
 
-  if (!e.shiftKey && !multi && !RAW_LIST.test(currentLine) && a === b) {
+  if (!outdent && !multi && !RAW_LIST.test(currentLine) && a === b) {
     applyRawEdit(ta, a, b, spaces);
     return true;
   }
 
   const lines = block.split("\n");
-  const changed = lines.map((line) => (e.shiftKey ? leadingOutdent(line, spaces.length) : spaces + line));
+  const changed = lines.map((line) => (outdent ? leadingOutdent(line, spaces.length) : spaces + line));
   const replacement = changed.join("\n");
   if (replacement === block) return true;
   const firstDelta = changed[0].length - lines[0].length;
@@ -450,6 +462,17 @@ function editRawTab(e, ta) {
   } else {
     ta.setSelectionRange(Math.max(lineStart, a + firstDelta), Math.max(lineStart, b + totalDelta));
   }
+  return true;
+}
+
+/** Tab is source editing in Raw, never focus navigation — it is swallowed
+ * whether or not the edit above could happen, because the one thing it must
+ * never do here is move the focus to the next control. */
+function editRawTab(e) {
+  if (e.key !== "Tab" || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  indentSelection(e.shiftKey);
   return true;
 }
 
@@ -558,7 +581,7 @@ function pasteRawLine(e, ta) {
 
 function rawKeydown(e, ta) {
   if (editRawLineClipboard(e, ta)) return;
-  if (editRawTab(e, ta)) return;
+  if (editRawTab(e)) return;
   continueMarkdownLine(e, ta);
 }
 
@@ -1287,6 +1310,21 @@ export function flushTextRun() {
   if (after == null || after === before) return;
   textMark.set(path, after);
   recordHistory({ kind: "text", path, before, after });
+}
+
+/**
+ * Whether a step is there to be taken RIGHT NOW — what an Undo/Redo control
+ * has to answer to decide whether it is live (ADR 0034).
+ *
+ * `pendingHistory` alone is not that answer for undo: the run still open under
+ * the caret is not on the timeline until something flushes it, so a fresh doc
+ * being typed into reads as "nothing to undo" for as long as the idle window
+ * lasts — and a button greyed out at exactly the moment the user wants it is
+ * worse than no button. The chords never had to ask, because they flush first
+ * and then look.
+ */
+export function canStepHistory(redo) {
+  return redo ? !!pendingHistory(true) : runPath != null || !!pendingHistory(false);
 }
 
 /** Called from the Raw editor's input listener, and from anywhere else that

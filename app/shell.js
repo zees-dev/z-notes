@@ -1505,6 +1505,11 @@ export function wireVisualViewport(onChange) {
   const publish = () => {
     const overlap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     document.documentElement.style.setProperty("--kb", Math.round(overlap) + "px");
+    /* …and the same fact as a class, because a stylesheet cannot ask whether a
+       length is greater than zero. This is the only place in the app that can
+       say "a soft keyboard is up", and the editing bar (ADR 0034) is drawn on
+       it — measured, so a tablet with a hardware keyboard never qualifies. */
+    app.classList.toggle("kb-up", overlap > 0);
     if (onChange) onChange();
   };
   vv.addEventListener("resize", publish);

@@ -60,6 +60,7 @@ const CATALOGUE = [
   "get_app_state",
   "get_conversation",
   "get_settings",
+  "indent_lines",
   "list_commands",
   "list_docs",
   "list_proposals",

@@ -36,7 +36,7 @@ import { state } from "./state.js";
 import { vaultOf } from "./ui.js";
 import { pendingHistory, stepHistory } from "./history.js";
 import { doDelete, loadTree, mintEntry, moveByPath } from "./tree.js";
-import { ensureLoaded, flushTextRun, openDoc, replaceDocText, saveDoc, setMode, syncRaw } from "./editor.js";
+import { ensureLoaded, flushTextRun, indentSelection, openDoc, replaceDocText, saveDoc, setMode, syncRaw } from "./editor.js";
 import { proposalAction, sendMessageText, startNewSession, turnInFlight } from "./chat.js";
 import { emptyTrash, purgeTrashEntry, refreshTrash, restoreTrashEntry, toggleTrash } from "./trash.js";
 import { adoptSettings, savedValue, showSettings } from "./settings.js";
@@ -407,6 +407,16 @@ const TOOLS = [
       await settleBuffer();
       setMode(mode, { force: true, silent: true });
       return { mode: state.mode };
+    },
+  },
+  {
+    name: "indent_lines",
+    description:
+      "Indent or outdent every line the raw editor's selection touches, exactly as Tab and Shift-Tab do: a list line moves one hierarchy level, any other line gains or loses the configured tab size. This is the button a phone gets instead of a Tab key. It needs the raw editor open and no dialog over it.",
+    inputSchema: schema({ outdent: { type: "boolean", description: "True to move the lines out one level instead of in. Defaults to false." } }),
+    execute: async ({ outdent }) => {
+      if (!indentSelection(!!outdent)) throw deny("not-raw", "The raw editor is not open. Switch to Raw first.");
+      return { ok: true };
     },
   },
   {

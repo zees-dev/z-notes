@@ -28,6 +28,7 @@ import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint,
 import { CLOSERS, VEILS, app, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
 import { initZoom } from "./zoom.js";
+import { initKeybar, refreshKeybar } from "./keybar.js";
 import { registerWebMcpTools } from "./webmcp.js";
 
 /* ============================================================
@@ -923,6 +924,7 @@ export async function start() {
     findDocAcross(() => true);
   wire();
   initWordWrap();
+  initKeybar();
   syncModeUI();
   seedHistory();
   /* replace: the entry the browser gave us IS this doc's entry — pushing would
@@ -939,7 +941,13 @@ export async function start() {
 
   /* the remembered assistant state, and the width rules that override it */
   initChatOpen();
-  wireVisualViewport(keepRawCaretVisible);
+  /* one publish, two readers: the editing bar re-measures itself against the
+     keyboard that just moved (ADR 0034), and only then is the caret put back
+     above whatever viewport is left — `revealRawCaret` reads the bar's height. */
+  wireVisualViewport(() => {
+    refreshKeybar();
+    keepRawCaretVisible();
+  });
   connect();
 
   /* The terminal's real state, off the critical path for the same reason the

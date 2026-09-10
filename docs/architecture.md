@@ -82,7 +82,7 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   `armor.js`, `entropy.js`, `crypto-worker.js` (the plaintext jail). Leaves
   import only leaves.
 - **Features** — `tree, editor, markdown, rawedit, secrets, chat, terminal,
-  trash, settings, shell, webmcp, zoom`, composed by `app.js` (`start()`). These are
+  trash, settings, shell, webmcp, zoom, keybar`, composed by `app.js` (`start()`). These are
   mutually entangled (14 mutual import pairs, a legacy of the single-file
   split); new cross-feature needs should go through `state.js`, an injected
   callback, or a DOM event rather than adding pairs. No `export let` anywhere
@@ -99,6 +99,16 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   `input`/`select`/`copy`/`cut`), plus two verbs of its own: `replaceRange`,
   the single write primitive every edit goes through, and `boxAt`, where
   ADR 0027's measurement now happens.
+  `keybar.js` is the newest, and shallow on purpose: `ui.js`, `history.js` and
+  `editor.js` in, `app.js` the only importer, and no logic of its own. It owns
+  the bar that stands on the soft keyboard's top edge (ADR 0034) — Outdent,
+  Indent, Undo, Redo and Done, for a phone that has none of those keys — but
+  builds none of it (the markup is static in `index.html`) and implements none
+  of it: every button calls the function its missing chord calls. What it does
+  own is the CONDITION, `raw-focus` on `#app`, which together with
+  `wireVisualViewport`'s `kb-up` is what base.css §8a draws the bar on, and
+  `--keybar`, the bar's measured height, which `revealRawCaret` subtracts
+  alongside `--kb`.
 - **Static, not modules** — `index.html`, `themes/*.css`, `manifest.json`,
   `icons/*.png` and `vendor/mermaid.js`. All are written by GENERATORS run by
   hand and committed, never by a build step: `scripts/make-icons.ts` draws the

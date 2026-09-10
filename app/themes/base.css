@@ -1622,6 +1622,52 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .ep-unconfigured, .ep-unknown { color: var(--muted); }
 
 /* ============================================================
+   8a · THE SOFT KEYBOARD'S EDITING BAR (ADR 0034)
+
+   Four verbs a phone has no key for, on a slim bar standing on the soft
+   keyboard's top edge. It is drawn ONLY when both halves of one measured
+   condition hold — `kb-up`, `wireVisualViewport` saying the visual viewport is
+   really covered, and `raw-focus`, keybar.js saying the caret is in the Raw
+   editor. There is deliberately no `pointer:` or width query in it: §11's one
+   axis is untouched because the question this bar asks is about the KEYBOARD,
+   not about the device, and a tablet with a hardware keyboard is on the wrong
+   side of that question at every width.
+
+   `bottom: var(--kb)` is the keyboard's own height, published by the same
+   listener. The bar's rendered height goes back the other way as `--keybar`,
+   which `revealRawCaret` subtracts so the line being typed is never under the
+   bar it is being typed with. z-index sits above the phone's chat overlay (80)
+   and below the veils (200): a modal is the one thing that outranks the
+   caret.
+
+   44px tall, and the buttons take the bar's whole height rather than sitting
+   in it as chips: this bar is reachable only by thumb, so §13's touch-target
+   floor is not a nicety here — it is the entire audience. Borderless, with a
+   well on press, the same treatment #stMode gets in §8: a row of verbs, not a
+   dialog's buttons.
+   ============================================================ */
+.keybar {
+  display: none; position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); z-index: 85;
+  height: 44px; padding: 0 6px; align-items: stretch; gap: 2px;
+  background: var(--panel); border-top: var(--bd);
+}
+.app.kb-up.raw-focus .keybar { display: flex; }
+.keybar button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; padding: 0 10px; border-radius: var(--r-sm);
+  color: var(--text-2); font-size: 15px; line-height: 1;
+}
+.keybar button:active { background: var(--panel-3); color: var(--text); }
+/* Not the usual dimming alone: a DISABLED control dispatches no pointer event,
+   and the pointer event is what holds the focus in the editor — so a tap on a
+   dead Undo would blur the caret and drop the keyboard. Let the tap fall
+   through to the bar, whose own handler is the one doing the holding. */
+.keybar button:disabled { opacity: .4; pointer-events: none; }
+.keybar .gap { width: 8px; }
+.keybar .spring { flex: 1; }
+.keybar .done { font-size: 14px; font-weight: var(--w-semi); color: var(--accent); }
+
+/* ============================================================
    9 · CHAT
    ============================================================ */
 .chat { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; border-left: var(--chat-bd); background: var(--chat-bg); position: relative; }

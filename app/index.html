@@ -821,6 +821,32 @@
       <span class="divider-v"></span>
       <button class="sb-i conn" id="stConn" title="Live SSE connection to the z-notes backend"><span class="dot"></span><span class="cw" id="stConnTxt">connecting…</span></button>
     </footer>
+
+    <!-- THE SOFT KEYBOARD'S EDITING BAR (ADR 0034). Four verbs a phone has no
+         key for — Tab, ⇧Tab, ⌘Z/⌘⇧Z and the ⌘E that leaves Raw — on a bar
+         pinned to the keyboard's own top edge. It appears only while a soft
+         keyboard is really covering the viewport AND the caret is in the Raw
+         editor (`.app.kb-up.raw-focus`, base.css §8a), so the desktop and a
+         tablet with a hardware keyboard never see it.
+
+         `tabindex="-1"` on every button: this is a thumb's affordance, and a
+         keyboard that could tab to it already has the chords. `hidden` is the
+         pre-boot state — keybar.js drops it, and the stylesheet owns
+         visibility from there. -->
+    <div class="keybar" id="keybar" role="toolbar" aria-label="Editing" hidden>
+      <button type="button" tabindex="-1" data-kb="outdent" aria-label="Outdent" title="Outdent (⇧Tab)">⇤</button>
+      <button type="button" tabindex="-1" data-kb="indent" aria-label="Indent" title="Indent (Tab)">⇥</button>
+      <span class="gap"></span>
+      <button type="button" tabindex="-1" data-kb="undo" aria-label="Undo" title="Undo (⌘Z)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h11a5 5 0 0 1 0 10h-4"/><path d="m7 6-4 4 4 4"/></svg>
+      </button>
+      <!-- the same glyph, mirrored about x=12: one arrow going the other way -->
+      <button type="button" tabindex="-1" data-kb="redo" aria-label="Redo" title="Redo (⌘⇧Z)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10H10a5 5 0 0 0 0 10h4"/><path d="m17 6 4 4-4 4"/></svg>
+      </button>
+      <span class="spring"></span>
+      <button type="button" tabindex="-1" data-kb="done" class="done" title="Back to the rendered preview">Done</button>
+    </div>
   </div>
 
   <!-- ================= CHAT ================= -->
