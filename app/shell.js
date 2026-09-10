@@ -701,6 +701,11 @@ export function dismissTop() {
      every file under app/ live on other first segments, so no vault path can
      ever shadow a route.
 
+     `/` — not a third shape but a request for the DEFAULT place: boot resolves
+     it through `bootDoc` below and replaces it with that doc's `/d/` URL, so
+     the bare root never survives a page load and nothing ever routes back to
+     it.
+
      `/settings`, `/settings/<section>` — the settings page. It is the pane's
      other content, not an overlay, so it is a real address: deep-linkable,
      reloadable, and Back from it returns to the doc you were reading. The
@@ -764,6 +769,63 @@ export function urlSettings() {
     sec = "";
   }
   return { section: SETTINGS_SECTIONS.includes(sec) ? sec : "" };
+}
+
+/* ============================================================
+   WHERE `/` GOES (ADR 0035)
+
+   The bare root is the one entry point that has to decide for itself, and "the
+   doc you were reading" is the answer that makes reopening the installed app a
+   continuation rather than a fresh start.
+
+   `znotes.last-doc` is a CACHE OF A PLACE, not a setting: per browser, never
+   synced, and an entry naming a doc the tree no longer has is skipped and
+   overwritten by the next open rather than pruned on delete. A store that
+   cannot be used at all (private mode, storage disabled) degrades to today's
+   behaviour — the first doc — which is why every access is wrapped.
+   ============================================================ */
+const LAST_DOC = "znotes.last-doc";
+
+/** Remember the doc on screen. Called from `openDoc` for EVERY open — boot and
+    the programmatic re-homes included: what is on screen is what to resume. */
+export function rememberLastDoc(path) {
+  try {
+    localStorage.setItem(LAST_DOC, path);
+  } catch (e) {
+    /* private mode / storage disabled: the resume is a convenience, and the
+       two rungs below it need no store at all */
+  }
+}
+
+/** …and read it back: `""` when there is none, or when the store is unusable. */
+export function lastDoc() {
+  try {
+    return localStorage.getItem(LAST_DOC) || "";
+  } catch (e) {
+    return ""; // an unreadable store is no memory, not an error
+  }
+}
+
+/**
+ * Which doc a boot opens — the first rung the tree actually has:
+ *
+ *   `wanted`  the doc the URL named (`/d/<path>`): a link is a request for THAT
+ *             doc and outranks everything, including the store;
+ *   the store where this browser was when it last left;
+ *   the home  `editor.homeDoc`, the one "default page" the app has;
+ *   the first today's rule, and the only rung nothing can configure away.
+ *
+ * `""` when the vaults hold no docs at all. Existence is `state.docPaths`, so
+ * this may only be called once the tree has loaded.
+ */
+export function bootDoc(wanted) {
+  const has = (p) => !!p && state.docPaths.has(p);
+  if (has(wanted)) return wanted;
+  const last = lastDoc();
+  if (has(last)) return last;
+  const home = homeTarget();
+  if (has(home)) return home;
+  return firstDoc() || "";
 }
 
 /* Entries carry a monotonic `i` purely so a popstate can tell BACK from
@@ -1287,10 +1349,18 @@ export function paintHome() {
   btn.setAttribute("aria-label", label);
 }
 
-/** Whatever is first in the tree, in the first vault that has one — never a
-    folder path (see findDoc). */
+/** Whatever is first in the tree, in the first vault that has one, preferring a
+    doc with something in it — never a folder path (see findDoc), and `null`
+    when there is nothing to open. The bottom rung of `bootDoc`'s ladder and the
+    home button's fallback are the same rule, so they are the same function. */
+function firstDoc() {
+  return findDocAcross((n) => !n.empty) || findDocAcross(() => true);
+}
+
+/** …and opening it, which is where the home button lands when it has nowhere
+    better to go. */
 export function openFirstDoc() {
-  const first = findDocAcross((n) => !n.empty) || findDocAcross(() => true);
+  const first = firstDoc();
   if (first) return openDoc(first);
   toast("This vault has no docs yet");
 }

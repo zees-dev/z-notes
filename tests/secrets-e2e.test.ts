@@ -60,7 +60,7 @@ import {
   type SeedMap,
   type TestServer,
 } from "./helpers";
-import { ensureMode as setMode, launchTestBrowser, pressChord, waitForApp } from "./browser";
+import { ensureMode as setMode, forgetLastDoc, launchTestBrowser, pressChord, waitForApp } from "./browser";
 
 /* ------------------------------------------------------------------
    fixtures — everything below is generated, so the test can decrypt it
@@ -461,7 +461,7 @@ beforeAll(async () => {
 
   browser = await launchDrivableBrowser(srv.base);
 
-  page = await browser.newPage();
+  page = await forgetLastDoc(await browser.newPage());
   await page.setViewport({ width: 1440, height: 900 });
   page.on("pageerror", (e) => pageErrors.push(e.message));
   page.on("console", (m) => {
@@ -1059,7 +1059,7 @@ describe("secrets e2e — unlocking is vault-wide, and it is display only", () =
 
 describe("secrets e2e — degradation without crypto.subtle", () => {
   test("the block explains itself, the affordance is off, and the doc still works", async () => {
-    const p = await browser.newPage();
+    const p = await forgetLastDoc(await browser.newPage());
     const errs: string[] = [];
     const consoles: string[] = [];
     p.on("pageerror", (e) => errs.push(e.message));

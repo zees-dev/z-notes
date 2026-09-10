@@ -88,6 +88,32 @@ export interface NewPageOptions {
   onPageError?: (message: string) => void;
   /** runs before ANY app code — for instrumentation the app must not know about */
   beforeLoad?: () => void;
+  /**
+   * Keep this browser's `znotes.last-doc`, so a boot at `/` resumes the doc a
+   * previous page opened (ADR 0035). Only the suite MEASURING the resume wants
+   * that; see `forgetLastDoc` for why the default is to clear it.
+   */
+  resume?: boolean;
+}
+
+/**
+ * Forget which doc this browser last opened, for every document it loads from
+ * here on.
+ *
+ * `/` resumes the last doc (ADR 0035), and localStorage belongs to the PROFILE,
+ * not to the page: without this reset the second test of every suite — and
+ * every extra page a suite opens — would boot on whatever the previous one
+ * happened to leave on screen, instead of on the first doc these suites are
+ * written against. Returns the page, so a direct `browser.newPage()` can be
+ * wrapped where it stands.
+ */
+export async function forgetLastDoc(p: Page): Promise<Page> {
+  await p.evaluateOnNewDocument(() => {
+    try {
+      localStorage.removeItem("znotes.last-doc");
+    } catch {}
+  });
+  return p;
 }
 
 /**
@@ -144,6 +170,9 @@ export async function newAppPage(browser: Browser, opts: NewPageOptions = {}): P
   page.on("dialog", (d) => {
     void (d.type() === "beforeunload" ? d.accept() : d.dismiss()).catch(() => {});
   });
+  /* BEFORE the caller's own `beforeLoad`: the reset is this harness's baseline,
+     and instrumentation that runs at boot must see the same one every time. */
+  if (!opts.resume) await forgetLastDoc(page);
   if (opts.beforeLoad) await page.evaluateOnNewDocument(opts.beforeLoad);
   return page;
 }
