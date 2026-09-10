@@ -25,12 +25,16 @@
    THERE ARE EXACTLY TWO WRITE PATHS, and no third:
 
      `replaceRange`  — every edit this app makes, and every edit a cancelable
-                       `beforeinput` describes. Model first, then only the
-                       line nodes that changed.
+                       `beforeinput` describes IN FULL. Model first, then only
+                       the line nodes that changed.
      `reconcile`     — what the browser did without asking: an IME composition,
-                       or any edit that arrived with no cancelable
-                       `beforeinput`. Reads the DOM, believes it, and
-                       normalises the shape back when it is safe to.
+                       an edit that arrived with no cancelable `beforeinput`,
+                       and a delete the browser would not say the extent of —
+                       a collapsed-caret ⌫/⌥⌫/⌘⌫ arrives here with EMPTY
+                       `getTargetRanges()`, so the browser performs it with its
+                       own word, line and grapheme boundaries and this reads
+                       the result. Reads the DOM, believes it, and normalises
+                       the shape back when it is safe to.
 
    If a browser quirk surfaces that neither covers, the fix belongs in the
    reconcile's normalisation, never in a special case in editor.js.
@@ -170,6 +174,14 @@ const DELETE_INPUTS = new Set([
   "deleteContent",
 ]);
 
+/** The edits that are only ever performed here when the browser SAYS what they
+    apply to. Each one moves or replaces text somewhere other than the
+    selection — a dictation or autocorrect swap over the word behind the caret,
+    a transposition, a drag that lands where the pointer is and lifts from
+    where it started — so a fallback to the selection would insert the text
+    without removing the text it replaces. */
+const NEEDS_TARGET = new Set(["insertReplacementText", "insertTranspose", "insertFromDrop", "deleteByDrag"]);
+
 /**
  * Build the Raw surface. Returns the root element, augmented with the
  * textarea-shaped surface described at the top of this file.
@@ -270,6 +282,14 @@ export function createRawEditor() {
     };
     const emit = (node, isLast) => {
       if (node.nodeType === 3) {
+        /* A "\n" INSIDE a text node is a line the DOM does not have a node
+           for: the model would then hold more lines than there are `.ln`
+           children and every index-based path — `domAt`, `paintKinds`,
+           `replaceRange`, `boxAt` — would be off by one from there down. It
+           reads correctly; it is simply not the canonical shape, and saying so
+           is what sends it through the normalisation. (WebKit writes one for a
+           line break inside a `white-space: pre-wrap` host.) */
+        if (node.data.includes("\n")) clean = false;
         at.set(node, len);
         push(node.data);
         return;
@@ -489,33 +509,18 @@ export function createRawEditor() {
     if (normalise) {
       renderAll();
       if (sel) applySelection(sel.start, sel.end, sel.direction);
-    } else {
+    } else if (lines.length === root.children.length) {
+      /* `paintKinds` addresses lines BY INDEX, so it is only meaningful while
+         the DOM has one child per line. A composition can leave it holding
+         fewer (a text node carrying its own "\n"); painting then writes each
+         class onto the wrong node. The `compositionend` pass normalises the
+         shape and paints it right — nothing is lost by waiting for it. */
       paintKinds(classifyLines(text));
     }
     scheduleLinks();
   }
 
   /* ---------- input ---------- */
-
-  /** One code point, never half a surrogate pair. */
-  function stepBack(s, i) {
-    if (i <= 0) return 0;
-    const c = s.charCodeAt(i - 1);
-    if (c >= 0xdc00 && c <= 0xdfff && i >= 2) {
-      const p = s.charCodeAt(i - 2);
-      if (p >= 0xd800 && p <= 0xdbff) return i - 2;
-    }
-    return i - 1;
-  }
-  function stepForward(s, i) {
-    if (i >= s.length) return s.length;
-    const c = s.charCodeAt(i);
-    if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
-      const n = s.charCodeAt(i + 1);
-      if (n >= 0xdc00 && n <= 0xdfff) return i + 2;
-    }
-    return i + 1;
-  }
 
   /** What the browser says the edit applies to — a drop lands where the
       pointer is, not where the caret is — falling back to the selection. */
@@ -545,15 +550,33 @@ export function createRawEditor() {
     if (!e.cancelable) return;
 
     if (t === "historyUndo" || t === "historyRedo") {
-      /* an iOS keyboard's undo key, shake-to-undo, the Edit menu — the app owns
-         the timeline (ADR 0014), so these arrive here rather than at the chord */
+      /* An iOS keyboard's undo key, shake-to-undo, the Edit menu — the app owns
+         the timeline (ADR 0014), so these arrive here rather than at the chord.
+         A BELT, not the door: a browser only fires these when its own undo
+         manager has an entry, and this editor cancels every cancelable edit,
+         so that stack is empty except for what a composition put in it. The
+         phone's undo is the keyboard bar's (ADR 0034). */
       e.preventDefault();
       if (typeof root.onHistory === "function") root.onHistory(t === "historyRedo");
       return;
     }
 
-    e.preventDefault();
+    /* MEASURED FIRST, cancelled second. Chromium hands a `plaintext-only` host
+       EMPTY `getTargetRanges()` for every `delete*` — ⌫, ⌥⌫, ⌥⌦ and ⌘⌫ all
+       arrive with none — and the extent of those is exactly what this module
+       cannot re-derive: one code point back from the caret turns ⌥⌫ into a
+       single character and splits a grapheme cluster (a ZWJ family, a flag
+       pair, a combining mark) down the middle. So when the browser will not say
+       WHERE, it keeps the edit: it knows its own word, line and cluster
+       boundaries, and the trusted `input` that follows runs the reconcile,
+       which reads the result and normalises the shape if it needs to.
+       NEEDS_TARGET is the same rule for a different reason — those four
+       replace or move text that is NOT the selection, so acting on the
+       selection would insert without ever removing. */
     const at = targetOf(e);
+    if (!at.given && (NEEDS_TARGET.has(t) || (DELETE_INPUTS.has(t) && at.start === at.end))) return;
+
+    e.preventDefault();
 
     if (TEXT_INPUTS.has(t) || DATA_INPUTS.has(t)) {
       const insert = plainOf(e);
@@ -563,12 +586,7 @@ export function createRawEditor() {
     }
     if (NEWLINE_INPUTS.has(t)) return replaceRange(at.start, at.end, "\n", t, null);
     if (DELETE_INPUTS.has(t)) {
-      let { start, end } = at;
-      if (start === end && !at.given) {
-        if (t.endsWith("Forward")) end = stepForward(text, end);
-        else start = stepBack(text, start);
-      }
-      if (end > start) replaceRange(start, end, "", t, null);
+      if (at.end > at.start) replaceRange(at.start, at.end, "", t, null);
       return;
     }
     /* `format*` and the rest: markdown has no bold button — the source says so */

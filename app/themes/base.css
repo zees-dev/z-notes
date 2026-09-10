@@ -1383,7 +1383,10 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .secret-t { font-size: 12.5px; font-weight: var(--w-semi); letter-spacing: var(--tracking-tight); }
 .secret-s { font-size: 11px; color: var(--muted); font-family: var(--mono); }
 .secret-body { border-top: var(--bd-2); background: var(--panel-2); }
-.secret-body pre { margin: 0; padding: 11px 13px; font-family: var(--mono); font-size: 12px; line-height: 1.62; color: var(--muted); overflow-x: auto; word-break: break-all; white-space: pre-wrap; }
+/* the px size rides `--doc-zoom` by hand, the same bargain §7's two code
+   tokens strike (ADR 0033): a decrypted secret is text in the document, and a
+   reader who pinched the note bigger meant this too */
+.secret-body pre { margin: 0; padding: 11px 13px; font-family: var(--mono); font-size: calc(12px * var(--doc-zoom, 1)); line-height: 1.62; color: var(--muted); overflow-x: auto; word-break: break-all; white-space: pre-wrap; }
 .secret.open .secret-body { background: var(--ok-soft); }
 .secret.open .secret-body pre { color: var(--text); }
 .secret-body .kv b, .secret-body b { color: var(--text); font-weight: var(--w-semi); }
@@ -1422,7 +1425,9 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .secret-edit {
   display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden;
   margin: 0; padding: 11px 13px; border: 0; background: transparent; color: var(--text);
-  font-family: var(--mono); font-size: 12px; line-height: 1.62; white-space: pre-wrap;
+  /* and it scales with the note it is inside, exactly as the read-only view
+     above does (ADR 0033) */
+  font-family: var(--mono); font-size: calc(12px * var(--doc-zoom, 1)); line-height: 1.62; white-space: pre-wrap;
 }
 .secret-edit:focus { outline: none; }
 /* the degraded-state explanation (no secure context / no worker) */
@@ -1638,7 +1643,8 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
    which `revealRawCaret` subtracts so the line being typed is never under the
    bar it is being typed with. z-index sits above the phone's chat overlay (80)
    and below the veils (200): a modal is the one thing that outranks the
-   caret.
+   caret. The chat sheet is the one surface it yields to outright rather than
+   by rank — see the `chat-open` rule below.
 
    44px tall, and the buttons take the bar's whole height rather than sitting
    in it as chips: this bar is reachable only by thumb, so §13's touch-target
@@ -1652,6 +1658,10 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
   background: var(--panel); border-top: var(--bd);
 }
 .app.kb-up.raw-focus .keybar { display: flex; }
+/* …except over the chat sheet, whose composer stands on the same bottom edge
+   with the same keyboard under it (§11, z-index 80): the bar would cover the
+   field being typed into. Four classes, so it outranks the rule above. */
+.app.kb-up.raw-focus.chat-open .keybar { display: none; }
 .keybar button {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 44px; padding: 0 10px; border-radius: var(--r-sm);
@@ -2424,8 +2434,18 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      replaces is a long-press that opens the link as often as it offers a menu —
      and at .1em it is ~14px. The padding grows the target rather than the
      glyph; it cannot use §13's ::after trick because it sits INSIDE running
-     text, where an inset-negative overlay would cover the words around it. */
-  .lcp { padding: .25em; }
+     text, where an inset-negative overlay would cover the words around it.
+
+     28px is the floor §13 asks for, and the padding alone reached ~17.5px —
+     a miss opens the link, which is the exact gesture this button exists to
+     replace. The NEGATIVE vertical margins are what keep it out of the line
+     box: an inline-flex box 28px tall would otherwise push a paragraph's lines
+     apart wherever a link happens to sit. Measured at 390px: a paragraph
+     carrying a link is 18.45px tall, exactly what one without a link is. */
+  .lcp {
+    padding: .45em; margin: -.45em 0 -.45em .1em;
+    min-width: 28px; min-height: 28px; justify-content: center;
+  }
 }
 
 /* (there was a fifth `@media (max-width: 600px)` here carrying `.sc-grid {

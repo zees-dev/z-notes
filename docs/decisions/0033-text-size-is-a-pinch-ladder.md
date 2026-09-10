@@ -77,6 +77,11 @@ ladder. The browser's own pinch-zoom is switched off so the two cannot fight.**
   removes the browser's zoom, and the `preventDefault` is the belt.
 - `--kb` (`wireVisualViewport`) is unaffected and needs no arithmetic change:
   with native zoom off, `visualViewport` reports the soft keyboard alone.
+- A decrypted secret's plaintext rides the ladder too — `.secret-body pre` and
+  `.secret-edit` multiply their px size by `--doc-zoom` the way §7's code
+  tokens do. It is text in the document, and a reader who pinched the note
+  bigger meant the part of it that was encrypted as well. The card's own
+  chrome (title, subtitle, badges) is chrome and stays put.
 - Deliberately not built: a settings control for zoom (the gesture and the tool
   are the UI), per-document zoom (the size is a property of the reader, not of
   the file), desktop keyboard shortcuts, and chrome that scales with the text.

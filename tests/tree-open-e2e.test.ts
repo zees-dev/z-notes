@@ -8,10 +8,12 @@
    is why this needs a real browser: the claims are "the row came back closed"
    and "localStorage was left holding the reason".
 
-   Five claims: a close survives a reload, so does re-opening it, an untouched
+   Six claims: a close survives a reload, so does re-opening it, an untouched
    folder still takes the server's word and costs no storage, a folder that
-   left the tree takes its key with it, and an unreadable blob means no memory
-   rather than a broken sidebar.
+   left the tree takes its key with it, an unreadable blob means no memory
+   rather than a broken sidebar — and a REVEAL is not a choice: opening a doc
+   inside a collapsed folder shows it for this session without ever writing
+   `true` over the close the user asked for.
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
@@ -27,6 +29,9 @@ const SEED: SeedMap = {
   [HOME]: "# Inbox\n\nstart here\n",
   "notes/one.md": "# One\n",
   "keep/two.md": "# Two\n",
+  /* the reveal case at the foot of this file: the one folder here that IS an
+     ancestor of a doc the test opens */
+  "deep/three.md": "# Three\n",
 };
 
 const STORE = "znotes.tree-open";
@@ -164,4 +169,43 @@ describe("a store this version cannot read means the server's answer", () => {
     expect(`untouched folder: ${await drawn(UNTOUCHED)}`).toBe("untouched folder: open=true closed=false");
     expect(`page errors: ${pageErrors.join(" | ")}`).toBe("page errors: ");
   }, 90000);
+});
+
+/* ============================================================
+   4 · a reveal is not a choice — the open doc's folder is shown, not remembered
+   ============================================================ */
+
+describe("opening a doc inside a collapsed folder does not un-collapse it for good", () => {
+  const REVEALED = "deep";
+  const INSIDE = "deep/three.md";
+
+  test("the close survives the reload that reveals the doc, and the row is closed elsewhere", async () => {
+    await page.goto(srv.base + "/d/" + INSIDE, { waitUntil: "domcontentloaded" });
+    await waitForApp(page);
+    await page.waitForSelector(row(REVEALED), { timeout: 15000 });
+    await sleep(120);
+    expect(`with the doc open inside it: ${await drawn(REVEALED)}`).toBe(
+      "with the doc open inside it: open=true closed=false"
+    );
+
+    await page.click(row(REVEALED));
+    expect(`clicked closed: ${await drawn(REVEALED)}`).toBe("clicked closed: open=false closed=true");
+    expect(`remembered: ${await remembered()}`).toBe(`remembered: {"${REVEALED}":false}`);
+
+    /* the same URL again: `openDoc` reveals the active doc's ancestors on every
+       boot, so this is the load that used to write the close back to `true` */
+    await page.goto(srv.base + "/d/" + INSIDE, { waitUntil: "domcontentloaded" });
+    await waitForApp(page);
+    await page.waitForSelector(row(REVEALED), { timeout: 15000 });
+    await sleep(120);
+    expect(`after the reveal: ${await remembered()}`).toBe(`after the reveal: {"${REVEALED}":false}`);
+
+    /* …and away from that doc the row is drawn the way it was clicked */
+    await page.goto(srv.base + "/d/" + HOME, { waitUntil: "domcontentloaded" });
+    await waitForApp(page);
+    await page.waitForSelector(row(REVEALED), { timeout: 15000 });
+    await sleep(120);
+    expect(`elsewhere: ${await drawn(REVEALED)}`).toBe("elsewhere: open=false closed=true");
+    expect(`page errors: ${pageErrors.join(" | ")}`).toBe("page errors: ");
+  }, 120000);
 });

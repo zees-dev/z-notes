@@ -125,7 +125,9 @@ mirrored per browser in `localStorage` by its one writer: `state.folds` →
 `state.folderOpen`/`state.vaultOpen` → `znotes.tree-open` (folder and vault-row
 disclosure, tree.js,
 [spec 0012](specs/done/0012-folder-disclosure-persists.md)). Both are
-write-through on a user action only — seeding reads, it never writes — both age
+write-through on a user action only — seeding reads, and so does a reveal
+(`revealFolder` opens a doc's ancestors in `state` alone, because opening a doc
+is not a choice about the folder) — both age
 their keys out rather than accumulating (the folds by a document cap, the tree
 by pruning to the tree that just loaded), and both treat an unreadable store as
 no memory rather than an error.

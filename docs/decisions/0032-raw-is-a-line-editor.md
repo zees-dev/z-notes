@@ -61,6 +61,23 @@ API.** `app/rawedit.js` owns it; `app/editor.js` keeps its vocabulary.
   back. It reads the DOM, believes it, and normalises the shape back when the
   user is not mid-composition. A quirk neither covers is a bug in the
   reconcile's normalisation, never a special case in `editor.js`.
+- **A `beforeinput` that will not say WHERE keeps its edit.** The table in
+  `rawedit.js` acts on `getTargetRanges()`, falling back to the selection —
+  but a `plaintext-only` host in Chromium returns none at all for `delete*`,
+  and the extent of ⌥⌫, ⌥⌦ or ⌘⌫ is precisely what cannot be re-derived from
+  a collapsed caret: stepping back one code point makes ⌥⌫ delete one
+  character and cuts a ZWJ family or a flag pair in half. So a collapsed
+  delete with no range is left to the browser, which owns those boundaries,
+  and the trusted `input` behind it runs the reconcile. The same rule covers
+  `insertReplacementText`, `insertTranspose`, `insertFromDrop` and
+  `deleteByDrag`, which act somewhere other than the selection. Insertions —
+  typing, Enter, a paste — are still performed here, on the selection.
+- **`historyUndo`/`historyRedo` are a belt, not a door.** They arrive only when
+  the browser's own undo manager holds an entry, and an editor that cancels
+  every cancelable edit never gives it one (measured: `execCommand("undo")`
+  answers false after typing). The phone's undo is the keyboard bar's
+  ([ADR 0034](0034-the-soft-keyboard-carries-an-editing-bar.md)); the handler
+  stays for what a composition can still record.
 - **A link is a highlight, never a node.** `::highlight(raw-link)` over ranges
   computed from the text. A `<span>` around a URL would be an element appearing
   and disappearing under the caret while somebody types into it, which is how

@@ -121,7 +121,10 @@ export function initZoom() {
   sc.addEventListener(
     "touchstart",
     (e) => {
-      if (e.touches.length === 2) d0 = spread(e.touches);
+      /* `>= 2`, not `=== 2`: a third finger landing changes which two fingers
+         `spread` is measuring, and a gap measured across that change is not a
+         gap anybody's hand opened. Re-measure on every arrival instead. */
+      if (e.touches.length >= 2) d0 = spread(e.touches);
     },
     { passive: true }
   );
@@ -146,7 +149,10 @@ export function initZoom() {
     { passive: false }
   );
   const lift = (e) => {
-    if (e.touches.length < 2) d0 = 0;
+    /* the same re-measure the other way round: a 3→2 lift leaves a pinch still
+       in progress between two fingers whose gap was never the one `d0` holds */
+    if (e.touches.length >= 2) d0 = spread(e.touches);
+    else d0 = 0;
   };
   sc.addEventListener("touchend", lift, { passive: true });
   sc.addEventListener("touchcancel", lift, { passive: true });

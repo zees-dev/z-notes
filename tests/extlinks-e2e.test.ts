@@ -265,4 +265,30 @@ describe("a link in Preview carries a copy button", () => {
     expect(`clipboard: ${await clip()}`).toBe("clipboard: z@example.com");
     expect(`page errors: ${pageErrors.join(" | ")}`).toBe("page errors: ");
   }, 90000);
+
+  test("on a phone it is a real tap target, and the paragraph is no taller for it", async () => {
+    await page.setViewport({ width: 390, height: 844 });
+    await open(EXT);
+    const m = await page.evaluate(() => {
+      const md = document.querySelector("#doc .md") as HTMLElement;
+      const b = (md.querySelector("button.lcp") as HTMLElement).getBoundingClientRect();
+      const ps = [...md.querySelectorAll("p")] as HTMLElement[];
+      const h = (n?: HTMLElement) => (n ? Math.round(n.getBoundingClientRect().height) : -1);
+      return {
+        w: b.width,
+        h: b.height,
+        /* the mailto line carries a link, the wiki line does not — one line
+           each, so any growth in the line box shows up as a difference */
+        linky: h(ps.find((n) => /^write /.test(n.textContent ?? ""))),
+        plain: h(ps.find((n) => /^wiki /.test(n.textContent ?? ""))),
+      };
+    });
+    /* §13's touch-target floor: the gesture this button replaces is a
+       long-press that opens the link, so a miss is worse than no button */
+    expect(`${m.w}x${m.h} clears 24px: ${m.w >= 24 && m.h >= 24}`).toBe(`${m.w}x${m.h} clears 24px: true`);
+    expect(`a line with a link is ${m.linky}px, one without ${m.plain}px`).toBe(
+      `a line with a link is ${m.plain}px, one without ${m.plain}px`
+    );
+    await page.setViewport({ width: 1440, height: 900 });
+  }, 90000);
 });

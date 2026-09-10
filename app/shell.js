@@ -1504,12 +1504,19 @@ export function wireVisualViewport(onChange) {
   if (!vv) return;
   const publish = () => {
     const overlap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-    document.documentElement.style.setProperty("--kb", Math.round(overlap) + "px");
-    /* …and the same fact as a class, because a stylesheet cannot ask whether a
-       length is greater than zero. This is the only place in the app that can
-       say "a soft keyboard is up", and the editing bar (ADR 0034) is drawn on
-       it — measured, so a tablet with a hardware keyboard never qualifies. */
-    app.classList.toggle("kb-up", overlap > 0);
+    const kb = Math.round(overlap);
+    document.documentElement.style.setProperty("--kb", kb + "px");
+    /* …and the same fact as a class, because a stylesheet cannot ask how long a
+       length is. This is the only place in the app that can say "a soft
+       keyboard is up", and the editing bar (ADR 0034) is drawn on it —
+       measured, so a tablet with a hardware keyboard never qualifies.
+
+       60px, not "anything at all": a soft keyboard is never under ~60px tall,
+       a URL-bar animation's sub-pixel wobble always is, and an iPad's shortcut
+       strip over a hardware keyboard (~55px) is a place where Tab already
+       works. Below the floor the bar would stand over the statusbar with no
+       keyboard under it. */
+    app.classList.toggle("kb-up", kb >= 60);
     if (onChange) onChange();
   };
   vv.addEventListener("resize", publish);

@@ -278,8 +278,12 @@ function revealRawCaret() {
     Math.min(sc.getBoundingClientRect().bottom, vvBottom, window.innerHeight - cssKeyboard - cssKeybar) - 12;
   if (visibleBottom <= visibleTop) return;
   const caret = rawCaretBox(ta);
-  if (caret.bottom > visibleBottom) sc.scrollTop += caret.bottom - visibleBottom;
-  else if (caret.top < visibleTop) sc.scrollTop -= visibleTop - caret.top;
+  /* CEILED, both ways: these are sub-pixel box coordinates and `scrollTop`
+     lands on a device pixel, so a delta of 11.6 leaves the caret a fraction of
+     a pixel short of clear — true, invisible, and enough to fail an assertion
+     that asks for clear. */
+  if (caret.bottom > visibleBottom) sc.scrollTop += Math.ceil(caret.bottom - visibleBottom);
+  else if (caret.top < visibleTop) sc.scrollTop -= Math.ceil(visibleTop - caret.top);
 }
 
 let caretFrame = 0;
@@ -610,9 +614,15 @@ function renderRaw(doc, host) {
   ta.placeholder = "# " + doc.title;
   ta.style.tabSize = String(settingAt("editor.tabSize"));
   /* A phone keyboard's undo key, shake-to-undo and the Edit menu reach the
-     editor as `historyUndo`/`historyRedo` rather than as ⌘Z, so they arrive
-     HERE instead of at app.js's chord — and they mean the same thing (ADR
-     0014): the app's timeline, not the browser's. */
+     editor as `historyUndo`/`historyRedo` rather than as ⌘Z, and they mean the
+     same thing (ADR 0014): the app's timeline, not the browser's.
+
+     A BELT, not the phone's undo door. A browser fires these only when its own
+     undo manager has an entry to spend, and the Raw editor cancels every
+     cancelable edit, so that stack stays empty — measured: `execCommand
+     ("undo")` answers false after typing into it. What the phone actually
+     undoes with is the keyboard bar (ADR 0034); this stays for the entries a
+     composition can still leave behind. */
   ta.onHistory = (redo) => {
     flushTextRun();
     if (pendingHistory(redo)) stepHistory(redo);
@@ -1322,9 +1332,14 @@ export function flushTextRun() {
  * lasts — and a button greyed out at exactly the moment the user wants it is
  * worse than no button. The chords never had to ask, because they flush first
  * and then look.
+ *
+ * The open run is the opposite answer for REDO. That same flush records a new
+ * text entry, and a new entry drops the redo branch — so a Redo lit while
+ * somebody is typing is a button that does nothing when it is tapped. Redo is
+ * live only when there is no run to flush.
  */
 export function canStepHistory(redo) {
-  return redo ? !!pendingHistory(true) : runPath != null || !!pendingHistory(false);
+  return redo ? runPath == null && !!pendingHistory(true) : runPath != null || !!pendingHistory(false);
 }
 
 /** Called from the Raw editor's input listener, and from anywhere else that

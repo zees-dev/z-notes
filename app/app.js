@@ -875,6 +875,13 @@ export async function start() {
      That is what lets a leaf drive editor.js and tree.js without importing
      either of them. */
   wireHistory((entry, undoing) => (entry.kind === "text" ? applyTextHistory(entry, undoing) : applyFileHistory(entry, undoing)));
+  /* BEFORE THE FIRST AWAIT. The pinch ladder (ADR 0033) is the app's
+     replacement for a gesture index.html has already switched off in the
+     viewport meta and in `touch-action`, so anything that can leave it unwired
+     leaves a phone with no way to change the text size at all — and a settings
+     fetch that fails or hangs is exactly that. It needs nothing the server
+     says: `localStorage` and `#scroll`, both of which are here already. */
+  initZoom();
   /* settings first: they decide the theme, and a wrong theme flashing is worse
      than 40ms of a blank shell */
   const s = await api.getSettings();
@@ -899,11 +906,6 @@ export async function start() {
   /* remember the pin, so a settings-changed from another device cannot stamp
      the stored value over an axis THIS URL asked for (see `urlPinnedLook`) */
   pinLookFromUrl([themeOk ? "theme" : null, schemeOk ? "colorScheme" : null].filter(Boolean));
-  /* the fourth axis of the look, and the only one this browser owns alone: the
-     pinch ladder's rung (ADR 0033). Straight after the appliers because it is
-     one of them, and before the first document is rendered so the pane is
-     never painted at 100 % and stepped a frame later. */
-  initZoom();
 
   const [, , sync] = await Promise.all([loadTree(), loadSession(), api.getSyncStatus(), loadProposals()]);
   paintSync(sync);

@@ -453,7 +453,10 @@ describe("phone editing regressions", () => {
       const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
       const keyboard = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--kb"));
       return ta.getBoundingClientRect().bottom <= innerHeight - keyboard - 12;
-    }, { timeout: 3000 });
+      /* the suite's usual budget: `keepRawCaretVisible` rechecks once the
+         viewport has settled (220ms after the keystroke), and a loaded machine
+         can spend longer than 3s getting to it */
+    }, { timeout: 8000 });
     const after = await page.$eval("#rawArea", (n) => ({
       visibleBottom: innerHeight - parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--kb")),
       caretBottom: (n as HTMLTextAreaElement).getBoundingClientRect().bottom,

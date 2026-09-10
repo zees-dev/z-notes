@@ -28,6 +28,7 @@
 "use strict";
 
 import { $ } from "./ui.js";
+import { state } from "./state.js";
 import { pendingHistory, stepHistory } from "./history.js";
 import { canStepHistory, flushTextRun, indentSelection, setMode } from "./editor.js";
 
@@ -56,13 +57,15 @@ const ACTIONS = {
   outdent: () => indentSelection(true),
   undo: () => step(false),
   redo: () => step(true),
-  /* Blur FIRST: this button's promise is that the keyboard goes away, and the
-     keyboard goes with the focus. The mode switch that follows is the same
-     call Esc makes, guard and all — a dirty buffer still gets its question. */
+  /* THE SWITCH FIRST, the blur after it. This is the same call Esc makes,
+     guard and all — a dirty buffer gets its question (ADR 0022) — and the
+     answer may be "keep editing", which blurring first would have answered
+     with a dropped keyboard and a lost caret. The blur is what makes the
+     keyboard go away, so it is owed only once the mode actually changed. */
   done: () => {
-    const a = document.activeElement;
-    if (a && a.blur) a.blur();
     setMode("preview", { silent: true });
+    const a = document.activeElement;
+    if (state.mode === "preview" && a && a.blur) a.blur();
   },
 };
 

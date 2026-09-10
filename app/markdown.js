@@ -167,9 +167,12 @@ function copyLinkButton(a) {
   b.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    /* the address, not the scheme — a mailto: puts on the clipboard what the
-       reader would have typed into a To: field */
-    copyText(a.href.replace(/^mailto:/i, ""));
+    /* THE ATTRIBUTE, not the property: `a.href` is the parser's normalisation
+       of the URL — a trailing slash on a bare host, an IDN host punycoded, a
+       path percent-encoded — and what belongs on the clipboard is the URL the
+       author wrote. The address, not the scheme, either: a mailto: puts on the
+       clipboard what the reader would have typed into a To: field. */
+    copyText((a.getAttribute("href") || "").replace(/^mailto:/i, ""));
   });
   return b;
 }

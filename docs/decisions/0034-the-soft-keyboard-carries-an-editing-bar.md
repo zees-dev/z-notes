@@ -37,8 +37,11 @@ are base.css §8a.
 
 - **It exists only where a soft keyboard does, and that is MEASURED.** Two
   facts, both published rather than guessed: `kb-up` on `#app` is
-  `wireVisualViewport` reporting that the visual viewport is really covered,
-  and `raw-focus` is `keybar.js` reporting that the caret is in `#rawArea`. The
+  `wireVisualViewport` reporting that the visual viewport is really covered by
+  at least 60px — a soft keyboard is never shorter than that, a URL-bar
+  animation's sub-pixel wobble always is, and an iPad's shortcut strip over a
+  hardware keyboard (~55px) is a place where Tab already works — and
+  `raw-focus` is `keybar.js` reporting that the caret is in `#rawArea`. The
   stylesheet draws the bar when both hold. There is no `pointer:` query and no
   width query, so base.css §11's "one axis, viewport width" rule is untouched —
   the question this bar asks is about the KEYBOARD, not about the device, and a
@@ -58,8 +61,11 @@ are base.css §8a.
   Undo/Redo flush the open text run and step the app's one timeline, the same
   two lines ⌘Z runs; Done is the door Esc leaves through,
   `setMode("preview", { silent: true })` — guard and all, so a dirty buffer
-  still gets its question. A button that reimplemented a chord would be a
-  second answer to a settled question, and the two would drift.
+  still gets its question — and it switches the mode BEFORE it blurs, blurring
+  only if the switch actually happened, because the guard's answer can be "keep
+  editing" and a blur taken first drops the keyboard and the caret out from
+  under it. A button that reimplemented a chord would be a second answer to a
+  settled question, and the two would drift.
 - **The bar publishes its own height as `--keybar`**, and `revealRawCaret`
   subtracts it alongside `--kb`. The line being typed is never underneath the
   bar it is being typed with. The value is `offsetHeight`, which is 0 exactly
@@ -70,7 +76,9 @@ are base.css §8a.
   the length of the idle window on a doc being typed into for the first time —
   a control dimmed at exactly the moment it is wanted. The chords never had to
   ask, because they flush first and then look; `canStepHistory` is that answer
-  without the flush.
+  without the flush. The open run counts the other way for REDO: that same
+  flush records an entry and an entry drops the redo branch, so a Redo lit
+  while somebody is typing is a button that does nothing when it is tapped.
 - **The agent gets the same door**: `indent_lines` in the WebMCP catalogue,
   wrapping `indentSelection`, refusing with `not-raw` in
   [ADR 0002](0002-http-api-v0-error-shape.md)'s error shape when the raw editor

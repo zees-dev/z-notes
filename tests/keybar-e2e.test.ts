@@ -69,6 +69,13 @@ const focused = () => page.evaluate(() => document.activeElement?.id ?? "");
 
 const tap = (kb: string) => page.click(`#keybar [data-kb="${kb}"]`);
 
+/** whether a bar button is offering itself right now */
+const dead = (kb: string) =>
+  page.evaluate(
+    (sel) => ((document.querySelector(sel as string) as HTMLButtonElement).disabled ? "dead" : "live"),
+    `#keybar [data-kb="${kb}"]`
+  );
+
 async function openRaw() {
   await app.boot("/d/" + DOC);
   /* the chip, not ⌘E: below the phone breakpoint the chord is the one door
@@ -184,6 +191,19 @@ describe("the soft keyboard's editing bar", () => {
     await tap("redo");
     await waitBuffer(INDENTED);
     expect(await focused()).toBe("rawArea");
+
+    /* …and Redo goes dead the moment there is a text run open under the caret:
+       the tap would flush it first, and a flush that records an entry drops
+       the redo branch, so a lit button would do nothing (ADR 0034). */
+    await tap("undo");
+    await waitBuffer(SRC);
+    expect(`redo before typing: ${await dead("redo")}`).toBe("redo before typing: live");
+    await page.keyboard.type("z");
+    await page.waitForFunction(
+      () => (document.querySelector('#keybar [data-kb="redo"]') as HTMLButtonElement).disabled,
+      { timeout: 8000 }
+    );
+    expect(`redo after one keystroke: ${await dead("redo")}`).toBe("redo after one keystroke: dead");
     expect(pageErrors).toEqual([]);
   }, 45000);
 

@@ -88,11 +88,11 @@ function storedOpen(kind, key) {
   return typeof v === "boolean" ? v : undefined;
 }
 
-/* The two writers. Every site that CHANGES disclosure goes through one of
-   these; every site that merely seeds it reads `storedOpen`. A write that
-   changes nothing does not touch storage — `revealFolder` re-asserts every
-   ancestor of every doc that is opened, and that is not a reason to serialize
-   the store once per level. */
+/* The two writers, and they are the two USER CHOICES: the row click and the
+   drag-dwell. Every site that merely seeds disclosure reads `storedOpen`, and
+   a reveal moves `state` alone (see `revealFolder`) — what the store holds is
+   what somebody asked for, never what the app inferred. A write that changes
+   nothing does not touch storage. */
 function remember(kind, key, open) {
   const map = loadOpenStore()[kind];
   if (map[key] === open) return;
@@ -821,6 +821,12 @@ function createParent() {
  * CLOSED got opened — the only reason a repaint is owed, which is all
  * `revealInTree` wanted from its own copy of this walk.
  *
+ * IN `state` ONLY, never through the writers above: a reveal is a consequence,
+ * not a choice. `openDoc` reveals the active doc on every boot, so writing
+ * through here would rewrite a folder the user had collapsed around their open
+ * doc back to `true` on the next reload — spec 0012's store remembers what was
+ * clicked, and this session's answer dies with the session.
+ *
  * The write stays unconditional even when nothing changed: `commitCreate` pins
  * a brand-new folder open BEFORE `loadTree`, and `indexTree` only seeds a key
  * it does not already have, so an absent key would come back closed from the
@@ -830,12 +836,12 @@ export function revealFolder(path) {
   const id = vaultOf(path);
   const prefix = vaultPrefix(id);
   let changed = state.vaultOpen.get(id) === false;
-  setVaultOpen(id, true);
+  state.vaultOpen.set(id, true);
   let acc = "";
   for (const s of relOf(path).split("/").filter(Boolean)) {
     acc = acc ? acc + "/" + s : s;
     if (state.folderOpen.get(prefix + acc) === false) changed = true;
-    setFolderOpen(prefix + acc, true);
+    state.folderOpen.set(prefix + acc, true);
   }
   return changed;
 }
