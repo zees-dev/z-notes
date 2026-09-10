@@ -417,14 +417,26 @@ function incrementDecimal(value) {
 /**
  * The prefix a markdown editor carries onto the next line.
  *
- * Whitespace is copied byte-for-byte. Bullets keep their marker, tasks restart
- * unchecked, and ordered items advance while retaining `.` versus `)`. A plain
- * indented line keeps only its indentation. Returning null means the browser
- * should perform its ordinary newline.
+ * Whitespace is copied byte-for-byte. Quote markers repeat at the depth they
+ * were typed, bullets keep their marker, tasks restart unchecked, and ordered
+ * items advance while retaining `.` versus `)`. A plain indented line keeps
+ * only its indentation. Returning null means the browser should perform its
+ * ordinary newline.
  */
 function markdownContinuation(value, caret) {
   const lineStart = value.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
   const before = value.slice(lineStart, caret);
+  /* A quote continues the way a list does (spec 0019). The shape restates
+     markdown.js's `quoteInfo` — the renderer and the editor do not import each
+     other for this, the same bargain `RE_LIST`/`RAW_LIST` already strike — and
+     the markers are carried EXACTLY as typed, so `> > ` stays two deep and a
+     marker written without its space keeps its own spelling. */
+  const quote = /^(?<indent>[ \t]*)(?<markers>(?:>[ ]?)+)/.exec(before);
+  if (quote) {
+    const g = quote.groups;
+    /* markers with nothing after them are an empty item: Enter ends the quote */
+    return { lineStart, prefix: g.indent + g.markers, emptyItem: !before.slice(quote[0].length).trim() };
+  }
   const list = /^(?<indent>[ \t]*)(?:(?<bullet>[-*+])|(?<number>\d+)(?<delim>[.)]))(?<gap>[ \t]+)(?:\[(?<check>[ xX])\](?<checkGap>[ \t]*))?/.exec(before);
   if (list) {
     const g = list.groups || {};

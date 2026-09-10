@@ -225,6 +225,12 @@ describe("phone editing regressions", () => {
         "999999999999999999999. huge\n1000000000000000000000. ",
       ],
       ["indented prose", "    indented prose", "    indented prose\n    "],
+      /* a quote continues like a list, at the depth and indent it was typed
+         with, and an empty marker line ends it (spec 0019) */
+      ["quote", "> alpha", "> alpha\n> "],
+      ["nested quote", "> > deep", "> > deep\n> > "],
+      ["indented quote", "  > aside", "  > aside\n  > "],
+      ["empty quote ends the quote", "> ", ""],
       ["empty task exits the list", "  - [ ] ", ""],
       ["empty task without a content gap exits the list", "- [ ]", ""],
       ["empty ordered item exits the list", "  7) ", ""],

@@ -73,7 +73,29 @@ const SOURCE = [
   "evil <script>window.__markdownPwned = 1</script> [bad](javascript:window.__markdownPwned=2)",
   "image ![alt](https://example.com/i.png) stays literal",
   "",
+  /* quotes keep their shape (spec 0019) — appended at the END so every line
+     number the assertions above name stays the line it names */
+  "> keep    the   spaces",
+  ">   two extra",
+  "> \tafter a tab",
+  "",
+  "> outer",
+  "> > inner",
+  "> outer again",
+  "",
+  "- a list item",
+  "    > aside",
+  "",
 ].join("\n");
+
+/** the source line a fixture line was written on, so the quote assertions
+    below survive the corpus growing above them */
+const lineOf = (text: string) => SOURCE.split("\n").indexOf(text);
+const QUOTE_LINES = {
+  spaced: lineOf("> keep    the   spaces"),
+  nested: lineOf("> outer"),
+  aside: lineOf("    > aside"),
+};
 
 const SEED: SeedMap = {
   [DOC]: SOURCE,
@@ -119,7 +141,7 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
     expect(untouched.status).toBe(200);
     expect(untouched.body.markdown).toBe(SOURCE);
 
-    const m = await page.evaluate(() => {
+    const m = await page.evaluate((Q: { spaced: number; nested: number; aside: number }) => {
       const md = document.querySelector("#doc .md") as HTMLElement;
       const at = (line: number) => md.querySelector(`[data-line="${line}"]`) as HTMLElement | null;
       const line = (n: number) => md.querySelector(`.pline[data-line="${n}"]`) as HTMLElement | null;
@@ -128,7 +150,13 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
       const firstStrike = line(7)?.querySelector("del") ?? null;
       const tableStrike = md.querySelector("tbody del");
       const bulletStyle = getComputedStyle(item(13)!, "::before");
-      const quoteStyle = getComputedStyle(md.querySelector("blockquote")!);
+      const quote = md.querySelector("blockquote")!;
+      const quoteStyle = getComputedStyle(quote);
+      const quoteAt = (n: number) => md.querySelector(`blockquote[data-line="${n}"]`) as HTMLElement;
+      const spaced = quoteAt(Q.spaced);
+      const nested = quoteAt(Q.nested);
+      const inset = (node: HTMLElement) => parseFloat(getComputedStyle(node).marginLeft);
+      const plines = (node: Element, sel: string) => [...node.querySelectorAll(sel)].map((n) => n.textContent);
       const divider = md.querySelector(".divider") as HTMLElement;
       const diagram = md.querySelector(".mmd-body svg") as SVGElement | null;
       const diagramRect = diagram?.getBoundingClientRect();
@@ -198,11 +226,23 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
           bulletRound: bulletStyle.width === bulletStyle.height && bulletStyle.borderRadius === "50%",
         },
         quoteAndRule: {
-          lines: [...md.querySelectorAll("blockquote .pline")].map((n) => n.textContent),
-          dataLines: [...md.querySelectorAll("blockquote .pline")].map((n) => n.getAttribute("data-line")),
+          lines: plines(quote, ".pline"),
+          dataLines: [...quote.querySelectorAll(".pline")].map((n) => n.getAttribute("data-line")),
           strike: md.querySelector("blockquote del")?.textContent ?? null,
           border: parseFloat(quoteStyle.borderLeftWidth) > 0,
           divider: divider.getBoundingClientRect().height > 0,
+        },
+        /* a quote keeps its shape: the whitespace after the marker, the depth
+           the markers say, and the indent before them (spec 0019) */
+        quotes: {
+          spacing: plines(spaced, ".pline"),
+          spacingLines: [...spaced.querySelectorAll(".pline")].map((n) => n.getAttribute("data-line")),
+          whiteSpace: getComputedStyle(spaced.querySelector(".pline")!).whiteSpace,
+          outerLines: plines(nested, ":scope > .pline"),
+          innerLines: plines(nested, ":scope > blockquote > .pline"),
+          /* one marker per depth was consumed and no more: nothing prints a `>` */
+          markersPrinted: [...md.querySelectorAll("blockquote .pline")].filter((n) => n.textContent!.includes(">")).length,
+          asideIsInset: inset(quoteAt(Q.aside)) > inset(nested),
         },
         table: {
           heads: md.querySelectorAll("thead th").length,
@@ -237,7 +277,7 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
           tableUnsafeText: md.querySelector("thead th:last-child")?.textContent ?? null,
         },
       };
-    });
+    }, QUOTE_LINES);
 
     expect(m.formatting).toEqual({
       paragraphStrike: "strike",
@@ -300,6 +340,17 @@ describe("the documented Markdown subset renders as one safe, byte-faithful docu
       strike: "strike",
       border: true,
       divider: true,
+    });
+    expect(m.quotes).toEqual({
+      /* one space per marker is the marker's; every other byte is the text's,
+         and `pre-wrap` is what makes that visible rather than merely present */
+      spacing: ["keep    the   spaces", "  two extra", "\tafter a tab"],
+      spacingLines: [QUOTE_LINES.spaced, QUOTE_LINES.spaced + 1, QUOTE_LINES.spaced + 2].map(String),
+      whiteSpace: "pre-wrap",
+      outerLines: ["outer", "outer again"],
+      innerLines: ["inner"],
+      markersPrinted: 0,
+      asideIsInset: true,
     });
     expect(m.table).toEqual({ heads: 3, rows: 1, cells: 3 });
     expect(m.code).toEqual({ language: "ts", text: "const value = 42;", lines: 1, keywords: 1, numbers: 1 });

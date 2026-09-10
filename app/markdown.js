@@ -83,6 +83,28 @@ function listLine(raw) {
   return { indent, marker: m[2], text: m[4] };
 }
 
+/**
+ * `> > text` → `{ indent, depth, text }` (spec 0019).
+ *
+ * `indent` counts the columns BEFORE the first marker — a tab to the next
+ * multiple of four, the way `listLine` counts them — because that indent is
+ * structural, like a list item's. `depth` is the number of `>` markers, each
+ * allowed to eat ONE space after it; everything else after the markers is the
+ * author's whitespace and stays in `text`.
+ *
+ * The leading class is `\s*`, matching `RE_QUOTE`'s exactly, so this answers
+ * for every line the block-start test admits: the render loop advances only
+ * inside the branch it entered, and a quote line this could not read would
+ * spin it.
+ */
+function quoteInfo(line) {
+  const m = /^(\s*)((?:>[ ]?)+)(.*)$/.exec(line);
+  if (!m) return null;
+  let indent = 0;
+  for (const c of m[1]) indent = c === "\t" ? indent + (4 - (indent % 4)) : indent + 1;
+  return { indent, depth: (m[2].match(/>/g) || []).length, text: m[3] };
+}
+
 function listItemEl(doc, item, lineNo) {
   const t = item.text;
   const box = /^\[([ xX])\]\s*/.exec(t);
@@ -227,14 +249,47 @@ export function renderPreview(doc, host) {
     }
 
     if (RE_QUOTE.test(line)) {
-      const buf = [];
+      /* One blockquote per DEPTH (spec 0019). `stack` is the blocks currently
+         open — a deeper line opens one, a shallower line closes one — and
+         `run` is the lines waiting for whichever is on top. A run flushes on
+         every depth change, so each block keeps its own lines in source order
+         around the nested block that interrupted them. Within a run the source
+         lines are consecutive, which is what lets `lineSpans` number them from
+         one start. */
+      const outer = el("blockquote");
+      /* The indent before the first marker is structural, like a list item's:
+         CSS owns the width of one level and the renderer supplies how many
+         (`--quote-in`, base.css) — the bargain `--fold-depth` already strikes.
+         Four columns is one level, the same four a nested list is written
+         with. Whitespace AFTER the markers is the author's and is preserved by
+         CSS instead, so nothing inside the quote is stripped. */
+      const lead = quoteInfo(line).indent / 4;
+      if (lead) outer.style.setProperty("--quote-in", lead);
+      const stack = [outer];
+      let run = [];
+      let runStart = start;
+      const flush = () => {
+        if (!run.length) return;
+        stack[stack.length - 1].insertAdjacentHTML("beforeend", lineSpans(run, runStart));
+        run = [];
+      };
       while (i < lines.length && RE_QUOTE.test(lines[i])) {
-        buf.push(lines[i].replace(/^\s*>\s?/, ""));
+        const q = quoteInfo(lines[i]);
+        if (q.depth !== stack.length) {
+          flush();
+          while (stack.length > q.depth) stack.pop();
+          while (stack.length < q.depth) {
+            const inner = el("blockquote");
+            stack[stack.length - 1].appendChild(inner);
+            stack.push(inner);
+          }
+        }
+        if (!run.length) runStart = i;
+        run.push(q.text);
         i++;
       }
-      const q = el("blockquote");
-      q.innerHTML = lineSpans(buf, start);
-      put(q, start);
+      flush();
+      put(outer, start);
       continue;
     }
 
