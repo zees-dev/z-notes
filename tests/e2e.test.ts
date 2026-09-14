@@ -1,7 +1,7 @@
 /* ============================================================
    E2E GATE — a real browser against the real backend serving the real app.
 
-   Parity: computed-style/rect equality between Preview and Raw across
+   Parity: computed-style/rect equality between Edit and Source across
    densities, plus the phase-1 acceptance checklist: boot, tree, navigation,
    ⌘E, ⌘S → disk, external edit → SSE → UI, ⌘K palette, connection dot.
 
@@ -112,8 +112,8 @@ const PARITY_PROPS = [
  * 24px; margin-top: 18px }` moved the first line of the document 24px right and
  * 4px down on every ⌘E, in every breakpoint and both densities, and the gate
  * stayed green because `#doc` itself had not moved. So the text origin is
- * measured too: the first painted block in Preview, and the editor's own text
- * box (its rect plus its padding, which is what a theme would add) in Raw.
+ * measured too: the first painted block in Edit, and the editor's own text
+ * box (its rect plus its padding, which is what a theme would add) in Source.
  */
 async function measureDocContainer() {
   return page.evaluate((props: readonly string[]) => {
@@ -566,7 +566,7 @@ describe("e2e — ⌘E and container parity", () => {
       }
       /* THE RAW EDITOR IS NOT A FIELD (ADR 0032). It is a contenteditable at
          the document size, which is the whole point — a 16px floor on it was
-         the biggest Preview→Raw size jump on a phone. So it is not swept and
+         the biggest Edit→Source size jump on a phone. So it is not swept and
          not floored; what is asserted is that it is still editable. */
       const raw = document.getElementById("rawArea");
       return {

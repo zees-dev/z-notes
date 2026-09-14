@@ -357,7 +357,7 @@ const ensureRaw = async (p: Page) => {
   await p.waitForSelector("#rawArea", { timeout: 8000 });
 };
 
-const ensurePreview = async (p: Page) => {
+const ensureEdit = async (p: Page) => {
   if (!(await p.evaluate(() => document.getElementById("doc")!.classList.contains("raw-mode")))) return;
   await chord(p, "KeyE");
   await p.waitForSelector(".secret", { timeout: 8000 });
@@ -2278,7 +2278,7 @@ describe("two identical age fences in one document are two blocks", () => {
    ============================================================ */
 
 describe("a save that lands while the pane is in Raw", () => {
-  test("the re-encrypted edit survives the trip back to Preview", async () => {
+  test("the re-encrypted edit survives the trip back to Edit", async () => {
     const p = await newPage(srv);
     try {
       const want = RAW_PLAIN + "ROTATED=1\n";
@@ -2304,8 +2304,8 @@ describe("a save that lands while the pane is in Raw", () => {
         `the save wrote the rotation: ${JSON.stringify(want)}`
       );
 
-      /* back to Preview: the mode switch syncs the raw buffer into the model */
-      await ensurePreview(p);
+      /* back to Edit: the mode switch syncs the source buffer into the model */
+      await ensureEdit(p);
       await waitForReveals(p, 1);
       expect(`the block still shows the rotation: ${JSON.stringify(await revealedTexts(p))}`).toBe(
         `the block still shows the rotation: ${JSON.stringify([want])}`

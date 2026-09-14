@@ -151,8 +151,8 @@ async function openDoc(p: Page, path: string) {
   await p.waitForFunction((x) => document.getElementById("stPath")!.textContent === x, { timeout: 10000 }, path);
 }
 
-/** [[link]] pills only exist in Preview — make sure that is the mode */
-const ensurePreview = (p: Page) => ensureMode(p, "preview");
+/** [[link]] pills only exist in Edit — make sure that is the mode */
+const ensureEdit = (p: Page) => ensureMode(p, "preview");
 
 const treePaths = (p: Page) =>
   p.evaluate(() => [...document.querySelectorAll<HTMLElement>("#tree .row.file")].map((r) => r.dataset.doc!));
@@ -743,7 +743,7 @@ describe("e2e — sidebar move is keyboard-reachable", () => {
 describe("e2e — a broken [[link]] is flagged and offers to create the doc", () => {
   test("the dead pill is flagged, the live one is not, and the create affordance creates + opens", async () => {
     await openDoc(page, BROKEN);
-    await ensurePreview(page);
+    await ensureEdit(page);
     await page.waitForFunction(
       (s) => !!document.querySelector(`#doc button.wiki-link[data-target="${s}"]`),
       { timeout: 10000 },
@@ -801,7 +801,7 @@ describe("e2e — a broken [[link]] is flagged and offers to create the doc", ()
 
     /* going back, the pill is no longer flagged — the link resolves now */
     await openDoc(page, BROKEN);
-    await ensurePreview(page);
+    await ensureEdit(page);
     await page
       .waitForFunction(
         (s) => {
@@ -902,7 +902,7 @@ describe("e2e — a dirty buffer is never overwritten by a 409", () => {
 
     /* type in Raw, which is the exact source the save will send */
     /* the statusbar mode chip — one button, it toggles, and the doc opens in
-       Preview, so one click is Raw. Asserted rather than assumed. */
+       Edit, so one click is Source. Asserted rather than assumed. */
     expect(await page.$eval("#stMode", (b) => b.getAttribute("data-mode"))).toBe("preview");
     await page.click("#stMode");
     await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });

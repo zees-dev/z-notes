@@ -10,6 +10,9 @@ import { en } from '@blocknote/core/locales';
 import { createReactBlockSpec, createReactInlineContentSpec, getDefaultReactSlashMenuItems, SideMenuController, SuggestionMenuController } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/mantine';
 import { createReactDiagramBlockSpec, defaultMermaidOptions, getDiagramSlashMenuItems, initializeMermaid } from '@blocknote/diagram-block';
+import { Extension } from '@tiptap/core';
+import { Plugin, PluginKey, type EditorState } from 'prosemirror-state';
+import { Decoration, DecorationSet } from 'prosemirror-view';
 import mermaid from 'mermaid';
 import '@blocknote/mantine/style.css';
 import { listItemTypes, SourceSession, type SourceBlock, type SecretIdentity } from './markdown-source';
@@ -73,6 +76,14 @@ export interface EditorController {
   canUndo(): boolean;
   canRedo(): boolean;
 }
+
+/* `I.copy`, the shell's glyph — restated rather than imported, because the
+   island imports npm packages and the source adapter only (ADR 0037). */
+const copyIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>';
+/** The link spellings that carry a URL worth copying. A `[[wiki]]` link names a
+    doc in this vault, not an address, and gets no button (spec 0016). */
+const copyableHref = /^(https?|mailto|tel):/i;
+const linkCopyKey = new PluginKey<DecorationSet>('zLinkCopy');
 
 const toolbarOffsetKey = 'znotes.toolbarOffset';
 const clampToolbarOffset = (value: number) => Number.isFinite(value) ? Math.max(-160, Math.min(160, value)) : 0;
@@ -234,10 +245,59 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
     styleSpecs: { bold, italic, strike, code },
   });
   type EditorBlock = typeof schema.PartialBlock;
+  function copyButton(href: string) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'z-link-copy';
+    button.setAttribute('aria-label', 'Copy link');
+    button.title = 'Copy link';
+    button.innerHTML = copyIcon;
+    // Taking the URL is not a place in the text: the caret stays where it was.
+    button.onpointerdown = event => event.preventDefault();
+    button.onclick = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      // A mailto: link copies the address, not the scheme (spec 0016).
+      void (options.copyText ?? (text => navigator.clipboard.writeText(text)))(href.replace(/^mailto:/i, ''));
+    };
+    return button;
+  }
+  function linkCopyDecorations(state: EditorState) {
+    const links: { end: number; href: string }[] = [];
+    state.doc.descendants((node, pos) => {
+      const href: unknown = node.isText ? node.marks.find(mark => mark.type.name === 'link')?.attrs.href : undefined;
+      if (typeof href !== 'string' || !copyableHref.test(href)) return;
+      // One link's text can be several text nodes — a bold word inside the label.
+      const previous = links.at(-1);
+      if (previous && previous.end === pos && previous.href === href) previous.end = pos + node.nodeSize;
+      else links.push({ end: pos + node.nodeSize, href });
+    });
+    return DecorationSet.create(state.doc, links.map(link =>
+      // Keyed, so a keystroke elsewhere keeps every button's DOM instead of redrawing it.
+      Decoration.widget(link.end, () => copyButton(link.href), { side: 1, ignoreSelection: true, key: link.href })));
+  }
+  /* A WIDGET, never appended DOM: a node put inside the contenteditable by hand
+     would join the document on the next transaction and the clipboard with the
+     next copy. A decoration is outside the doc, so undo and the adapter's bytes
+     never see it. */
+  const linkCopy = Extension.create({
+    name: 'zLinkCopy',
+    addProseMirrorPlugins: () => [new Plugin({
+      key: linkCopyKey,
+      state: {
+        init: (_config, state) => linkCopyDecorations(state),
+        apply: (tr, current, _old, state) => tr.docChanged ? linkCopyDecorations(state) : current,
+      },
+      props: { decorations: state => linkCopyKey.getState(state) },
+    })],
+  });
   const editor = BlockNoteEditor.create({
     schema, dictionary: en,
     initialContent: (session.blocks.length ? session.blocks : [{ type: 'paragraph' }]) as EditorBlock[],
     domAttributes: { editor: { 'aria-label': 'Doc editor' } },
+    // `_tiptapOptions.extensions` is BlockNote's own undocumented door; it
+    // APPENDS to the editor's extension list rather than replacing it.
+    _tiptapOptions: { extensions: [linkCopy] },
   });
   let snapshot = JSON.stringify(editor.document);
   let sourceValues = new Map(session.blocks.filter(block => block.type === 'source').map(block => [block.id, new Set([block.props.source])]));

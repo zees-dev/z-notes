@@ -21,8 +21,8 @@
      · CLICK — a click on a link in Edit does not take the app anywhere: no
        request leaves for the link's origin and the open doc is still the open
        doc. (There is no click-to-edit door left to guard — ADR 0037 deleted
-       it — and the copy button after every link went with spec 0016's Preview
-       half.)
+       it. Spec 0016's copy button after every link is a widget decoration in
+       the island now, and block-editor-e2e owns it.)
      · SOURCE — none of it costs a byte on disk.
 
    EACH CASE IS ITS OWN PARAGRAPH. The adapter's unit of preservation is the

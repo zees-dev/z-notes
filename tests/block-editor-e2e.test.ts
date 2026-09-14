@@ -460,3 +460,72 @@ test("dark native slash and formatting menus inherit each theme's text and panel
     path = `theme-${++sequence}.md`;
   }
 }, 45000);
+
+/* The reading affordances the cutover owed the doc: nesting is shown by indent
+   alone, an external link looks like one, and its URL is one click away. */
+const LINKED = "- Parent\n  - Child\n\n- [ ] Task\n  - [x] Sub task\n\nPlain paragraph with no link.\n\nSee <https://example.com/x>, [mail](mailto:a@b.com) and [[other]].\n";
+
+test("nested items draw no guide line and every external link is underlined with one copy button", async () => {
+  await boot(LINKED);
+  for (const colorScheme of ["light", "dark"]) {
+    expect((await srv.api("PUT", "/api/settings", { colorScheme })).status).toBe(200);
+    await page.waitForFunction(scheme => document.documentElement.dataset.scheme === scheme, {}, colorScheme);
+    const measured = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = getComputedStyle(document.documentElement).getPropertyValue("--wl-fg");
+      document.body.appendChild(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      const anchors = [...document.querySelectorAll<HTMLAnchorElement>("#doc .bn-inline-content a[href]")];
+      const line = (text: string) => [...document.querySelectorAll<HTMLElement>('[data-content-type="paragraph"] .bn-inline-content')]
+        .find(node => node.textContent!.includes(text))!.getBoundingClientRect().height;
+      return {
+        // The 24px indent is the only thing that may mark a nested item.
+        guides: [...document.querySelectorAll(".bn-block-group .bn-block-group > .bn-block-outer")]
+          .map(node => getComputedStyle(node, "::before").display),
+        indents: [...document.querySelectorAll(".bn-block-group .bn-block-group")].map(node => getComputedStyle(node).marginLeft),
+        links: anchors.map(anchor => ({
+          href: anchor.href,
+          underline: getComputedStyle(anchor).textDecorationLine,
+          color: getComputedStyle(anchor).color,
+          followedBy: anchor.nextElementSibling?.className.split(" ")[0] ?? "",
+        })),
+        expected,
+        buttons: document.querySelectorAll(".z-link-copy").length,
+        wikiButtons: document.querySelectorAll(".wiki-link + .z-link-copy").length,
+        plain: line("Plain paragraph"), linked: line("See https://"),
+      };
+    });
+    expect(measured.guides).toEqual(["none", "none"]);
+    expect(measured.indents).toEqual(["24px", "24px"]);
+    expect(measured.links).toEqual([
+      { href: "https://example.com/x", underline: "underline", color: measured.expected, followedBy: "z-link-copy" },
+      { href: "mailto:a@b.com", underline: "underline", color: measured.expected, followedBy: "z-link-copy" },
+    ]);
+    // One button per external link, and a [[wiki]] link is not one.
+    expect(measured.buttons).toBe(2);
+    expect(measured.wikiButtons).toBe(0);
+    // An inline widget that changed the line box would move every following line.
+    expect(measured.linked).toBe(measured.plain);
+  }
+}, 40000);
+
+test("the copy button puts the exact href on the clipboard and writes nothing to the file", async () => {
+  await browser.defaultBrowserContext().overridePermissions(srv.base, ["clipboard-read", "clipboard-write", "clipboard-sanitized-write"]);
+  await boot(LINKED);
+  const buttons = await page.$$(".z-link-copy");
+  expect(buttons).toHaveLength(2);
+  await buttons[1]!.click();
+  await page.waitForFunction(() => document.getElementById("toast")!.classList.contains("show")
+    && document.getElementById("toastTxt")!.textContent === "Copied to clipboard");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("a@b.com");
+  // A decoration is outside the document: neither the model nor the file moved.
+  expect(await currentMarkdown()).toBe(LINKED);
+  expect(readVaultText(srv.vault, path)).toBe(LINKED);
+  await ensureMode(page, "raw", { via: "chip" });
+  expect(await page.$("#doc .z-link-copy")).toBeNull();
+  await ensureMode(page, "preview", { via: "chip" });
+  await page.waitForSelector(".z-link-copy");
+  expect(await currentMarkdown()).toBe(LINKED);
+  expect(readVaultText(srv.vault, path)).toBe(LINKED);
+}, 40000);

@@ -1,9 +1,9 @@
 /* ============================================================
    terminal.css — "Terminal / TUI": monospace everything, square corners,
-   1px hairline boxes, visible keybinds and markdown syntax markers.
+   1px hairline boxes and visible keybinds.
 
    Ported from prototypes/04-terminal.html. Almost entirely token values;
-   the box-drawing chrome, `#` heading markers, bracketed keys and CRT grain
+   the box-drawing chrome, bracketed keys and CRT grain
    cannot be expressed as single token values and live in the documented
    theme-scoped block at the bottom of this file.
 
@@ -35,7 +35,6 @@
   --h1-size: 1.62em; --h1-weight: 700; --h1-tracking: -.01em; --h1-transform: none;
   --h2-size: 1.22em; --h2-weight: 700; --h2-tracking: -.01em; --h2-transform: none;
   --h3-size: 1.05em; --h3-weight: 700; --h3-tracking: -.01em; --h3-transform: none;
-  --heading-prefix-opacity: .55;       /* consumed by the `#` markers below */
   --label-tracking: .10em;
 
   /* --- shape: a terminal has no radii ----------------------------------- */
@@ -363,8 +362,9 @@
     2 · Bracketed keys. `<kbd>` is drawn as `[⌘K]` rather than a keycap; the
         `.btn kbd` rule re-tints the two keycap overrides base ships.
     3 · Box-drawing labels. Section labels wear the prototype's `┤ … ├` ticks.
-    4 · Markdown syntax markers. Preview keeps its `#` prefixes, and h2/h3 take
-        the prototype's green/cyan heading ladder.
+    (4 was the `#` heading markers; they went with the Preview renderer that
+        drew them — ADR 0037 — and the numbers below are left where they are
+        because each labels a block that still exists.)
     5 · Prompt glyphs. The user bubble opens with `❯`, the selected palette hit
         with `❯`, and both speakers get the prototype's cyan/magenta names;
         the AI bubble keeps a magenta rail instead of a full border box.

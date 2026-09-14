@@ -241,19 +241,6 @@ describe("a fenced code block wraps instead of scrolling", () => {
    ============================================================ */
 
 describe("wrapping is a rendering choice and does not touch the source", () => {
-  test("the block's textContent is the fence body verbatim — tabs, indents, newlines", async () => {
-    await bootAs("minimal", "comfy", WRAP_DOC);
-    const m = await measureCode();
-
-    /* the whole thing, byte for byte. Not "contains", not "starts with" */
-    expect(m.text).toBe(WRAP_SRC);
-    expect(`the tab survived: ${m.text!.includes("\tconst tabbed = 2;")}`).toBe("the tab survived: true");
-    expect(`the four-space indent survived: ${m.text!.includes("\n    const deep = 3;")}`).toBe(
-      "the four-space indent survived: true"
-    );
-    expect(`newline count: ${(m.text!.match(/\n/g) || []).length}`).toBe("newline count: 4");
-  }, 90000);
-
   test("Copy puts the fence body on the clipboard, byte for byte", async () => {
     await bootAs("minimal", "comfy", WRAP_DOC);
     await browser

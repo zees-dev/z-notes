@@ -295,8 +295,8 @@ async function block() {
 /**
  * MASKED, NEVER DROPPED. A locked block renders no ciphertext, so
  * "the armor is still there" can no longer be read off the block's DOM — the
- * document MODEL is where it has to be, and Raw is that model rendered
- * verbatim. Leaves the pane back in Preview.
+ * document MODEL is where it has to be, and Source is that model rendered
+ * verbatim. Leaves the pane back in Edit.
  */
 async function armorInModel() {
   await ensureMode("raw");

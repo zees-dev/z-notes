@@ -87,7 +87,6 @@
   --h1-size: 1.95em;  --h1-weight: var(--w-bold); --h1-tracking: -.028em; --h1-transform: none;
   --h2-size: 1.28em;  --h2-weight: 660;           --h2-tracking: -.017em; --h2-transform: none;
   --h3-size: 1.08em;  --h3-weight: 640;           --h3-tracking: -.012em; --h3-transform: none;
-  --heading-prefix-opacity: 0;         /* themes may show a `#` prefix via ::before */
   --label-transform: uppercase;        /* section labels / who-said-it */
   --label-tracking: .07em;
 
@@ -2457,6 +2456,33 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    `--d-lh` above was inherited by nothing. Body copy measures the same in both
    modes only if the block wrappers take it too. */
 .doc .bn-block-outer { line-height: inherit; }
+/* NO GUIDE LINE BESIDE A NESTED ITEM. `@blocknote/react`'s styles.css draws one
+   as `border-left: 1px solid var(--bn-colors-side-menu)` on the `::before` that
+   core's Block.css positions at `left: -20px`; a nested bullet or task in this
+   app is read by its 24px indent, as it is in Source. `display` is the property
+   contested — core's own `display: inline` is the same specificity as the rule
+   below and loses on order, while react's border rule has nothing left to paint
+   on. The indent is `.bn-block-group .bn-block-group`'s margin and is untouched. */
+.doc .bn-block-group .bn-block-group > .bn-block-outer::before { display: none; }
+/* An EXTERNAL link reads like a link in Edit too — the same tokens `a.xl` uses
+   in §10, because the same URL is the same thing in both surfaces. Only
+   `a[href]`: a [[wiki]] link is `button.wiki-link` and keeps its pill. */
+.doc .bn-inline-content a[href] {
+  color: var(--wl-fg); text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+}
+.doc .bn-inline-content a[href]:hover { color: var(--accent-h); text-decoration-color: currentColor; }
+/* …and each one carries a copy button, a ProseMirror widget after the link's
+   last character (spec 0016's affordance, on the block editor's terms). Sized
+   in `em` and vertically inset so it fits inside the line box it joins: the
+   paragraph must not grow a pixel for it. */
+.z-link-copy {
+  display: inline-flex; align-items: center; vertical-align: -.1em; margin-left: .2em;
+  padding: .1em; border: 0; border-radius: var(--r-sm); background: none;
+  color: var(--muted-2); opacity: .55; cursor: pointer; line-height: 1;
+}
+.z-link-copy svg { width: .85em; height: .85em; }
+.z-link-copy:hover, .z-link-copy:focus-visible { opacity: 1; color: var(--accent); background: var(--accent-soft); }
 /* Code WRAPS, here as everywhere: a long line is content, not a reason to hide
    the rest of the block behind a horizontal scrollbar. The top padding is the
    Copy button's room. */
@@ -2488,6 +2514,8 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      viewport meta pins the scale, so iOS cannot zoom on focus) and the two
      surfaces must read at one size. BlockNote's own fields keep the floor. */
   .bn-root.bn-mantine :is(input, textarea) { font-size: max(16px, 1em); }
+  /* a thumb's target on the link copy button, the way spec 0016 gave it one */
+  .z-link-copy { padding: .25em; }
   /* Calibration may cross the reported keyboard edge and the statusbar. The
      fixed viewport bounds keep Reset reachable; zero offset leaves the mode chip
      uncovered. */

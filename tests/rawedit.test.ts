@@ -3,7 +3,7 @@
 
    `classifyLines` decides how big a source line is drawn and `linkRanges`
    decides what is coloured, so both are answers about UNTRUSTED file content
-   and both must agree with what Preview does with the same bytes. Imported
+   and both must agree with what Edit does with the same bytes. Imported
    directly (prior art: tests/markdown-inline.test.ts) — neither touches the
    DOM, so neither needs a browser.
    ============================================================ */
@@ -11,10 +11,10 @@
 import { test, expect } from "bun:test";
 import { classifyLines, linkRanges } from "../app/rawedit.js";
 
-test("a line is the size of the Preview block it would render as", () => {
+test("a line is the size of the Edit block it would render as", () => {
   const cases: [string, string[]][] = [
     ["# one\n## two\n### three", ["h1", "h2", "h3"]],
-    /* Preview renders only #–###; #### is a paragraph there and body here */
+    /* the themes size #–### only; #### is body copy in Edit and here */
     ["#### four\n#nospace\nplain", ["", "", ""]],
     ["a\n\nb", ["", "", ""]],
     /* the fence lines are code too, so ``` never grows into a heading */
@@ -32,7 +32,7 @@ test("a line is the size of the Preview block it would render as", () => {
     can check against the source line beside it */
 const spellings = (src: string) => linkRanges(src).map((r) => src.slice(r.start, r.end));
 
-test("every spelling Preview links is highlighted, and nothing else is", () => {
+test("every spelling Edit links is highlighted, and nothing else is", () => {
   const cases: [string, string[]][] = [
     ["see [[other note]] please", ["[[other note]]"]],
     ["a [text](https://example.com) b", ["[text](https://example.com)"]],

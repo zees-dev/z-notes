@@ -122,7 +122,7 @@ describe("phone — the document pane never scrolls sideways", () => {
     }
   }, 180000);
 
-  test("…in all three themes, and in Raw as well as Preview", async () => {
+  test("…in all three themes, and in Source as well as Edit", async () => {
     await page.setViewport({ width: 360, height: 800 });
     for (const theme of ["minimal", "modern", "terminal"]) {
       await app.boot("/d/wrap/all.md?theme=" + theme);
@@ -411,7 +411,7 @@ describe("phone — the sheet is a layer", () => {
   /* A phone has no ⌘E, and `#stMode` is a 30px chip in a 36px bar — so Back is
      the gesture that actually exists for "stop editing". It leaves Raw one
      press before it leaves the note. */
-  test("Back leaves Raw for Preview before it leaves the note", async () => {
+  test("Back leaves Source for Edit before it leaves the note", async () => {
     await app.boot("/");
     const before = await page.evaluate(() => location.pathname);
     await page.evaluate(() => (document.getElementById("stMode") as HTMLElement).click());
@@ -467,7 +467,7 @@ describe("phone — the sheet is a layer", () => {
     await page.evaluate(() => (document.getElementById("stMode") as HTMLElement).click());
     await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", { timeout: 8000 });
     await sleep(420);
-    expect(`and Preview gave it back: ${await standingOn()}`).toBe("and Preview gave it back: doc");
+    expect(`and Edit gave it back: ${await standingOn()}`).toBe("and Edit gave it back: doc");
   }, 90000);
 
   /* Opening a modal OVER the sheet pushes a second marker, which truncates the

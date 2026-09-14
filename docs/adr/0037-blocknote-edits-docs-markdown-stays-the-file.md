@@ -11,8 +11,7 @@ an AST bridge; [ADR 0021](0021-preview-has-one-tested-markdown-dialect.md)
 (the Preview dialect — the source adapter's supported set is the dialect
 now); [ADR 0023](0023-preview-sections-fold.md) (folds have no equivalent in
 the block editor and are gone); [ADR 0036](0036-esc-and-enter-are-a-round-trip.md)
-(Enter is typing in Edit; Esc still leaves Source); spec 0016's copy button
-after a link and spec 0019's Preview half; the committed-bundle half of
+(Enter is typing in Edit; Esc still leaves Source); spec 0019's Preview half; the committed-bundle half of
 [ADR 0010](0010-mermaid-is-a-committed-bundle.md) (the fence-is-untrusted-
 input half stands, enforced through the diagram block); and AGENTS.md's
 "zero runtime deps beyond age-encryption; no frontend build step" rule.
@@ -46,6 +45,10 @@ is ordinary Markdown files and stays one; the server never sees plaintext.
   `mantine`, `diagram-block` 0.54.2, React 19.3, Mantine 9.6 and the MDAST
   libraries are exactly pinned runtime dependencies — the one approved
   editor exception to the dependency rule. No XL or commercial package.
+  `@tiptap/core`, `prosemirror-state` and `prosemirror-view` (BlockNote's own
+  editor core) are declared at the versions BlockNote resolves, because the
+  island registers one ProseMirror widget plugin of its own: the copy button
+  after every external link, which the old Preview had (spec 0016).
 - **The island is React; the shell is not.** `app/block-editor.tsx` imports
   npm packages and `app/markdown-source.ts` only. Doc state, navigation,
   secrets and the clipboard reach it through callbacks; it never imports a
@@ -90,7 +93,7 @@ is ordinary Markdown files and stays one; the server never sees plaintext.
 
 - Gone: `app/markdown.js`, `app/mermaid.js`, the committed
   `app/vendor/mermaid.js` and its generator, click-to-edit and its setting's
-  UI, Enter-resumes-Raw, preview folds, the link copy button, the Preview
+  UI, Enter-resumes-Raw, preview folds, the Preview
   dialect map. Kept: everything about Source, the shell, vaults, uploads,
   history, WebMCP, zoom, routing, sync, AI, terminal, trash.
 - The handwritten adapter is a storage boundary, not editing behaviour;

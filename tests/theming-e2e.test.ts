@@ -22,7 +22,7 @@
 
    Density lives here too, because it is the third knob on the same surface and
    it shares the harness: the new Compact must be MEASURABLY tighter than the
-   new Comfy on real rects, and the Preview/Raw container parity must still
+   new Comfy on real rects, and the Edit/Source container parity must still
    hold in both.
    ============================================================ */
 
@@ -818,7 +818,7 @@ describe("density — the rescale is measurable, in every theme", () => {
     }
   }, 180000);
 
-  test("Preview/Raw parity survives the rescale, in every theme × density × breakpoint", async () => {
+  test("Edit/Source parity survives the rescale, in every theme × density × breakpoint", async () => {
     /* the parity gate in e2e.test.ts runs on the default theme only. The
        rescale touched all three stylesheets, and a theme that re-states a
        density token in only one of the two modes breaks parity in that theme

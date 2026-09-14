@@ -202,7 +202,7 @@ async function clickMenuItem(label: string) {
 }
 
 /* ============================================================
-   1. THE MODE LIVES IN THE STATUSBAR, AND PREVIEW IS STILL THE DEFAULT
+   1. THE MODE LIVES IN THE STATUSBAR, AND EDIT IS STILL THE DEFAULT
 
    This block used to assert that the topbar's Raw|Preview segmented control
    read left-to-right. That control is GONE: the mode is one muted, clickable
@@ -1598,7 +1598,7 @@ describe("ux — Esc unwinds one layer at a time", () => {
     expect(`after Esc #2 — chat: ${await chatOpen()}`).toBe("after Esc #2 — chat: false");
   }, 60000);
 
-  test("the palette, the context menu and Raw-to-Preview each take a press first", async () => {
+  test("the palette, the context menu and Source-to-Edit each take a press first", async () => {
     await app.clickDoc(NAV_DOC);
 
     /* the palette */
@@ -1614,7 +1614,7 @@ describe("ux — Esc unwinds one layer at a time", () => {
     await page.waitForFunction(() => (document.getElementById("ctxMenu") as HTMLElement).hidden, { timeout: 5000 });
     expect(`menu closed, chat still open: ${await chatOpen()}`).toBe("menu closed, chat still open: true");
 
-    /* Raw mode: a clean buffer exits directly to Preview. */
+    /* Source: a clean buffer exits directly to Edit. */
     await app.chord("KeyE");
     await page.waitForSelector("#rawArea", { timeout: 5000 });
     await page.click("#rawArea");
@@ -1623,7 +1623,7 @@ describe("ux — Esc unwinds one layer at a time", () => {
     );
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", { timeout: 5000 });
-    expect(`Preview active, chat still open: ${await chatOpen()}`).toBe("Preview active, chat still open: true");
+    expect(`Edit active, chat still open: ${await chatOpen()}`).toBe("Edit active, chat still open: true");
 
     /* only now does the panel go */
     await page.keyboard.press("Escape");

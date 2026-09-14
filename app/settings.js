@@ -1470,8 +1470,8 @@ function applySavedSettings(paths) {
   if (paths.indexOf("editor.tabSize") >= 0) {
     const width = String(settingAt("editor.tabSize"));
     const ta = $("#rawArea");
-    /* BOTH modes: the container is what a Preview quote's `pre-wrap` spans
-       inherit their tab width from (renderDoc), the editor element what Raw
+    /* BOTH modes: the container is what Edit's `pre-wrap` blocks inherit
+       their tab width from (renderDoc), the editor element what Source
        uses (renderRaw). */
     for (const el of [$("#doc"), ta]) if (el) el.style.tabSize = width;
     if (ta) autoGrow(ta);

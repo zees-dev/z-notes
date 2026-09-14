@@ -2,8 +2,8 @@
    rawedit-e2e.test.ts — Raw is a line editor (ADR 0032).
 
    The claim is typographic and it is only true in a real browser: a heading
-   line in Raw computes to the SAME font-size the same heading computes to in
-   Preview, and a body line to the same as a paragraph. Everything else here is
+   line in Source computes to the SAME font-size the same heading computes to
+   in Edit, and a body line to the same as a paragraph. Everything else here is
    the price of getting there — the surface is a contenteditable now, so the
    things a textarea did for free (a byte-exact `value`, Enter splitting a
    line, Backspace joining two, a paste that is plain text) are this module's
@@ -90,7 +90,7 @@ async function caretAt(pos: number) {
   }, pos);
 }
 
-describe("rawedit — a Raw line is the size of the Preview block it would render as", () => {
+describe("rawedit — a Source line is the size of the Edit block it would render as", () => {
   test("headings, body and a fenced # measure the same in both modes", async () => {
     await app.boot("/d/" + DOC);
 
@@ -146,7 +146,7 @@ describe("rawedit — a Raw line is the size of the Preview block it would rende
     expect(pageErrors).toEqual([]);
   }, 60000);
 
-  test("every spelling Preview links is highlighted in Raw, and nothing else is", async () => {
+  test("every spelling Edit links is highlighted in Source, and nothing else is", async () => {
     await openRaw();
     await sleep(200); // the highlight is coalesced into a frame
     const hl = await page.evaluate(() => {
