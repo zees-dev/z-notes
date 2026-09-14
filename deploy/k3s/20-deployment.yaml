@@ -159,12 +159,26 @@ spec:
             # set of vaults, and not `/` — so nothing outside the mount is
             # exempted the way the blunt `*` would do. Measured on the git in
             # this image (2.47) against a root-owned repo read as uid 1000.
+            #
+            # The identity rides the same channel. A sync commit needs one, and
+            # so does the rebase that replays it when origin has moved; git
+            # cannot guess one in this container (`bun@<pod>.(none)` is
+            # refused), and the vault repos carry none. The operator's own, the
+            # one every other device commits with.
             - name: GIT_CONFIG_COUNT
-              value: "1"
+              value: "3"
             - name: GIT_CONFIG_KEY_0
               value: safe.directory
             - name: GIT_CONFIG_VALUE_0
               value: /vaults/*
+            - name: GIT_CONFIG_KEY_1
+              value: user.name
+            - name: GIT_CONFIG_VALUE_1
+              value: z
+            - name: GIT_CONFIG_KEY_2
+              value: user.email
+            - name: GIT_CONFIG_VALUE_2
+              value: zees-dev@users.noreply.github.com
             # NOTE ON SECRETS: there is deliberately no GitHub token and no AI
             # key here. They live in sqlite inside a vault, entered through the
             # settings UI — the AI key in the primary's index, and each vault's

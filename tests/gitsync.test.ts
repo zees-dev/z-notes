@@ -787,6 +787,11 @@ describe("diverged origin", () => {
     "a rejected push is rebased and retried, and origin ends with both changes in linear history",
     async () => {
       const { vault, bare } = await gitVault({ origin: true });
+      /* a container's repo carries no identity and git cannot guess one there;
+         forbid the guess here too, so the rebase retry must carry the fallback */
+      await git(vault, "config", "--unset", "user.email");
+      await git(vault, "config", "--unset", "user.name");
+      await gitOk(vault, "config", "user.useConfigOnly", "true");
 
       /* the other device commits and pushes first */
       const other = await otherClone(bare!);
@@ -796,8 +801,9 @@ describe("diverged origin", () => {
       await gitOk(other, "commit", "-m", "other: inbox");
       await gitOk(other, "push", "origin", "main");
 
-      /* meanwhile this device edits a different file and syncs */
-      const srv = await serverOn(vault, 2);
+      /* meanwhile this device edits a different file and syncs, with no system
+         or global git config: this machine's carries an identity that masks the gap */
+      const srv = await serverOn(vault, 2, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" });
       const localMarkdown = "# Beta\n\nwritten on this device\n";
       expect((await srv.putDoc("notes/beta.md", localMarkdown)).status).toBe(200);
 

@@ -1401,16 +1401,22 @@ export class GitSync {
     }
   }
 
+  /**
+   * A fallback identity when git has none. The commit needs one and so does the
+   * rebase that replays it, and a container cannot guess one: without this the
+   * rebase retry fails on every divergence with "unable to auto-detect email".
+   */
+  private async identityOpts(): Promise<string[]> {
+    const email = await this.git(["config", "--get", "user.email"], { optionalLocks: false });
+    return !email.ok || !email.stdout.trim() ? ["-c", "user.name=z-notes", "-c", "user.email=z-notes@localhost"] : [];
+  }
+
   private async commit(paths: string[]): Promise<{ ok: true } | { ok: false; message: string }> {
     const shown = paths.slice(0, 3).join(", ");
     const more = paths.length > 3 ? `, +${paths.length - 3} more` : "";
     const message = `sync: ${new Date().toISOString()} · ${paths.length} file(s): ${shown}${more}`.slice(0, 400);
 
-    const prefix: string[] = ["-c", "commit.gpgsign=false"]; // a pinentry prompt would hang the daemon
-    const email = await this.git(["config", "--get", "user.email"], { optionalLocks: false });
-    if (!email.ok || !email.stdout.trim()) {
-      prefix.push("-c", "user.name=z-notes", "-c", "user.email=z-notes@localhost");
-    }
+    const prefix = ["-c", "commit.gpgsign=false", ...(await this.identityOpts())]; // a pinentry prompt would hang the daemon
     /* Deliberately a bare index commit, NOT `--only <paths>`: the pipeline's
        contract is "the staged set IS the commit", and two of its own staged
        changes are ones `--only` cannot express — guardIndexDb's `rm --cached`
@@ -1528,11 +1534,7 @@ export class GitSync {
       return skip(this.cleanMessage(gitMessage(add.stderr, add.stdout, `git add failed (exit ${add.code})`)));
     }
 
-    const prefix: string[] = ["-c", "commit.gpgsign=false"];
-    const email = await this.git(["config", "--get", "user.email"], { optionalLocks: false });
-    if (!email.ok || !email.stdout.trim()) {
-      prefix.push("-c", "user.name=z-notes", "-c", "user.email=z-notes@localhost");
-    }
+    const prefix = ["-c", "commit.gpgsign=false", ...(await this.identityOpts())];
     /* `--only <paths>` so an unrelated staged change cannot ride along: the
        promise "one commit per proposal" has to be literally true for
        `git revert <sha>` to be a clean inverse (research §5). An alias rename
@@ -1735,7 +1737,7 @@ export class GitSync {
        consequence of getting it wrong is a hard reset of the user's tree) */
     const rebaseWasRunning = await this.rebaseInProgress();
     const pull = await this.git(
-      [...this.transportOpts(), "-c", "rebase.autoStash=false", "pull", "--rebase", "origin", obs.branch],
+      [...this.transportOpts(), ...(await this.identityOpts()), "-c", "rebase.autoStash=false", "pull", "--rebase", "origin", obs.branch],
       { token }
     );
     if (!pull.ok) {
