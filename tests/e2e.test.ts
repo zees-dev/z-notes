@@ -67,7 +67,15 @@ afterAll(async () => {
    at call time, which is what the local copies existed to do. */
 const chord = (code: string) => pressChord(page, code);
 const mode = () => docMode(page);
-const ensureMode = (want: "raw" | "preview") => setMode(page, want);
+/* Edit mounts ASYNCHRONOUSLY (lazy `import("/vendor/editor.js")` + its
+   stylesheet), so `raw-mode` leaving the class list is not yet a document that
+   can be measured. Every "now read the doc" below goes through here. */
+const ensureMode = async (want: "raw" | "preview") => {
+  await setMode(page, want);
+  if (want === "preview") await page.waitForSelector(EDIT_BLOCK, { timeout: 20000 });
+};
+/** the first painted block of the visual editor — the island's own text box */
+const EDIT_BLOCK = "#doc .bn-editor .bn-block-content";
 const clickSettings = (sel: string) => clickWhenHittable(page, sel);
 
 const PARITY_PROPS = [
@@ -120,14 +128,11 @@ async function measureDocContainer() {
     const round = (n: number) => Math.round(n * 100) / 100;
 
     const raw = d.querySelector("#rawArea") as HTMLElement | null;
-    /* Preview: the first thing after the meta line, descended to the first
-       block that actually carries text — `.md > h1`, not `.md`. */
-    let previewFirst: Element | null = null;
-    if (!raw) {
-      const meta = d.querySelector(".doc-meta");
-      previewFirst = meta ? meta.nextElementSibling : d.firstElementChild;
-      while (previewFirst && previewFirst.firstElementChild) previewFirst = previewFirst.firstElementChild;
-    }
+    /* Edit: the first block the island painted. NOT `firstElementChild`
+       descended — BlockNote injects a `<style>` element as the host's first
+       child, and its rect is 0x0 at the container's origin, which would make
+       every parity reading below a measurement of the container again. */
+    const previewFirst = raw ? null : d.querySelector(".bn-editor .bn-block-content");
     const target = (raw as Element | null) ?? previewFirst;
     let text: { x: number; y: number } | null = null;
     if (target) {
@@ -243,7 +248,7 @@ describe("e2e — navigation", () => {
 });
 
 describe("e2e — ⌘E and container parity", () => {
-  test("⌘E toggles Preview ↔ Raw and Raw shows the exact on-disk source", async () => {
+  test("⌘E toggles Edit ↔ Source and Source shows the exact on-disk source", async () => {
     expect(await mode()).toBe("preview");
 
     await chord("KeyE");
@@ -253,15 +258,16 @@ describe("e2e — ⌘E and container parity", () => {
     /* the mode control is the STATUSBAR chip now (it left the topbar); what it
        must still say is which mode you are in, in `data-mode` and in words */
     expect(await page.$eval("#stMode", (b) => b.getAttribute("data-mode"))).toBe("raw");
-    expect(await page.$eval("#stModeTxt", (b) => b.textContent)).toBe("Raw");
+    expect(await page.$eval("#stModeTxt", (b) => b.textContent)).toBe("Source");
 
     await chord("KeyE");
     await page.waitForFunction(() => !document.getElementById("doc")!.classList.contains("raw-mode"), {
       timeout: 5000,
     });
+    await page.waitForSelector(EDIT_BLOCK, { timeout: 20000 });
     expect(await page.$("#rawArea")).toBe(null);
     expect(await page.$eval("#stMode", (b) => b.getAttribute("data-mode"))).toBe("preview");
-    expect(await page.$eval("#stModeTxt", (b) => b.textContent)).toBe("Preview");
+    expect(await page.$eval("#stModeTxt", (b) => b.textContent)).toBe("Edit");
     expect(await page.$eval("#doc h1", (h) => h.textContent)).toBe("Event pipeline");
   }, 25000);
 
@@ -684,11 +690,13 @@ describe("e2e — editing", () => {
   }, 40000);
 
   test("an external file edit reaches the UI over SSE while the buffer is clean", async () => {
-    await ensureMode("preview");
+    /* clean FIRST, then the mode: ⌘E on a dirty buffer is a guarded exit, not
+       a mode switch */
     await page.waitForFunction(
       () => document.getElementById("saveTxt")!.textContent !== "Unsaved changes",
       { timeout: 8000 }
     );
+    await ensureMode("preview");
 
     const marker = "EXTERNAL-EDIT-" + Date.now();
     const next = `# Event pipeline\n\nRewritten by vim.\n\n${marker}\n`;
@@ -829,7 +837,11 @@ describe("e2e — ⌘K palette", () => {
       HOMELAB
     );
     expect(await page.evaluate(() => document.getElementById("palVeil")!.classList.contains("show"))).toBe(false);
-    expect(await page.evaluate(() => document.getElementById("doc")!.textContent ?? "")).toContain("QUOKKA");
+    /* the island mounts asynchronously after the doc is routed */
+    await page.waitForFunction(
+      () => (document.querySelector(".bn-editor")?.textContent ?? "").includes("QUOKKA"),
+      { timeout: 20000 }
+    );
   }, 30000);
 
   test("Esc dismisses the palette", async () => {

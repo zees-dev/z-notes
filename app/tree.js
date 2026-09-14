@@ -9,12 +9,11 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, I, apiFail, clearStickyToast, dirname, dragHasFiles, el, esc, normTarget, relOf, syncDotClass, toast, vaultOf, vaultPrefix, vaultRootKey, withDefaultExtension } from "./ui.js";
-import { cells } from "./markdown.js";
+import { $, $$, I, apiFail, dirname, dragHasFiles, el, esc, normTarget, relOf, syncDotClass, toast, vaultOf, vaultPrefix, vaultRootKey, withDefaultExtension } from "./ui.js";
 import { confirmDialog } from "./dialogs.js";
 import { refreshTrash, trashRetentionNote } from "./trash.js";
-import { flushTextRun, guardRawExit, navGate, openDoc, renderDoc, saveDoc, setBaseline, setMode, setSaveIndicator } from "./editor.js";
-import { app, isDrawer, openFirstDoc, openNav, revealInTree } from "./shell.js";
+import { flushTextRun, guardRawExit, navGate, openDoc, saveDoc, setMode } from "./editor.js";
+import { app, isDrawer, openNav, revealInTree } from "./shell.js";
 import { recordHistory } from "./history.js";
 
 /* ============================================================
@@ -40,8 +39,7 @@ const guideX = (parentDepth) => rowPad(parentDepth) + 7 + "px";
 
 /* ---------- disclosure memory ----------
 
-   Which rows are open is a VIEW CHOICE, remembered per browser: the twin of
-   Preview's fold store one pane over (`znotes.folds`, ADR 0023). The server's
+   Which rows are open is a VIEW CHOICE, remembered per browser. The server's
    `folders.open` column only ever SEEDS a folder open and nothing here writes
    a close back to it, so without this store every reload reopened every folder
    the user had collapsed.
@@ -100,8 +98,7 @@ function setOpen(kind, key, open) {
 }
 
 /** Drop what the freshly indexed tree no longer has, so a renamed or deleted
-    folder ages out instead of accumulating. Its disclosure goes with it, the
-    same honest reading a renamed doc's folds get. */
+    folder ages out instead of accumulating. Its disclosure goes with it. */
 function pruneOpenStore(folders) {
   const store = loadOpenStore();
   const live = { folders, vaults: new Set(state.vaults.map((v) => v.id)) };
@@ -128,7 +125,8 @@ function indexTree(nodes, seen, bySlug, folders) {
       if (list) list.push(n.path);
       else bySlug.set(slug, [n.path]);
       const prev = state.docs.get(n.path);
-      state.docs.set(n.path, Object.assign({ markdown: "", rev: null, loaded: false }, prev || {}, n));
+      // The doc OBJECT must survive a tree reload: editor callbacks and in-flight saves hold it.
+      state.docs.set(n.path, Object.assign(prev || { markdown: "", rev: null, loaded: false }, n));
     }
   });
 }
@@ -1370,8 +1368,8 @@ async function moveEntry(node, to, opts) {
  * The broken-link behaviour is unchanged: a rename rewrites
  * every `[[link]]` that resolved to the doc, a delete rewrites none, because
  * the broken link is the record that something used to be there. It is simply
- * no longer restated in front of every delete — the preview flags each one
- * where it actually is.
+ * no longer restated in front of every delete — Edit flags each one where it
+ * actually is.
  */
 function askDelete(path, kind) {
   const n = kind === "folder" ? [...state.docPaths].filter((p) => p.indexOf(path + "/") === 0).length : 0;
@@ -1488,9 +1486,9 @@ function neighbourDoc(path) {
 /* ============================================================
    FILE-OPERATION UNDO (⌘Z / ⌘⇧Z outside a text surface)
 
-   Raw and file operations share the app-owned timeline (ADR 0014). Outside a
-   text surface — the tree, the preview pane, nothing focused — the next entry
-   may be a FILE operation, and that is what ⌘Z should take back. A delete
+   Source and file operations share the app-owned timeline (ADR 0014). Outside
+   a text surface — the tree, nothing focused — the next entry may be a FILE
+   operation, and that is what ⌘Z should take back. A delete
    undoes to a restore; a create undoes to a delete; a move undoes through the
    same move transaction with its paths reversed.
 

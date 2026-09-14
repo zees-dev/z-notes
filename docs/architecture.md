@@ -7,9 +7,10 @@ code disagree, the code is right — fix this file in the same change.
 ## Runtime topology
 
 One Bun process (`server/index.ts`). It serves `app/` as plain files, the JSON
-API under `/api/*`, the SSE bus at `/events`, and an in-memory `Bun.build`
-bundle of `age-encryption` at `/vendor/age.<hash>.js` (entry:
-`server/age-entry.js`). State lives in the vault directory (`$ZNOTES_VAULT`):
+API under `/api/*`, the SSE bus at `/events`, and two in-memory `Bun.build`
+bundles: `age-encryption` at `/vendor/age.<hash>.js` (entry:
+`server/age-entry.js`) and the editor island at `/vendor/editor/*` (entry:
+`app/block-editor.tsx`, aliased as `/vendor/editor.js` + `.css`; ADR 0037). State lives in the vault directory (`$ZNOTES_VAULT`):
 visible, extension-bearing UTF-8 files (source of truth; ADR 0019),
 `.znotes/settings.toml` (committed),
 `.znotes/index.db` (sqlite cache + credentials, never committed),
@@ -74,24 +75,37 @@ class they don't fully use. `GitSyncDeps` is the original model.
 
 ## Frontend modules
 
-No build step; ES modules served as-is. Two tiers, enforced by lint:
+ES modules served as-is, plus one React island the server bundles at boot
+(ADR 0037). Two tiers, enforced by lint:
 
 - **Leaves** — `state.js` (the one shared-state object), `ui.js` (DOM helpers,
   icons), `api.js` (the only file that opens a socket), `dialogs.js` (all
   modals; feature callbacks injected via `wireDialogs()` from `app.js`),
-  `armor.js`, `entropy.js`, `crypto-worker.js` (the plaintext jail). Leaves
-  import only leaves.
-- **Features** — `tree, editor, markdown, rawedit, secrets, chat, terminal,
+  `armor.js`, `entropy.js`, `crypto-worker.js` (the plaintext jail),
+  `markdown-source.ts` (the source adapter). Leaves import only leaves.
+- **The island** — `block-editor.tsx`: the BlockNote editor (Edit), React,
+  TypeScript, bundled by `server/index.ts` at boot and loaded lazily by
+  `editor.js` from `/vendor/editor.js`. It imports npm packages and
+  `markdown-source.ts` only; `mountEditor(host, options)` takes callbacks
+  (`onChange`, `onSource`, `renderSecret`, `resolveWikiLink`, `onWikiLink`,
+  `copyText`) and returns a controller (`setMarkdown`, `revealLine`,
+  `anchorLine`, `getSecrets`, `replaceSecret`, `destroy`). The adapter
+  (`SourceSession`) owns format conversion: top-level MDAST groups with byte
+  ranges, untouched groups verbatim, edited groups through the standard
+  serialiser, protected blocks for what it cannot edit, ciphertext blocks for
+  age fences. Editing behaviour is BlockNote's; the shell never sees a block.
+- **Features** — `tree, editor, rawedit, secrets, chat, terminal,
   trash, settings, shell, webmcp, zoom, keybar`, composed by `app.js`
   (`start()`). These are mutually entangled (14 mutual import pairs, a legacy
   of the single-file split); new cross-feature needs should go through
   `state.js`, an injected callback, or a DOM event rather than adding pairs.
   No `export let` anywhere in `app/`.
-  `mermaid.js` is deliberately the cleanest: `markdown.js` imports it, it
-  imports `ui.js` and nothing else, and it owns its own theme observer rather
-  than making `settings.js` learn about diagrams (ADR 0010). `rawedit.js` is a
+  `editor.js` owns the doc lifecycle for BOTH surfaces: `renderDoc` mounts
+  the island (Edit) or `rawedit.js` (Source) into `#doc`, holds the disk
+  baseline, the exit guard, autosave and the CAS save keyed by the doc object
+  (so a move mid-save follows the doc). `rawedit.js` is a
   leaf of a FEATURE rather than a peer of one: `ui.js` in, `editor.js` its only
-  importer. It builds the Raw surface, a `contenteditable` with one block per
+  importer. It builds the Source surface, a `contenteditable` with one block per
   source line so a heading is drawn at the heading's size and a link in the
   link's colour (ADR 0032), behind the textarea's own vocabulary (`value`,
   `selectionStart`, `setSelectionRange`, `input`/`select`/`copy`/`cut`) plus
@@ -104,27 +118,29 @@ No build step; ES modules served as-is. Two tiers, enforced by lint:
   and every button calls the function its missing chord calls. What it owns is
   the CONDITION `raw-focus` on `#app`, which with `wireVisualViewport`'s
   `kb-up` is what base.css §8a draws the bar on, and `--keybar`, the bar's
-  measured height, which `revealRawCaret` subtracts alongside `--kb`.
-- **Static, not modules** — `index.html`, `themes/*.css`, `manifest.json`,
-  `icons/*.png` and `vendor/mermaid.js`. All are written by GENERATORS run by
-  hand and committed, never by a build step: `scripts/make-icons.ts` draws the
-  icons when the mark changes (ADR 0007), `scripts/build-mermaid.ts` bundles
-  mermaid when its pinned version changes (ADR 0010). Nothing at runtime
-  builds either. `/vendor/` is the one URL prefix with two answers behind it:
-  `age.<hash>.js` is built in memory at boot and has no file, everything else
-  is an ordinary file under `app/vendor/`.
+  measured height, which `revealRawCaret` subtracts alongside `--kb`. Edit has
+  its own phone toolbar inside the island (Bullet, Numbered, Checklist,
+  Outdent, Indent, and a ⋯ position calibration), docked on
+  `--visual-bottom`, the visible viewport's bottom edge that
+  `wireVisualViewport` publishes beside `--kb`.
+- **Static, not modules** — `index.html`, `themes/*.css`, `manifest.json`
+  and `icons/*.png`. The icons are GENERATOR output run by hand and committed
+  (`scripts/make-icons.ts`, ADR 0007), never a build step. `/vendor/` is the
+  one URL prefix answered from memory: `age.<hash>.js` and `editor/*` are
+  built at boot and have no file; anything else under it would be an ordinary
+  file in `app/vendor/` (there is none today).
 
 **Where the frontend's state lives.** `state.js` holds all of it. Two entries
 are VIEW choices the server has no opinion about, so each is mirrored per
-browser in `localStorage` by its one writer: `state.folds` → `znotes.folds`
-(Preview's collapsed sections, markdown.js, ADR 0023) and
+browser in `localStorage` by its one writer:
 `state.folderOpen`/`state.vaultOpen` → `znotes.tree-open` (folder and vault-row
-disclosure, tree.js, [spec 0012](specs/done/0012-folder-disclosure-persists.md)).
-Both write through on a user action only: seeding reads, and so does a reveal (`revealFolder`
+disclosure, tree.js, [spec 0012](specs/done/0012-folder-disclosure-persists.md))
+writes through on a user action only: seeding reads, and so does a reveal (`revealFolder`
 opens a doc's ancestors in `state` alone, because opening a doc is not a choice
-about the folder). Both age their keys out rather than accumulating, the folds
-by a document cap and the tree by pruning to the tree that just loaded, and
-both treat an unreadable store as no memory rather than an error.
+about the folder), prunes to the tree that just loaded, and treats an
+unreadable store as no memory rather than an error. The island keeps one
+value of its own, `znotes.toolbarOffset` — the phone toolbar's calibrated
+offset in px, written by its ⋯ controls, clamped on read, and never synced.
 
 **The look, resolved before the first paint.** Four axes are cached in
 `localStorage` and applied by the inline script at the top of `app/index.html`,
@@ -169,7 +185,7 @@ re-issued if the user says leave):
 
 | Surface | Gate | Raised by |
 |---|---|---|
-| a Raw buffer that differs from disk | `guardRawExit` (editor.js) | ⌘E, the mode chip, a click on the pane, Esc, `openDoc`, `openSettings`, Back |
+| a doc buffer (Edit or Source) that differs from disk, or a dirty revealed secret | `guardRawExit` (editor.js) | ⌘E, the mode chip, Esc, `openDoc`, `openSettings`, Back |
 | the settings page's unsaved draft | `guardSettingsExit` (settings.js) | the header Back button, `openDoc`, Back |
 
 The Raw gate's presentation is policy (ADR 0022):
@@ -178,14 +194,15 @@ keeps the same gate and pending destination but saves first and proceeds only
 after the write lands. The Settings-draft guard is separate and unaffected.
 
 Below them, Back also unwinds the layers that cover the document — the veils
-(`dismissTop`), then the assistant while it is an overlay, then Raw→Preview on
+(`dismissTop`), then the assistant while it is an overlay, then Source→Edit on
 a phone. `shell.js onPop` is the one place that order is written down.
 
 ## Tests as the enforcement layer
 
 The suite is black-box first: `tests/helpers.ts` boots the real server per
-test, `tests/browser.ts` drives real Chromium. `markdown-e2e.test.ts` is the
-one broad Preview-dialect map (ADR 0021). Four tests enforce structure
+test, `tests/browser.ts` drives real Chromium. The adapter's byte contract
+is held twice: `markdown-source.test.ts` on the pure module and the round-trip
+corpus driven through the real editor in `block-editor-e2e.test.ts`. Four tests enforce structure
 as source-text assertions (see `docs/style.md` gotchas): the no-crypto-import
 rule, the AI-has-no-delete rule, the `OPS` operation set, and the tool
 catalogue's own no-secrets rule (ADR 0031). Direct unit

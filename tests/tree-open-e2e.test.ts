@@ -4,7 +4,7 @@
    Disclosure is a VIEW choice: the server's `folders` table only ever seeds a
    folder OPEN and the client never writes a close back, so before this the
    tree reopened everything on every reload. It is now mirrored per browser in
-   `znotes.tree-open`, the twin of Preview's `znotes.folds` (ADR 0023), which
+   `znotes.tree-open` (spec 0012), which
    is why this needs a real browser: the claims are that the row came back
    closed and that localStorage was left holding the reason.
 

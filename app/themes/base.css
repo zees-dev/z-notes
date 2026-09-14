@@ -70,7 +70,6 @@
   --code-inline-fg: #b3245c;
   --code-inline-bg: var(--panel-3);
   --code-inline-bd: rgba(16, 20, 40, .05);
-  --hover-tint: rgba(20, 22, 28, .04); /* click-to-edit block hover */
   --scrim-bg: rgba(18, 22, 40, .34);
 
   /* --- typography --- */
@@ -306,7 +305,6 @@
   --scroll-thumb-hover: #49515f;
   --code-inline-fg: #f28bb4;
   --code-inline-bd: rgba(255, 255, 255, .07);
-  --hover-tint: rgba(255, 255, 255, .05);
   --scrim-bg: rgba(4, 6, 10, .58);
 
   /* --- elevation: dark UI gets its depth from shadow AND a lit hairline --- */
@@ -958,7 +956,7 @@ kbd {
    the gesture before the handler saw it. */
 .scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; position: relative; touch-action: pan-x pan-y; }
 
-/* Preview and Raw render into this exact element with byte-identical box
+/* Edit and Source render into this exact element with byte-identical box
    metrics and the same scroll container. `.raw-mode` is a state hook only:
    it must never change chrome or layout. */
 .doc {
@@ -969,11 +967,9 @@ kbd {
      statusbar, sidebar, chat, `.doc-meta` — sets its own size and stays put.
      Only the px tokens in §7 have to multiply by hand. */
   font-size: calc(var(--d-font) * var(--doc-zoom, 1));
-  /* Keep a useful pane-sized click target without making that blank space part
-     of the editor. For a short Raw note, the editor ends with its actual
-     content and the remainder belongs to `.doc`, so "click outside" can mean
-     outside the markdown rather than outside an invisible 46vh field.
-     This lives on the shared container to preserve Preview/Raw parity. */
+  /* Both modes keep a useful document measure: a short note ends with its own
+     content and the remainder belongs to `.doc`, on the shared container so the
+     two modes cannot differ by it. */
   min-height: min(46vh, 480px);
   padding: var(--d-doc-pad) var(--doc-pad-x) var(--doc-pad-bottom) var(--doc-pad-x);
   border: 0; background: transparent; border-radius: 0; box-shadow: none;
@@ -983,32 +979,27 @@ kbd {
 .doc.fade-in { animation: docin .3s var(--ease); }
 @keyframes docin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-/* ONE LINE, in both modes.
-
-   This row used to be the only thing in the document column whose CONTENT
-   differed between Preview and Raw — it carried a `.mode-note` that was longer
-   in Raw — so a row allowed to reflow was a row taller in one mode than the
-   other, and everything below it (i.e. the document itself) shifted on every
-   ⌘E while `#doc` never moved. Measured at 720px in the mono theme: dy=13px,
-   invisible to a parity gate that only measures the container. The note is
-   gone (see renderDoc) and the row is now identical in both modes by
-   construction; `white-space: nowrap` stays, because the PATH can be long
-   enough to wrap this row on its own. */
+/* ONE LINE, in both modes: a row allowed to reflow is a row taller in one mode
+   than the other, and everything below it — the document itself — then shifts on
+   every ⌘E while `#doc` never moves (measured at 720px in the mono theme when
+   this row still carried a per-mode note: dy=13px, invisible to a parity gate
+   that only measures the container). `white-space: nowrap` is what holds it to
+   one line, because the PATH can be long enough to wrap it on its own. */
 .doc-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 11.5px; color: var(--muted-2); font-weight: 500; font-family: var(--font); white-space: nowrap; }
 .doc-meta .tag { font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: var(--r-pill); background: var(--panel-3); color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
-/* `.seg.mode` — the topbar Raw|Preview segmented control — is gone. The mode is
+/* `.seg.mode` — the topbar Edit|Source segmented control — is gone. The mode is
    the statusbar's `#stMode` chip now; see §8. `.seg` itself stays: settings
    still uses it for theme, density and colour scheme. */
 
-/* raw markdown surface — chromeless inside the shared container.
+/* the Source surface — chromeless inside the shared container.
 
-   A LINE IS THE SIZE OF THE PREVIEW BLOCK IT WOULD RENDER AS (ADR 0032). The
-   editor is a contenteditable with one `.ln` per source line, so `font-size`
-   INHERITS the document size, the one `.md p` gets, which is what stops ⌘E and
-   click-to-edit resizing the note; a `#`/`##`/`###` line takes the size,
-   weight, tracking and leading `.md h1/h2/h3` take. The FAMILY stays mono, and
-   `--font-raw` is the one knob a theme needs to opt out. */
+   A LINE IS THE SIZE OF THE BLOCK IT WOULD RENDER AS (ADR 0032). The editor is
+   a contenteditable with one `.ln` per source line, so `font-size` INHERITS the
+   document size, which is what stops ⌘E resizing the note; a `#`/`##`/`###`
+   line takes the size, weight, tracking and leading its heading takes. The
+   FAMILY stays mono, and `--font-raw` is the one knob a theme needs to opt
+   out. */
 .raw {
   display: block; width: 100%; min-height: 0; position: relative;
   border: 0; border-radius: 0; background: transparent; box-shadow: none;
@@ -1022,9 +1013,9 @@ kbd {
 .raw .ln.h1 { font-size: var(--h1-size); line-height: 1.2;  font-weight: var(--h1-weight); letter-spacing: var(--h1-tracking); color: var(--text); }
 .raw .ln.h2 { font-size: var(--h2-size); line-height: 1.32; font-weight: var(--h2-weight); letter-spacing: var(--h2-tracking); color: var(--text); }
 .raw .ln.h3 { font-size: var(--h3-size); line-height: 1.4;  font-weight: var(--h3-weight); letter-spacing: var(--h3-tracking); color: var(--text); }
-/* `--h*-transform` is deliberately NOT copied from `.md h1/h2/h3`: a theme that
-   uppercases a rendered heading must not uppercase the SOURCE, which would show
-   the file saying something it does not say. */
+/* `--h*-transform` is deliberately NOT copied from the heading rules in Edit: a
+   theme that uppercases a rendered heading must not uppercase the SOURCE, which
+   would show the file saying something it does not say. */
 .raw.no-wrap { white-space: pre; overflow-x: auto; overflow-y: hidden; }
 /* the placeholder is drawn, not typed: `data-placeholder` is a real attribute
    on a real element, so nothing in the buffer says it is there */
@@ -1036,206 +1027,15 @@ kbd {
    browser without `CSS.highlights` shows plain text. */
 ::highlight(raw-link) { color: var(--accent); text-decoration: underline; text-decoration-color: var(--accent); }
 
-/* ---------- rendered markdown ---------- */
-/* THE DOCUMENT NEVER SCROLLS SIDEWAYS EITHER.
-   The `.code pre` rule below has said so for code since the start; the prose
-   around it had no wrap rule at all, and `.scroll` computes `overflow-x: auto`,
-   so an ordinary note containing a URL made the whole document pane pannable.
-   MEASURED at 360x800 on `#scroll.scrollWidth - clientWidth`: a bare URL in a
-   paragraph 243px, a long unbroken word 325px, an inline `code` span 387px, a
-   blockquote 260px — with `document.documentElement` overflow at 0px in every
-   one of them, which is why every body-level gate read clean. Swiping right
-   took the H1 and the left edge of every paragraph off screen.
-
-   Same pattern the code block uses and for the same reason: `anywhere` breaks
-   inside a token only when that token alone cannot fit the column, and
-   `word-break: normal` keeps ordinary prose breaking at spaces. `code.ic` is
-   listed separately because it is inline-level and inherits neither. */
-.md { overflow-wrap: anywhere; word-break: normal; }
-code.ic { overflow-wrap: anywhere; word-break: normal; }
-/* Block rhythm. These have to out-specify the per-element `margin: 0` resets
-   below (.md p / .md ul / .md blockquote are (0,1,1)), so they are written as
-   :not(:first-child) rather than the adjacent-sibling form — (0,2,0) wins. */
-.md > :not(:first-child) { margin-top: var(--d-blk-gap); }
-.md h1, .md h2, .md h3 { margin: 0; color: var(--text); font-family: var(--font-heading); }
-.md h1 { font-size: var(--h1-size); line-height: 1.2; font-weight: var(--h1-weight); letter-spacing: var(--h1-tracking); text-transform: var(--h1-transform); }
-.md h2 { font-size: var(--h2-size); line-height: 1.32; font-weight: var(--h2-weight); letter-spacing: var(--h2-tracking); text-transform: var(--h2-transform); }
-.md h3 { font-size: var(--h3-size); line-height: 1.4; font-weight: var(--h3-weight); letter-spacing: var(--h3-tracking); text-transform: var(--h3-transform); }
-.md > h2:not(:first-child) { margin-top: var(--d-sec-gap); }
-.md > h3:not(:first-child) { margin-top: calc(var(--d-sec-gap) * .7); }
-.md > :is(h1, h2, h3) + :not(.bgap) { margin-top: calc(var(--d-blk-gap) * .7); }
-
-/* blank-line surplus (amendment 13) — one blank line is the ordinary block
-   separator; every additional one buys a body line-box, emitted as .bgap so
-   the source's vertical rhythm survives into Preview. Height comes from the
-   density vars, so Compact and Comfy scale with everything else. It carries no
-   [data-line], so click-to-edit reads a click here as whitespace. */
-.md > .bgap { margin-top: 0; pointer-events: none; }
-
-.md p { margin: 0; line-height: var(--d-lh); color: var(--text-2); }
-.md strong { color: var(--text); font-weight: 640; }
-.md em { color: var(--text-2); font-style: italic; }
+/* ---------- inline Markdown in chat ---------- */
+/* `inline()` (ui.js) renders assistant messages, so the document's inline
+   vocabulary outlives the deleted Preview renderer: a code span, a [[link]]
+   pill, an external link and emphasis. `overflow-wrap: anywhere` because a
+   code span is inline-level and inherits no wrap rule of its own. */
+code.ic { overflow-wrap: anywhere; word-break: normal; font-family: var(--mono); font-size: .855em; padding: .12em .4em; border-radius: var(--r-sm); background: var(--code-inline-bg); color: var(--code-inline-fg); border: var(--bd-w) var(--bd-style) var(--code-inline-bd); }
 .bubble em { font-style: italic; }
-.md del, .bubble del { text-decoration: line-through; }
-code.ic { font-family: var(--mono); font-size: .855em; padding: .12em .4em; border-radius: var(--r-sm); background: var(--code-inline-bg); color: var(--code-inline-fg); border: var(--bd-w) var(--bd-style) var(--code-inline-bd); }
-
-.md ul { margin: 0; padding: 0; list-style: none; }
-.md li + li { margin-top: var(--d-list-gap); }
-.md li.bul, .md li.ord { display: flex; flex-wrap: wrap; gap: 0 10px; line-height: var(--d-lh); color: var(--text-2); }
-.md li.bul::before { content: ""; flex: 0 0 auto; width: var(--bullet-size); height: var(--bullet-size); border-radius: var(--bullet-radius); background: var(--bullet-bg); margin-top: calc(var(--d-lh) * .5em - 2px); }
-/* Depth reads off the bullet itself: FILLED at the top level, HOLLOW one level
-   down, and alternating from there. The ring is an inset shadow rather than a
-   border so the dot's box — and the text beside it — does not move a pixel
-   between levels. Enumerated because CSS cannot count: descendant selectors
-   mean "at least this deep", so each level overrides the one above it by
-   specificity, and past six the last one holds. Shape stays the theme's
-   (`--bullet-radius`), so a square bullet alternates square. */
-.md ul ul li.bul::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bullet-bg); }
-.md ul ul ul li.bul::before { background: var(--bullet-bg); box-shadow: none; }
-.md ul ul ul ul li.bul::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bullet-bg); }
-.md ul ul ul ul ul li.bul::before { background: var(--bullet-bg); box-shadow: none; }
-.md ul ul ul ul ul ul li.bul::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bullet-bg); }
-.md li.ord > .li-marker { flex: 0 0 auto; min-width: 2ch; text-align: right; color: var(--muted); font-family: var(--mono); }
-.md li > .tx { flex: 1 1 0; min-width: 0; }
-/* a quoted item (`- > said`): the quote IS the item's text, so the bullet's own
-   gap is the whole inset (spec 0019) */
-.md li > .tx > blockquote { margin: 0; }
-/* A nested source indent becomes a nested DOM list instead of another
-   top-level sibling. `flex-basis:100%` puts the child hierarchy below the
-   parent row even though bullet/task rows use flex for their marker. */
-.md li > ul { flex: 0 0 100%; width: 100%; padding-left: calc(var(--bullet-size) + 10px); margin-top: var(--d-list-gap); }
-
-/* ---- FOLD: the outline disclosure in Preview (ADR 0023) ----
-
-   The chevron sits in the LEFT gutter, and this is the one control in the app
-   that earns a left seat against docs/style.md's right-alignment rule:
-   DISCLOSURE READS FROM THE OUTLINE'S SPINE. It folds what is below-left of
-   it, and a heading is a full-width line — a control parked at the right edge
-   would sit nowhere near the thing it acts on, and would land a different
-   distance from it on every heading in the document.
-
-   The button is an INVISIBLE OVERLAY OF ITS OWNER (`inset: 0`) and draws
-   nothing itself; both of its pseudo-elements do the work out in the gutter.
-   That shape is deliberate and load-bearing, in three ways:
-
-     · nothing is added to the flow — the `.rowacts` bargain — so a heading and
-       a list item keep every metric they had, and the per-line rects
-       `linebreaks-e2e` measures see a document that has not moved;
-     · the button's own box is exactly its owner's box, so the walk that finds
-       the document's first text box by descending `firstElementChild` (the
-       Preview/Raw origin parity in `tests/e2e.test.ts` and `theming-e2e`)
-       lands on a rectangle identical to the one it landed on before;
-     · `pointer-events: none` hands every click on the heading straight back to
-       click-to-edit; only `::before`, the gutter pad, takes any.
-
-   The glyph is drawn in CSS rather than being an <svg> child for the second of
-   those reasons: an icon element would be a child with a box of its own, and
-   that walk would find IT.
-
-   Every chevron sits on ONE SPINE: the page gutter, at the same x for a
-   heading and for a list item four levels deep. A per-owner gutter would put a
-   nested item's chevron in the middle of the content column, one pixel from
-   the parent's bullet, where it reads as a stray mark rather than a control.
-   The indent of a list level is a CSS constant (`.md li > ul`'s padding), so
-   `--fold-depth` — the one number the renderer supplies — is all it takes to
-   reach the spine from any depth.
-
-   The pad spans from the spine all the way to the owner's left edge, and the
-   gutter half of it never crosses the pane's own padding at the narrowest
-   width in any theme (a chevron that pushed the document sideways would be a
-   horizontal scrollbar on a phone). Bridging the indent is what keeps a
-   hover-revealed target reachable: there is no dead strip between the text
-   and the control, since the pointer leaving the owner for a single pixel
-   would take the pad away before it could be pressed. */
-.md :is(h1, h2, h3), .md li { position: relative; }
-/* The FIRST line box of each owner — the strip the chevron is centred on, so a
-   heading that wraps keeps its chevron beside the line it folds from. These
-   mirror the line-heights declared for each rank above; a list item uses the
-   body line box. Local to these rules, not a theme token: nothing outside this
-   block reads it. */
-.md h1 { --fold-h: 1.2em; }
-.md h2 { --fold-h: 1.32em; }
-.md h3 { --fold-h: 1.4em; }
-.md li { --fold-h: calc(var(--d-lh) * 1em); }
-.fold {
-  position: absolute; inset: 0; pointer-events: none;
-  /* quieter than the bullets it sits beside — a control on the margin, not
-     content — in every state, folded included: the collapsed one is still on
-     screen permanently, which is clue enough without extra weight. */
-  color: color-mix(in srgb, var(--muted-2) 65%, transparent); cursor: pointer;
-  /* how far LEFT of the owner the spine is, beyond the gutter itself: one list
-     indent per nesting level. `--fold-depth` is set inline by `wireFolds` —
-     zero for a heading or a top-level item — and the multiplicand restates
-     `.md li > ul`'s padding-left. */
-  --fold-out: calc(var(--fold-depth, 0) * (var(--bullet-size) + 10px));
-  /* the CURRENT width of the pane's own gutter — the pad claims all of it, so
-     "left of the icon" folds too. Restated in the same breakpoints that step
-     `.doc`'s padding down to -md/-sm; drifting from those means a pad that
-     either stops short of the pane edge or pokes past it. */
-  --fold-gutter: var(--doc-pad-x);
-}
-.fold::before, .fold::after { content: ""; position: absolute; transition: opacity var(--dur-1); }
-/* the pad: spine to owner's left edge on the first line, and the only part of
-   this button a pointer can reach */
-.fold::before {
-  top: 0; left: calc(-1 * var(--fold-gutter) - var(--fold-out));
-  width: calc(var(--fold-gutter) + var(--fold-out)); height: var(--fold-h);
-  border-radius: var(--r-sm); pointer-events: auto;
-  transition: opacity var(--dur-1);
-}
-/* …and the mark inside it: two borders on a rotated square. EXPANDED it points
-   down at what it is holding open, and folding turns it back to the right. It
-   sits in the OUTER half of the gutter — on the spine, with clear air between
-   it and the text — rather than centred against the block's edge. */
-.fold::after {
-  top: calc(var(--fold-h) / 2 - 4px);
-  left: calc(-3 * var(--doc-pad-x-sm) / 4 - 3px - var(--fold-out));
-  width: 6px; height: 6px;
-  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg);
-  transition: opacity var(--dur-1), transform var(--dur-1) var(--ease);
-}
-.folded > .fold::after { transform: rotate(-45deg); }
-.fold:focus-visible { outline: none; }
-.fold:focus-visible::before { box-shadow: var(--sh-focus); }
-
-/* Hide-until-hover is a POINTER-CAPABILITY question, not a width one, and the
-   repo's breakpoints are all `max-width` — they cannot express it. On a touch
-   screen there is no hover to reveal anything with, so a chevron gated on one
-   would simply not exist there, at any width. `@media (hover: hover)` is the
-   only thing that can ask; without it, every chevron is always visible.
-
-   What reveals it is the PAD, not the block: hovering the text is reading, and
-   reading lights nothing. The pad is invisible and paints nothing, so it can
-   afford to be permanently hoverable — moving into the gutter is the one
-   deliberate gesture this responds to, and the same gesture is what shows the
-   block's click-to-edit tint below. */
-@media (hover: hover) {
-  .md .fold::after { opacity: 0; }
-  .md .fold:hover::after, .md .fold:focus-visible::after,
-  /* …and one that is holding something closed never leaves: it is the ONLY
-     clue that content is hidden. */
-  .md .folded > .fold::after { opacity: 1; }
-}
-
-.md > .fold-hidden { display: none; }
-.md li.folded > ul { display: none; }
-/* and the folded heading says so on its own line: the section did not vanish */
-.md :is(h1, h2, h3).folded::after { content: " …"; color: var(--muted-2); font-weight: 400; }
-
-.task { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: flex-start; line-height: var(--d-lh); }
-.cb {
-  flex: 0 0 auto; width: var(--cb-size); height: var(--cb-size); border-radius: var(--cb-radius);
-  margin-top: calc(var(--d-lh) * .5em - (var(--cb-size) / 2));
-  border: var(--cb-bd); background: var(--cb-bg); display: grid; place-items: center;
-  transition: background .16s var(--ease), border-color .16s, transform .1s;
-}
-.cb:hover { border-color: var(--accent); }
-.cb:active { transform: scale(.9); }
-.cb svg { opacity: 0; transform: scale(.6); transition: opacity var(--dur-1), transform .18s var(--ease); color: var(--cb-mark); }
-.task.done > .cb { background: var(--cb-on-bg); border-color: var(--cb-on-bd); }
-.task.done > .cb svg { opacity: 1; transform: none; }
-.task.done > .tx { color: var(--task-done-fg); text-decoration: var(--task-done-decoration); text-decoration-color: var(--muted-2); }
+.bubble del { text-decoration: line-through; }
+/* the chat's own status rows and the settings key/terminal state lines */
 .tx { color: var(--text-2); }
 
 .wl {
@@ -1272,21 +1072,6 @@ a.xl {
 }
 a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 
-/* …and the URL it points at is one click away (spec 0016). `renderPreview` puts
-   one of these after every `a.xl`, quiet until hover or focus, because a
-   link-heavy note must not read as a field of icons. Sized in `em` throughout,
-   so it tracks the text it sits in at every density and in a heading;
-   `inline-flex` so it rides the line, not its own glyph's baseline. The phone's
-   tap target is in §11. */
-.lcp {
-  display: inline-flex; align-items: center; vertical-align: -.1em;
-  margin-left: .2em; padding: .1em; border: 0; border-radius: var(--r-sm);
-  background: none; color: var(--muted-2); opacity: .55; cursor: pointer; line-height: 1;
-  transition: opacity var(--dur-1), color var(--dur-1), background var(--dur-1);
-}
-.lcp svg { width: .85em; height: .85em; }
-.lcp:hover, .lcp:focus-visible { opacity: 1; color: var(--accent); background: var(--accent-soft); }
-
 .cf-ico {
   width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
   background: var(--danger-soft); color: var(--danger); flex: 0 0 auto;
@@ -1298,90 +1083,6 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .modal.cf.safe .cf-ico { background: var(--accent-soft); color: var(--accent); }
 .modal.cf.safe .cf-ico .i-warn { display: none; }
 .modal.cf.safe .cf-ico .i-safe { display: block; }
-
-.md blockquote { margin: 0; padding: 2px 0 2px 16px; border-left: var(--quote-bd-w) var(--bd-style) var(--quote-bd); color: var(--quote-fg); font-style: var(--quote-style); line-height: var(--d-lh); }
-/* A QUOTE KEEPS ITS SHAPE (spec 0019). Whatever whitespace follows the marker is
-   the author's, so these lines are `pre-wrap` rather than collapsed. `pre-wrap`
-   and not `pre`: a line wider than the column still reflows, which is a
-   property of the column and not of the file (linebreaks-e2e measures both). */
-.md blockquote .pline { white-space: pre-wrap; }
-/* `> >` inherits the border and inset above, so nesting stacks a second one; it
-   sits tight under the line it follows rather than a block gap away. */
-.md blockquote blockquote { margin-top: 2px; }
-/* …and the indent BEFORE the first marker insets the whole block, the way a list
-   item's indent nests it. `--quote-in` is how many levels the renderer measured
-   (markdown.js `quoteInfo`); the width of one restates `.md li > ul`'s
-   padding-left. Top-level only: the property inherits, so an inner quote's inset
-   is already its parent's. */
-.md > blockquote { margin-left: calc(var(--quote-in, 0) * (var(--bullet-size) + 10px)); }
-.divider { height: 1px; background: var(--divider-bg); margin: 8px 0; }
-
-.tblwrap { overflow-x: auto; border: var(--bd); border-radius: var(--r); box-shadow: var(--sh-1); background: var(--card-bg); }
-/* scoped to rendered markdown: these are document tables, not app chrome */
-.tblwrap table { border-collapse: collapse; width: 100%; font-size: .9em; }
-.tblwrap th, .tblwrap td { text-align: left; padding: var(--d-cell-pad); border-bottom: var(--bd-2); white-space: nowrap; }
-.tblwrap th { font-weight: var(--w-semi); font-size: .86em; letter-spacing: .02em; text-transform: var(--label-transform); color: var(--muted); background: var(--table-head-bg); }
-.tblwrap tbody tr { transition: background .12s; }
-.tblwrap tbody tr:hover { background: var(--panel-2); }
-.tblwrap tbody tr:last-child td { border-bottom: 0; }
-.tblwrap td:first-child { font-family: var(--mono); font-size: .95em; color: var(--text); }
-.tblwrap td:nth-child(2) { font-family: var(--mono); font-size: .9em; color: var(--accent); }
-
-.code { border: var(--bd); border-radius: var(--r); background: var(--code-bg); box-shadow: var(--sh-1); overflow: hidden; }
-/* The bar carries the two things that mean something — what language this is,
-   and how to copy it. It used to also carry three grey circles imitating a
-   window's traffic lights; they were decoration that a reader reasonably tried
-   to interpret, and they are gone. Its height is now the copy button plus 2px,
-   and both scale with density. */
-.code-bar { display: flex; align-items: center; gap: 8px; padding: var(--d-code-bar-pad); border-bottom: var(--bd-2); background: var(--code-bar-bg); }
-.code-bar .lang { font-family: var(--mono); font-size: var(--d-code-bar-fs); font-weight: var(--w-semi); color: var(--muted); letter-spacing: .02em; }
-.code-bar .btn.sm { height: var(--d-code-btn-h); padding: 0 7px; font-size: var(--d-code-bar-fs); gap: 4px; }
-/* Code WRAPS: a long line is content, not a reason to hide the rest
-   of the block behind a horizontal scrollbar. `pre-wrap` keeps every space and
-   tab the source had; `overflow-wrap: anywhere` with `word-break: normal`
-   breaks inside a token only when that token alone cannot fit the column, so
-   ordinary code still breaks at spaces. `overflow-x: hidden` is the assertion,
-   not the mechanism — nothing here may ever scroll sideways. */
-.code pre {
-  margin: 0; padding: var(--d-pre-pad); overflow-x: hidden;
-  /* a px token multiplies by hand; only em-sized text inherits the rung (ADR 0033) */
-  font-family: var(--mono); font-size: calc(var(--d-code-fs) * var(--doc-zoom, 1)); line-height: var(--d-pre-lh); color: var(--code-fg);
-  white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; tab-size: 4;
-}
-/* one source line = one block box, so its wrapped continuations can hang one
-   step in and stay distinguishable from the next real line (app.js codeEl) */
-.code pre .cline { display: block; padding-left: 2.2ch; text-indent: -2.2ch; min-height: calc(var(--d-pre-lh) * 1em); }
-.tk-key { color: var(--tk-key); } .tk-str { color: var(--tk-str); } .tk-com { color: var(--tk-com); font-style: italic; }
-.tk-num { color: var(--tk-num); } .tk-fn { color: var(--tk-fn); }
-
-/* ---- ```mermaid — a fence that DRAWS (app/mermaid.js) ----
-
-   It wears `.code` so a diagram reads as the same kind of object a fence
-   always was; everything below is only what a picture needs and text does not.
-
-   The diagram sits on --panel rather than --code-bg: the SVG's own palette is
-   built from the panel tokens (themeConfig()), and drawing it on the code
-   well's darker fill would put its labels on the wrong ground. The SOURCE
-   underneath keeps the code well, because there it really is code.
-
-   `.mmd-body` is centred and scrolls SIDEWAYS if it has to, which is the one
-   place this app allows that (it is forbidden for code, where a long line
-   is text to be read — a diagram is one indivisible object and shrinking it to
-   the column would make it unreadable rather than wrapped). */
-.mmd .mmd-body { padding: var(--d-pre-pad); background: var(--panel); overflow-x: auto; text-align: center; }
-.mmd .mmd-body svg { max-width: 100%; height: auto; }
-/* the source is present in the DOM at all times — it is what a selection over
-   the block copies — and revealed by the bar's Source toggle */
-.mmd .mmd-text { display: none; }
-.mmd.show-src .mmd-text { display: block; }
-.mmd.show-src .mmd-body { display: none; }
-/* a diagram that will not compile is the ordinary state of one being WRITTEN:
-   the reason on top, the source kept underneath, nothing thrown away */
-.mmd.bad .mmd-body { text-align: left; background: var(--danger-soft); }
-.mmd .mmd-err { font-family: var(--mono); font-size: calc(var(--d-code-fs) * var(--doc-zoom, 1)); color: var(--danger); margin-bottom: 8px; white-space: pre-wrap; }
-/* `.code pre` above already gives it the mono/wrap treatment; it only has to
-   drop that rule's padding, since .mmd-body is already padded */
-.mmd .mmd-src { padding: 0; }
 
 .secret { border-radius: var(--r); border: var(--bd); background: var(--secret-bg); box-shadow: var(--sh-1); overflow: hidden; transition: border-color var(--dur-2), box-shadow var(--dur-2); }
 .secret.open { border-color: var(--secret-open-bd); box-shadow: 0 0 0 3px rgba(18, 161, 80, .08), var(--sh-1); }
@@ -1443,39 +1144,6 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .secret-edit:focus { outline: none; }
 /* the degraded-state explanation (no secure context / no worker) */
 .secret-note { padding: 9px 13px; border-top: var(--bd-2); font-size: 11.5px; line-height: 1.5; color: var(--warn); background: var(--warn-soft); }
-
-/* the renderer's last resort (editor.js renderDoc): a doc Preview threw on still
-   shows its own bytes, so one bad document costs a rendering, not the pane */
-.render-error { margin: 0; font-family: var(--mono); font-size: calc(var(--d-code-fs) * var(--doc-zoom, 1)); line-height: var(--d-pre-lh); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
-.render-error .note { font-family: var(--font); color: var(--danger); margin-bottom: 10px; white-space: normal; }
-
-.empty-doc { text-align: center; padding: 60px 0; color: var(--muted); }
-.empty-doc .ring { width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 15px; display: grid; place-items: center; background: var(--panel-2); border: var(--bd); color: var(--muted-2); box-shadow: var(--sh-1); }
-/* no `p` rule: an empty note prints its name and nothing else (renderDoc) */
-.empty-doc h3 { margin: 0; font-size: 15px; color: var(--text); font-weight: var(--w-semi); }
-
-/* click-to-edit affordance. A block that carries a fold chevron (a heading, a
-   list) tints from its GUTTER, not from its text — hovering the text is
-   reading, and the tint arriving with the chevron makes the two affordances
-   one gesture. A paragraph and a quote have no gutter control, so text hover
-   stays their only way to say "clickable". */
-.md.editable { cursor: text; }
-.md.editable > p, .md.editable > h1, .md.editable > h2, .md.editable > h3,
-.md.editable > ul, .md.editable > blockquote { border-radius: 6px; transition: background .12s var(--ease); }
-.md.editable > p:hover, .md.editable > blockquote:hover,
-.md.editable > :is(h1, h2, h3):has(> .fold:hover) {
-  background: var(--hover-tint);
-  box-shadow: -7px 0 0 var(--hover-tint), 7px 0 0 var(--hover-tint);
-}
-.md.editable .task, .md.editable li.bul { border-radius: 6px; }
-/* a list tints ROW by row: the li whose gutter the pointer is in, not the
-   whole ul — the pad says which item folds, and the tint agrees with it */
-.md.editable li:has(> .fold:hover) { background: var(--hover-tint); }
-.flash-line { animation: lineflash 1.25s var(--ease); border-radius: 6px; }
-@keyframes lineflash {
-  0%, 55% { background: var(--accent-soft); box-shadow: -7px 0 0 var(--accent-soft), 7px 0 0 var(--accent-soft); }
-  100% { background: transparent; box-shadow: none; }
-}
 
 /* ============================================================
    8 · STATUSBAR
@@ -1900,7 +1568,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 
    The topbar's doc controls go with it. Save is about a document; on a page
    with no document it would be a live button that either does nothing or acts
-   on a doc you cannot see. The Raw/Preview control used to be listed here too
+   on a doc you cannot see. The Edit/Source control used to be listed here too
    — it now lives in the STATUSBAR, and the rule followed it down (`#stMode`
    below) for exactly the same reason; the save pip (`#saveInd`) is a control
    as much as a state and follows both. The statusbar items that stay are facts
@@ -2217,7 +1885,6 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   .crumbs .cr-dir { display: none; }
   .topbar .btn.primary kbd { display: none; }
   .doc { padding-left: var(--doc-pad-x-md); padding-right: var(--doc-pad-x-md); }
-  .fold { --fold-gutter: var(--doc-pad-x-md); } /* the pad tracks the gutter */
 }
 
 /* ---- the nav controls, keyed to --w-dock (see .only-drawer in §4) ---- */
@@ -2343,7 +2010,6 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      transition also animated this padding accidentally, leaving the caret with
      nowhere to scroll while the keyboard was already covering it. */
   .doc { padding: 22px var(--doc-pad-x-sm) calc(34vh + var(--kb, 0px)); transition: none; }
-  .fold { --fold-gutter: var(--doc-pad-x-sm); } /* the pad tracks the gutter */
   /* 10vh, not the 34vh above: `--sheet-h` is most of the viewport now, and the
      old sum was 112vh of empty scroll under every note whenever the assistant
      was up. The term that matters is the sheet itself — this is the slack that
@@ -2442,19 +2108,6 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   .stack { padding: 7px 10px 3px; }
   .statusbar { gap: 8px; padding: 0 10px; }
   .sc-grid { grid-template-columns: 1fr; }
-  /* the copy button is the affordance a phone needs MOST, since the gesture it
-     replaces is a long-press that opens the link as often as it offers a menu,
-     and a miss here opens the link. At .1em the padding alone reached ~17.5px,
-     under §13's 28px floor, and it cannot use §13's ::after trick: it sits
-     INSIDE running text, where an inset-negative overlay would cover the words
-     around it. So the padding grows the target rather than the glyph, and the
-     NEGATIVE vertical margins keep those 28px out of the line box. Measured at
-     390px: a paragraph carrying a link is 18.45px tall, exactly what one
-     without a link is. */
-  .lcp {
-    padding: .45em; margin: -.45em 0 -.45em .1em;
-    min-width: 28px; min-height: 28px; justify-content: center;
-  }
 }
 
 /* (there was a fifth `@media (max-width: 600px)` here carrying `.sc-grid {
@@ -2599,7 +2252,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    a contenteditable at the DOCUMENT size, and Safari zooms on focus into form
    fields, not into those. The viewport meta answers the rest of that zoom (spec
    0013). It was the worst offender the floor ever caused: 16px mono against a
-   13.4px Preview was the biggest size jump in the app. */
+   13.4px document was the biggest size jump in the app. */
 @media (max-width: 767px) {
   .composer textarea,
   .pal-in input,
@@ -2744,4 +2397,115 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   /* and the toast sits above THAT bar, for the same reason it sits above the
      desktop one: the 36px is the only term that changed. */
   .toast { bottom: calc(36px + env(safe-area-inset-bottom, 0px) + 14px); }
+}
+
+/* ============================================================
+   15 · THE VISUAL EDITOR (Edit) — the BlockNote island
+
+   The island renders into `.doc`, the container Source renders into, and takes
+   its type, colour and measure from this file rather than from BlockNote's own
+   theme: the document must read the same in both modes at every breakpoint
+   (the parity gate), and a theme switch must reach it without a remount.
+   ============================================================ */
+.block-editor-host { min-width: 0; overflow-wrap: anywhere; }
+/* BlockNote's menu roots reset inherited colour, so the theme is handed to it as
+   its own token set rather than being inherited. */
+.bn-root.bn-mantine {
+  --bn-colors-editor-text: var(--text-2);
+  --bn-colors-editor-background: transparent;
+  --bn-colors-menu-text: var(--text);
+  --bn-colors-menu-background: var(--panel);
+  --bn-colors-tooltip-text: var(--text);
+  --bn-colors-tooltip-background: var(--panel-2);
+  --bn-colors-hovered-text: var(--text);
+  --bn-colors-hovered-background: var(--panel-2);
+  --bn-colors-selected-text: var(--accent);
+  --bn-colors-selected-background: var(--accent-soft);
+  --bn-colors-disabled-text: var(--muted);
+  --bn-colors-disabled-background: var(--panel-3);
+  --bn-colors-border: var(--line);
+  --bn-colors-side-menu: var(--muted);
+  --bn-font-family: var(--font-doc);
+  color: var(--text-2);
+}
+/* `font-size: inherit`, never `var(--d-font)`: `.doc` already multiplies the
+   density size by the pinch ladder's rung (--doc-zoom, ADR 0033), and naming the
+   token again here would take that rung back off. */
+.doc .bn-editor { padding: 0; background: transparent; font: inherit; font-size: inherit; line-height: var(--d-lh); }
+/* the native side menu is 30px tall, and a shorter row retargets a drag to its
+   neighbour — the drag handle must land on the block it is beside */
+.doc .bn-block-content { min-height: 30px; padding: 0; overflow-wrap: anywhere; }
+.doc .bn-inline-content { min-width: 0; overflow-wrap: anywhere; }
+/* A block is `.bn-block-outer > .bn-block > .bn-block-content`, and BlockNote
+   sizes a heading from that full path plus `[data-content-type]` — five classes
+   and attributes against the two a `.doc .bn-block-content[…]` rule has, so the
+   theme's own tokens lost and every heading came out at BlockNote's `--level`
+   (h1 3em = 39px against the 22.36px Source draws) at weight 700. The extra
+   ancestors below are SPECIFICITY, not structure: what each rule selects is
+   unchanged. Level 1 carries no `data-level` — BlockNote omits a prop still at
+   its default — so it is matched both ways, and 4–6 are left to `--level`
+   because this file has no tokens for them. */
+.doc .bn-block-content[data-content-type="heading"] { font-family: var(--font-heading); color: var(--text); }
+.doc .bn-editor .bn-block .bn-block-content[data-content-type="heading"]:is([data-level="1"], :not([data-level])) { font-size: var(--h1-size); line-height: 1.2; font-weight: var(--h1-weight); letter-spacing: var(--h1-tracking); text-transform: var(--h1-transform); }
+.doc .bn-editor .bn-block .bn-block-content[data-content-type="heading"][data-level="2"] { font-size: var(--h2-size); line-height: 1.32; font-weight: var(--h2-weight); letter-spacing: var(--h2-tracking); text-transform: var(--h2-transform); }
+.doc .bn-editor .bn-block .bn-block-content[data-content-type="heading"][data-level="3"] { font-size: var(--h3-size); line-height: 1.4; font-weight: var(--h3-weight); letter-spacing: var(--h3-tracking); text-transform: var(--h3-transform); }
+/* The text element inside the block is an `h1`…`h6`, and the UA sheet makes
+   those bold — an author declaration on the container it inherits from cannot
+   outrank a declaration on the element itself. */
+.doc .bn-block-content[data-content-type="heading"] .bn-inline-content { font-weight: inherit; }
+/* `.bn-block-outer` declares `line-height: 1.5` on itself, so the editor root's
+   `--d-lh` above was inherited by nothing. Body copy measures the same in both
+   modes only if the block wrappers take it too. */
+.doc .bn-block-outer { line-height: inherit; }
+/* Code WRAPS, here as everywhere: a long line is content, not a reason to hide
+   the rest of the block behind a horizontal scrollbar. The top padding is the
+   Copy button's room. */
+.doc .bn-block-content[data-content-type="codeBlock"] { position: relative; font-family: var(--mono); font-size: calc(var(--d-code-fs) * var(--doc-zoom, 1)); line-height: var(--d-pre-lh); background: var(--code-bg); color: var(--code-fg); white-space: pre-wrap; padding: var(--d-pre-pad); padding-top: calc(var(--d-code-btn-h) + 8px); }
+.doc .bn-block-content[data-content-type="codeBlock"] pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; min-width: 0; }
+.z-code-copy { position: absolute; top: 4px; right: 4px; height: var(--d-code-btn-h); padding: 0 7px; border: var(--bd); border-radius: var(--r-sm); background: var(--btn-bg); color: var(--btn-fg); font: var(--d-code-bar-fs) var(--font); cursor: pointer; }
+.z-code-copy:hover { background: var(--btn-hover-bg); }
+/* the secret block's own DOM, injected into a non-editable node view */
+.z-secret-host { width: 100%; min-width: 0; font-family: var(--font); }
+/* a protected source group — frontmatter, or syntax the adapter will not
+   round-trip — shown as the bytes it is, with an "Edit source" door */
+.z-source-block { width: 100%; border: var(--bd); border-radius: var(--r); background: var(--panel-2); padding: 10px; color: var(--muted); font: 12px var(--mono); }
+.z-source-block pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12em; overflow-y: auto; }
+
+/* ---- the block toolbar (ADR 0034's Edit half) ----
+   On a desktop it is an ordinary row above the document. On a phone it DOCKS on
+   the soft keyboard's top edge, which is `--visual-bottom` (the visual
+   viewport's own bottom, published by shell.js) offset by the calibration the
+   user chose. */
+.z-block-toolbar { display: flex; gap: 4px; margin: 10px 0; padding: 5px; border: var(--bd); border-radius: var(--r); background: var(--panel); }
+.z-toolbar-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.z-toolbar-more, .z-toolbar-options { display: none; }
+.z-block-toolbar button { min-height: 30px; padding: 4px 8px; color: var(--btn-fg); background: var(--btn-bg); border: var(--bd); border-radius: var(--r-sm); font: 12px var(--font); cursor: pointer; }
+.z-block-toolbar button:hover { background: var(--btn-hover-bg); }
+.z-block-toolbar button:disabled { opacity: .45; cursor: default; }
+
+@media (max-width: 767px) {
+  /* No 16px floor on the document text: Source has none (ADR 0032 — the
+     viewport meta pins the scale, so iOS cannot zoom on focus) and the two
+     surfaces must read at one size. BlockNote's own fields keep the floor. */
+  .bn-root.bn-mantine :is(input, textarea) { font-size: max(16px, 1em); }
+  /* Calibration may cross the reported keyboard edge and the statusbar. The
+     fixed viewport bounds keep Reset reachable; zero offset leaves the mode chip
+     uncovered. */
+  .z-block-toolbar { --toolbar-floor: calc(100dvh - 36px - env(safe-area-inset-bottom, 0px)); --toolbar-motion: calc((var(--dur-1) + var(--dur-2)) / 2); position: fixed; left: 0; right: 0; top: clamp(100px, calc(min(var(--visual-bottom, 100dvh), var(--toolbar-floor)) + var(--toolbar-offset, 0px)), 100%); bottom: auto; transform: translateY(-100%); margin: 0; z-index: 5; transition: top var(--toolbar-motion) var(--ease); }
+  .z-toolbar-actions { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; }
+  .z-block-toolbar .z-toolbar-more { display: grid; place-items: center; min-width: 36px; margin-left: auto; }
+  .z-toolbar-options { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; position: absolute; bottom: 100%; right: 0; left: 0; transition: grid-template-rows var(--toolbar-motion) var(--ease), opacity var(--toolbar-motion) var(--ease), visibility var(--toolbar-motion); }
+  .z-toolbar-options[data-open="true"] { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
+  .z-toolbar-options > div { overflow: hidden; min-height: 0; }
+  .z-toolbar-position { display: flex; align-items: center; gap: 4px; padding: 5px; border: var(--bd); border-radius: var(--r); background: var(--panel); font: 12px var(--font); }
+  .z-toolbar-position span { margin-right: auto; }
+  .z-toolbar-position button { display: grid; place-items: center; min-width: 36px; }
+  .z-block-toolbar button { flex: 0 0 auto; min-height: 36px; }
+  /* the dock belongs to a focused document, not to the page */
+  .block-editor-host:not(:focus-within) .z-block-toolbar { display: none; }
+  /* a fixed dock cannot live under a transformed ancestor: it would scroll with
+     the document for the length of the entrance animation */
+  .doc.fade-in { animation: none; }
+  /* …and the closed chat sheet must not sit on top of it */
+  .app:not(.chat-open) .chat { visibility: hidden; }
 }

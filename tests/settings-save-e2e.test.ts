@@ -188,14 +188,14 @@ describe("the Save button reads the diff, not the fact that something was touche
     await waitSave(true);
 
     /* a switch: flip it, flip it back */
-    await page.click("[data-sw='editor.clickToEdit']");
+    await page.click("[data-sw='editor.confirmBeforeExit']");
     await waitSave(false);
     expect(`after one flip: ${JSON.stringify(await saveBtn())}`).toBe(
       `after one flip: ${JSON.stringify({ label: "Save", disabled: false })}`
     );
     expect(`the count says: ${await dirtyPill()}`).toBe("the count says: 1 unsaved change");
 
-    await page.click("[data-sw='editor.clickToEdit']");
+    await page.click("[data-sw='editor.confirmBeforeExit']");
     await waitSave(true);
     expect(`flipped back — the button is inert again: ${(await saveBtn()).disabled}`).toBe(
       "flipped back — the button is inert again: true"
@@ -243,7 +243,7 @@ describe("Save issues exactly one PUT carrying exactly what moved", () => {
     await gotoSettings();
     await waitSave(true);
 
-    await page.click("[data-sw='editor.clickToEdit']");
+    await page.click("[data-sw='editor.confirmBeforeExit']");
     await typeInto("#gitBranch", "trunk");
     await typeInto("[data-num='secrets.sessionHours']", "6");
     await page.keyboard.press("Tab");
@@ -257,7 +257,7 @@ describe("Save issues exactly one PUT carrying exactly what moved", () => {
     expect(`requests issued by Save: ${puts.length}`).toBe("requests issued by Save: 1");
     expect(`the body Save sent: ${JSON.stringify(puts[0].body)}`).toBe(
       `the body Save sent: ${JSON.stringify({
-        editor: { clickToEdit: false },
+        editor: { confirmBeforeExit: false },
         git: { branch: "trunk" },
         secrets: { sessionHours: 6 },
       })}`
@@ -274,9 +274,10 @@ describe("Save issues exactly one PUT carrying exactly what moved", () => {
       interval: 100,
       label: "settings.toml to carry the new branch",
     });
-    expect(`settings.toml: branch=${fromDisk("git.branch")} sessionHours=${fromDisk("secrets.sessionHours")} clickToEdit=${fromDisk("editor.clickToEdit")}`).toBe(
-      "settings.toml: branch=trunk sessionHours=6 clickToEdit=false"
-    );
+    expect(
+      `settings.toml: branch=${fromDisk("git.branch")} sessionHours=${fromDisk("secrets.sessionHours")} ` +
+        `confirmBeforeExit=${fromDisk("editor.confirmBeforeExit")}`
+    ).toBe("settings.toml: branch=trunk sessionHours=6 confirmBeforeExit=false");
 
     /* and a reload comes back wearing all three */
     await boot();
@@ -284,10 +285,10 @@ describe("Save issues exactly one PUT carrying exactly what moved", () => {
     const back = await page.evaluate(() => ({
       branch: (document.getElementById("gitBranch") as HTMLInputElement).value,
       hours: (document.querySelector("[data-num='secrets.sessionHours']") as HTMLInputElement).value,
-      click: document.querySelector("[data-sw='editor.clickToEdit']")!.classList.contains("on"),
+      ask: document.querySelector("[data-sw='editor.confirmBeforeExit']")!.classList.contains("on"),
     }));
     expect(`after a reload: ${JSON.stringify(back)}`).toBe(
-      `after a reload: ${JSON.stringify({ branch: "trunk", hours: "6", click: false })}`
+      `after a reload: ${JSON.stringify({ branch: "trunk", hours: "6", ask: false })}`
     );
     expect(`…and Save is inert again, because there is no diff: ${(await saveBtn()).disabled}`).toBe(
       "…and Save is inert again, because there is no diff: true"
@@ -295,7 +296,7 @@ describe("Save issues exactly one PUT carrying exactly what moved", () => {
 
     /* put the vault back */
     await srv.api("PUT", "/api/settings", {
-      editor: { clickToEdit: true },
+      editor: { confirmBeforeExit: true },
       git: { branch: "main" },
       secrets: { sessionHours: 8 },
     });
@@ -357,7 +358,7 @@ describe("Save issues exactly one PUT carrying exactly what moved", () => {
   test("a second Save with nothing changed issues nothing at all", async () => {
     await boot();
     await gotoSettings();
-    await page.click("[data-sw='editor.clickToEdit']");
+    await page.click("[data-sw='editor.confirmBeforeExit']");
     await waitSave(false);
     await clickSave();
     await waitSave(true);
@@ -369,7 +370,7 @@ describe("Save issues exactly one PUT carrying exactly what moved", () => {
     await sleep(400);
     expect(`after clicking an inert Save: ${puts.length} PUT`).toBe("after clicking an inert Save: 1 PUT");
 
-    await srv.api("PUT", "/api/settings", { editor: { clickToEdit: true } });
+    await srv.api("PUT", "/api/settings", { editor: { confirmBeforeExit: true } });
   }, 120000);
 });
 
@@ -818,7 +819,7 @@ describe("a settings-changed that lands on a tab with an unsaved draft", () => {
     await waitSave(true);
 
     /* one unsaved change, on a field that has nothing to do with appearance */
-    await page.click("[data-sw='editor.clickToEdit']");
+    await page.click("[data-sw='editor.confirmBeforeExit']");
     await waitSave(false);
 
     await remote({ theme: "terminal" });

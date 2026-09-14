@@ -18,7 +18,7 @@
    ============================================================ */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { AI } from "./ai.ts";
 import { Index } from "./db.ts";
 import { GitSync, sanitizeRemote, validRemoteUrl } from "./git.ts";
@@ -381,6 +381,96 @@ async function buildVendor(): Promise<void> {
   }
 }
 
+/* ============================================================
+   /vendor/editor.js + /vendor/editor.css — the BlockNote editing island.
+
+   Same mechanism as the age bundle above, same reason: the frontend has no
+   build step, so what cannot be served as a plain file is bundled here at boot
+   and held in memory. Unlike age it is a multi-file bundle (`splitting`, a
+   stylesheet, font assets), so `publicPath` pins every internal reference to
+   `/vendor/editor/` and Bun's content hashes — which cover the dependency bytes
+   and the cross-asset references — become the URLs. The unhashed pair is a
+   no-cache 302 into the hashed tree, which is immutable for a year.
+
+   A failed browser build must never take the API, the shell or the age bundle
+   with it: the editor paths answer 503 and the app degrades to Source editing.
+   ============================================================ */
+
+const editorAssets = new Map<string, { bytes: Uint8Array; type: string; etag: string }>();
+const editorAliases = new Map<string, string>();
+let editorError = "";
+
+async function buildEditor(): Promise<void> {
+  try {
+    const built = await Bun.build({
+      entrypoints: [resolve(APP_DIR, "block-editor.tsx")],
+      target: "browser",
+      format: "esm",
+      minify: true,
+      splitting: true,
+      sourcemap: "none",
+      publicPath: "/vendor/editor/",
+      naming: { entry: "editor.[hash].[ext]", chunk: "chunk.[hash].[ext]", asset: "[name].[hash].[ext]" },
+      // React and its dependents ship dev-only branches behind this flag
+      define: { "process.env.NODE_ENV": JSON.stringify("production") },
+    });
+    if (!built.success || !built.outputs.length) {
+      throw new Error(built.logs.map((l) => String(l)).join("; ") || "no output");
+    }
+    for (const output of built.outputs) {
+      const name = basename(output.path);
+      const path = `/vendor/editor/${name}`;
+      const bytes = new Uint8Array(await output.arrayBuffer());
+      editorAssets.set(path, { bytes, type: output.type, etag: `"${Bun.hash(bytes).toString(16)}"` });
+      if (/^editor\.[^.]+\.(js|css)$/.test(name))
+        editorAliases.set(`/vendor/editor.${name.endsWith(".css") ? "css" : "js"}`, path);
+    }
+    if (!editorAliases.has("/vendor/editor.js") || !editorAliases.has("/vendor/editor.css")) {
+      throw new Error("the editor build produced no JavaScript/CSS pair");
+    }
+    editorError = "";
+  } catch (err) {
+    editorAssets.clear();
+    editorAliases.clear();
+    editorError = String((err as Error)?.message || err);
+    process.stderr.write(`[z-notes] editor bundle failed: ${editorError}\n`);
+  }
+}
+
+/* One content-addressed bundle response, for both in-memory bundles: immutable
+   for a year, with If-None-Match and HEAD answered from the same headers. */
+function immutableAsset(body: string | Uint8Array, type: string, etag: string, req: Request): Response {
+  const headers: Record<string, string> = { "content-type": type, etag, "cache-control": "public, max-age=31536000, immutable" };
+  const inm = req.headers.get("if-none-match");
+  if (inm && inm.split(",").some((tag) => tag.trim() === etag)) return new Response(null, { status: 304, headers });
+  if (req.method === "HEAD") {
+    const length = typeof body === "string" ? Buffer.byteLength(body) : body.byteLength;
+    return new Response(null, { status: 200, headers: { ...headers, "content-length": String(length) } });
+  }
+  return new Response(body, { status: 200, headers });
+}
+
+/** GET /vendor/editor… — 302 for the unhashed alias, the asset for a hashed one. */
+function serveEditor(pathname: string, req: Request): Response {
+  if (editorError) {
+    return fail(503, "vendor-unavailable", {
+      message: "The editor bundle could not be built; use Source editing.",
+      detail: editorError,
+    });
+  }
+  const alias = editorAliases.get(pathname);
+  if (alias) {
+    return new Response(null, {
+      status: 302,
+      headers: { location: alias, "cache-control": "no-cache" },
+    });
+  }
+  const asset = editorAssets.get(pathname);
+  // never substitute another asset for a stale hash: the importer is generated
+  if (!asset) return fail(404, "not-found", { message: `No such editor asset: ${pathname}` });
+  return immutableAsset(asset.bytes, asset.type, asset.etag, req);
+}
+
 /** GET /vendor/… — 302 for the unhashed alias, the bundle for the hashed one. */
 function serveVendor(pathname: string, req: Request): Response {
   if (!vendor) {
@@ -404,16 +494,7 @@ function serveVendor(pathname: string, req: Request): Response {
       headers: { location: `/vendor/${vendor.name}`, "cache-control": "no-cache" },
     });
   }
-  const headers: Record<string, string> = {
-    "content-type": "text/javascript; charset=utf-8",
-    etag: vendor.etag,
-    "cache-control": "public, max-age=31536000, immutable",
-  };
-  const inm = req.headers.get("if-none-match");
-  if (inm && inm.split(",").some((t) => t.trim() === vendor!.etag)) return new Response(null, { status: 304, headers });
-  if (req.method === "HEAD")
-    return new Response(null, { status: 200, headers: { ...headers, "content-length": String(Buffer.byteLength(vendor.js)) } });
-  return new Response(vendor.js, { status: 200, headers });
+  return immutableAsset(vendor.js, "text/javascript; charset=utf-8", vendor.etag, req);
 }
 
 /* ============================================================
@@ -1108,8 +1189,8 @@ recon.start();
    one that failed and the app boots with the rest. */
 await registry.boot();
 
-// the crypto worker's only dependency, bundled once (never written to disk)
-await buildVendor();
+// the two browser bundles, built once and kept in memory (never written to disk)
+await Promise.all([buildVendor(), buildEditor()]);
 
 /* Retention sweep at boot, BEFORE the port opens: a server that was off for a
    month must not serve a trash listing full of entries it is about to delete.
@@ -1203,15 +1284,19 @@ const server = Bun.serve({
          header, which a client could forge. */
       return api(req, url, srv.requestIP(req)?.address ?? null);
     }
-    /* `/vendor/*` is THIRD-PARTY CODE, and it arrives two ways. The age bundle
-       is built in memory at boot and has no file behind it, so it is matched by
-       name here and answered by `serveVendor`. Everything else under the prefix
-       — today `mermaid.js`, generated by `bun scripts/build-mermaid.ts` and
-       COMMITTED — is an ordinary file in APP_DIR and falls through to
-       `serveStatic` below, which already owns traversal-proofing and ETags.
-       The guard is narrow on purpose: it used to swallow the whole prefix and
-       redirect every miss to the age bundle, which would have served 3 MB of
-       crypto to anything that asked for a diagram. */
+    /* `/vendor/*` is THIRD-PARTY CODE, and it arrives two ways. Two bundles are
+       built in memory at boot and have no file behind them — the age bundle
+       (`serveVendor`) and the editor island (`serveEditor`) — so they are
+       matched by name here. Anything else under the prefix is an ordinary file
+       in APP_DIR and falls through to `serveStatic` below, which already owns
+       traversal-proofing and ETags. Each guard is narrow on purpose: the age
+       one used to swallow the whole prefix and redirect every miss to the age
+       bundle, which would have served 3 MB of crypto to anything that asked. */
+    if (url.pathname === "/vendor/editor.js" || url.pathname === "/vendor/editor.css" || url.pathname.startsWith("/vendor/editor/")) {
+      if (req.method !== "GET" && req.method !== "HEAD")
+        return fail(405, "method-not-allowed", { message: `${req.method} ${url.pathname}` });
+      return serveEditor(url.pathname, req);
+    }
     if (url.pathname === "/vendor/age.js" || url.pathname.startsWith("/vendor/age.")) {
       if (req.method !== "GET" && req.method !== "HEAD")
         return fail(405, "method-not-allowed", { message: `${req.method} ${url.pathname}` });

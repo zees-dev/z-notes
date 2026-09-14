@@ -239,6 +239,29 @@ async function openDoc(path: string) {
   await sleep(250); // navigation fade-in
 }
 
+/** type at the end of the Edit block carrying `needle` — a real keyboard, so
+    the island's own change handler is what marks the doc dirty */
+async function typeInVisual(needle: string, text: string) {
+  await page.waitForSelector("#doc .bn-editor", { timeout: 20000 });
+  await page.evaluate((n) => {
+    const block = [...document.querySelectorAll<HTMLElement>("#doc .bn-block-content")].find((b) =>
+      (b.textContent ?? "").includes(n)
+    );
+    if (!block) throw new Error(`no Edit block carrying ${n}`);
+    const range = document.createRange();
+    range.selectNodeContents(block.querySelector(".bn-inline-content") ?? block);
+    range.collapse(false);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    (block.closest<HTMLElement>('[contenteditable="true"]') ?? block).focus();
+  }, needle);
+  await page.keyboard.type(text);
+}
+
+/** everything the open document RENDERS as text, in either mode */
+const docVisibleText = () => page.evaluate(() => document.getElementById("doc")!.textContent ?? "");
+
 /** the observable state of the first secret block in the document */
 async function block() {
   return page.evaluate(() => {
@@ -608,7 +631,9 @@ describe("secrets e2e — a locked block", () => {
     expect(await armorInModel()).toBe(true);
     const html = await page.evaluate(() => document.documentElement.outerHTML);
     expect(html.includes(CANARY)).toBe(false);
-    expect(html.includes(ARMOR_HEAD)).toBe(false);
+    /* the armor lives in the block's own prop now, so the claim is about what
+       the document RENDERS, not about the attribute that holds the ciphertext */
+    expect(await docVisibleText()).not.toContain(ARMOR_HEAD);
   }, 60000);
 });
 
@@ -737,7 +762,7 @@ describe("secrets e2e — byte stability (research §4.2)", () => {
 
     /* ticking a task is a real edit that saves immediately (app convention),
        so this forces a genuine write while a block is revealed-but-unedited */
-    await page.click("#doc .cb");
+    await page.click('#doc [data-content-type="checkListItem"] input[type="checkbox"]');
     const after = await waitUntil(
       () => {
         const t = readVaultText(vaultDir, KEYS_DOC);
@@ -772,7 +797,7 @@ describe("secrets e2e — byte stability (research §4.2)", () => {
 
     const html = await page.evaluate(() => document.documentElement.outerHTML);
     expect(html.includes(CANARY)).toBe(false);
-    expect(html.includes(ARMOR_HEAD)).toBe(false);
+    expect(await docVisibleText()).not.toContain(ARMOR_HEAD);
 
     /* locking is not a save: the file is untouched by it */
     expect(ageFences(readVaultText(vaultDir, KEYS_DOC))[0]).toBe(blockArmor);
@@ -1002,13 +1027,7 @@ describe("secrets e2e — unlocking is vault-wide, and it is display only", () =
        nothing may be re-encrypted and the stored armor must go back out
        untouched. No ⌘S — `editor.autosaveSeconds` is 1, and the write this
        waits for IS the autosave (research §6, "Autosave"). */
-    await ensureMode("raw");
-    await page.evaluate(() => {
-      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-      ta.focus();
-      ta.value = ta.value.replace("OTHERKEYSTAIL", "OTHERKEYSTAIL AUTOSAVEMARKER");
-      ta.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await typeInVisual("OTHERKEYSTAIL", " AUTOSAVEMARKER");
     const after = await waitUntil(
       () => {
         const t = readVaultText(vaultDir, OTHER_DOC);
@@ -1016,16 +1035,12 @@ describe("secrets e2e — unlocking is vault-wide, and it is display only", () =
       },
       { timeout: 20000, label: "the autosave to reach disk while a block is revealed" }
     );
-    /* Leaving Raw while the edit is still staged now asks for confirmation.
-       Wait for the autosave under test to establish the new baseline first;
-       the clean mode switch must then be direct and dialog-free. */
-    await ensureMode("preview");
 
     /* the armor is byte-identical across a save that happened while its own
        plaintext was on screen, and the edit is the ONLY thing that moved */
     expect(ageFences(after)).toEqual(ageFences(before));
     expect(ageFences(after)[0]).toBe(otherArmor);
-    expect(after).toBe(before.replace("OTHERKEYSTAIL", "OTHERKEYSTAIL AUTOSAVEMARKER"));
+    expect(after).toBe(before.replace("OTHERKEYSTAIL prose below", "OTHERKEYSTAIL prose below AUTOSAVEMARKER"));
     expect(after.includes(CANARY2)).toBe(false);
 
     /* …and the request that carried it: armor in, plaintext never */

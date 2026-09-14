@@ -76,6 +76,10 @@ export function launchTestBrowser(
       "--disable-dev-shm-usage",
       "--window-size=1440,900",
       "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
+      /* A reload must get a fresh client: a back/forward-cached page keeps its
+         SSE socket open, and repeated reloads then exhaust Chromium's six
+         connections to the test server (measured on the unchanged app). */
+      "--disable-features=BackForwardCache",
       ...(opts.args ?? []),
     ],
   });

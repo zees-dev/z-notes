@@ -224,10 +224,9 @@ const EMPTY_SLUGS = new Map();
  *
  * `vaultId` is the vault of the doc being RENDERED — the one the link was
  * written in. It defaults to the active doc's vault, which is the right answer
- * for both surfaces that render `[[links]]`: the editor's own preview, and the
- * assistant's messages (which are about the doc you are looking at). Every
- * `path` that comes back is qualified, so `openDoc`, hrefs and `/d/` URLs take
- * it verbatim.
+ * for both surfaces that render `[[links]]`: Edit, and the assistant's messages
+ * (which are about the doc you are looking at). Every `path` that comes back is
+ * qualified, so `openDoc`, hrefs and `/d/` URLs take it verbatim.
  */
 export function lookupLink(target, vaultId) {
   const vault = vaultId || vaultOf(state.active || "");
@@ -348,8 +347,8 @@ export function inline(s) {
      `~~[label](url)~~` — without interpreting delimiter-looking text inside a
      bare URL, or letting a `~~` in an href/title mutate generated markup.
 
-     `inline()` is called once per source line (markdown.js / ADR 0015), so the
-     pattern cannot close a delimiter across lines. A space immediately inside
+     Every delimiter pattern excludes `\n`, so a run cannot close across lines
+     however much text one call is handed. A space immediately inside
      either delimiter keeps the spelling literal, matching the delimiter rule
      rather than turning accidental prose tildes into markup. */
   return strikeInline(h);
@@ -415,26 +414,6 @@ export function trimUrlTail(u) {
     }
     return u;
   }
-}
-
-/* toy js/ts highlighter for fenced js|ts blocks — pattern-based only, so it
-   knows nothing about any particular document's contents */
-/* One pass, one regex: successive .replace() calls would re-scan the markup
-   they just emitted (a `class` keyword inside class="tk-str" and so on). */
-const HL_RE = /("[^"\n]*"|'[^'\n]*'|`[^`\n]*`)|(\/\/[^\n]*)|\b(const|let|var|function|return|await|async|import|export|from|new|class|extends|type|interface|enum|if|else|for|while|try|catch|throw|typeof|instanceof|null|undefined|true|false)\b|\b([A-Z][A-Za-z0-9_$]*)(?=[.(])|\b(\d+(?:\.\d+)?[a-z]*)\b/g;
-
-export function hl(src) {
-  const s = String(src);
-  let out = "";
-  let last = 0;
-  s.replace(HL_RE, (m, str, com, kw, fn, num, off) => {
-    out += esc(s.slice(last, off));
-    const cls = str ? "tk-str" : com ? "tk-com" : kw ? "tk-key" : fn ? "tk-fn" : "tk-num";
-    out += '<span class="' + cls + '">' + esc(m) + "</span>";
-    last = off + m.length;
-    return m;
-  });
-  return out + esc(s.slice(last));
 }
 
 export const activeDoc = () => state.docs.get(state.active);

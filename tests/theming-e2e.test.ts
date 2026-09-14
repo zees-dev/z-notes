@@ -440,15 +440,22 @@ describe("theming — the scheme is resolved before the first paint", () => {
              then the root": switching targets mid-recording invents a
              transition that never happened on screen. Its computed style stays
              resolvable after it is hidden, so one series covers the whole load. */
-          /* only frames the user could have SEEN: the head stylesheets are
-             render-blocking, so until the theme <link> has a parsed sheet the
+          /* only frames the user could have SEEN: EVERY head stylesheet is
+             render-blocking, so until all of them have parsed (or failed) the
              document has not painted — a computed value read in that window is
              a frame that never reached the screen, and counting it invents a
-             flash slow machines never showed. */
+             flash slow machines never showed. `#theme-css` is the LAST link in
+             the head, so its sheet is also what says the head has been parsed
+             at all; the island's stylesheet is the big one, and it can still be
+             pending then — base.css with it, which is what colours the splash. */
           const themeLink = document.getElementById("theme-css") as HTMLLinkElement | null;
-          if (themeLink?.sheet) {
+          const links = [...document.querySelectorAll('head link[rel="stylesheet"]')] as HTMLLinkElement[];
+          if (themeLink?.sheet && links.every((l) => !!l.sheet || l.dataset.failed === "true")) {
             const boot = document.getElementById("boot");
-            const bg = getComputedStyle(boot ?? root).backgroundColor;
+            /* …and only once the splash EXISTS: the head can be parsed while
+               the body still is not, and reading the root instead reports a
+               transparent frame that was never on screen. */
+            const bg = boot ? getComputedStyle(boot).backgroundColor : "";
             if (bg && w.__lastBg !== bg) {
               w.__lastBg = bg;
               w.__bootBg.push(`${bg} @frame ${w.__frames}`);
@@ -678,12 +685,11 @@ async function docContainer() {
     const round = (n: number) => Math.round(n * 100) / 100;
 
     const raw = d.querySelector("#rawArea") as HTMLElement | null;
-    let first: Element | null = raw;
-    if (!first) {
-      const meta = d.querySelector(".doc-meta");
-      first = meta ? meta.nextElementSibling : d.firstElementChild;
-      while (first && first.firstElementChild) first = first.firstElementChild;
-    }
+    /* Edit: the first block the island painted — the same reading the parity
+       gate in e2e.test.ts takes. Descending `firstElementChild` instead lands
+       on BlockNote's injected <style> element, whose rect is the container's
+       own origin, which would make this a measurement of `#doc` twice over. */
+    const first: Element | null = raw ?? d.querySelector(".bn-editor .bn-block-content");
     let text: { x: number; y: number } | null = null;
     if (first) {
       const tr = first.getBoundingClientRect();

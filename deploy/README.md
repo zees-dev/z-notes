@@ -72,9 +72,11 @@ docker buildx build --platform linux/arm64 -f deploy/Dockerfile -t z-notes:0.1.0
 ```
 
 There is **no frontend build step**, on purpose. `server/index.ts` serves `app/` as
-plain files (`APP_DIR = <repo>/app`), and the one thing that needs bundling —
-the `age-encryption` browser module — is bundled by the server itself at boot,
-in memory, at `/vendor/age.<hash>.js`. Running
+plain files (`APP_DIR = <repo>/app`), and the two things that need bundling — the
+`age-encryption` browser module and the BlockNote editing island — are bundled by
+the server itself at boot, in memory, at `/vendor/age.<hash>.js` and
+`/vendor/editor/editor.<hash>.{js,css}`. That is why their packages are runtime
+`dependencies` and node_modules ships in the image. Running
 `bun build ./app/index.html --outdir=dist` would emit a content-hashed tree at a
 path the server never reads. `--compile` is also avoided: it reports
 `import.meta.dir` as `/$bunfs/root`, which `server/index.ts` uses to locate `app/`,

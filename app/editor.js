@@ -1,19 +1,19 @@
 /* ============================================================
-   editor.js — raw/preview modes, save pipeline, exit guard.
+   editor.js — the Edit/Source lifecycle, the save pipeline, the exit guard.
 
-   Split from the original single-file app.js along its own section markers;
-   behaviour is unchanged. See that file's history for each section's full
-   design rationale.
+   Edit is the BlockNote island (`app/block-editor.tsx`, mounted from
+   `/vendor/editor.js`); Source is the line editor in `rawedit.js` (ADR 0032).
+   The persisted mode ids are still `preview` and `raw` — every setting, history
+   entry, CSS hook and WebMCP enum is written in them.
    ============================================================ */
 "use strict";
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, I, activeDoc, apiFail, copyText, countWords, el, esc, toast } from "./ui.js";
-import { ensureLineVisible, renderPreview } from "./markdown.js";
+import { $, $$, activeDoc, apiFail, copyText, countWords, el, esc, lookupLink, toast } from "./ui.js";
 import { commitRename, focusQuiet } from "./tree.js";
 import { changedLineDiff, conflictDialog, orphanDialog, renderDiff } from "./dialogs.js";
-import { flushSecretEdits, vault } from "./secrets.js";
+import { bindSecretIds, flushSecretEdits, releaseSecretIds, repaintSecretsUI, secretEl, vault } from "./secrets.js";
 import { refreshSessionStats } from "./chat.js";
 import { exitSettings, guardSettingsExit, settingAt } from "./settings.js";
 import { closeNav, isDrawer, isSheet, markerForLayer, overlayOpen, rememberLastDoc, retireLayerMarker, revealInTree, routeDoc } from "./shell.js";
@@ -21,7 +21,7 @@ import { pendingHistory, recordHistory, stepHistory } from "./history.js";
 import { createRawEditor } from "./rawedit.js";
 
 /* ============================================================
-   EXIT GUARD — leaving Raw with text that is not on disk
+   EXIT GUARD — leaving a buffer that is not on disk
 
    The third dialog on the SAME veil chrome as the two above, and for the same
    reason they share one: every one of them asks the single question this app
@@ -30,12 +30,13 @@ import { createRawEditor } from "./rawedit.js";
    "not what is on disk" means. The Raw-exit rows deliberately omit the context
    used by save conflicts; the renderer and modal shell remain shared.
 
-   What it guards is every way OUT of Raw when
-   `editor.confirmBeforeExit` is on. With that preference off, the same gate
-   writes first and proceeds without mounting the dialog:
+   What it guards is every way out of a DIRTY DOC — in both modes, since Edit
+   writes into the same buffer Source does — when `editor.confirmBeforeExit` is
+   on. With that preference off, the same gate writes first and proceeds without
+   mounting the dialog:
 
-     ⌘E / the statusbar mode chip / a click on the pane whitespace / Esc
-        → `setMode("preview")`, gated in setMode itself so all four arrive
+     ⌘E / the statusbar mode chip / Esc
+        → `setMode("preview")`, gated in setMode itself so all three arrive
           through one door;
      a tree click, a ⌘K pick, a [[link]], the home button
         → `openDoc`, gated for user navigations only (`replace` marks the
@@ -59,24 +60,43 @@ import { createRawEditor } from "./rawedit.js";
 /**
  * The rows to show, or null when there is nothing to ask about.
  *
- * Null on all four of: not in Raw, no doc, no baseline (nothing ever fetched
- * this doc, so the guard cannot say what changed and must not invent it), and
- * a diff with no `+`/`-` rows — which is the "typed a character and deleted it
- * again" case, where `state.dirty` is still true but the buffer and the file
- * are byte-identical. An empty modal in front of an exit is worse than none.
+ * Null on all four of: the settings view, no doc, no baseline (nothing ever
+ * fetched this doc, so the guard cannot say what changed and must not invent
+ * it), and a diff with no `+`/`-` rows — which is the "typed a character and
+ * deleted it again" case, where `state.dirty` is still true but the buffer and
+ * the file are byte-identical. An empty modal in front of an exit is worse than
+ * none.
  *
  * `state.dirty` is deliberately NOT the test. It is a flag about keystrokes;
  * this is a byte comparison against what the server last confirmed, which is
  * the thing the dialog then draws. The two agree in the ordinary case and the
  * comparison is right in every case they do not.
+ *
+ * A REVEALED SECRET that was edited is dirty with no line to show for it: its
+ * plaintext is not in the buffer and must never reach a diff, so it gets one
+ * row that names the block and nothing else.
  */
 export function rawExitDiff() {
-  if (state.mode !== "raw" || state.view === "settings") return null;
+  if (state.view === "settings") return null;
   const doc = activeDoc();
   if (!doc || doc.diskText == null) return null;
   const ta = $("#rawArea");
-  const buf = ta ? ta.value : String(doc.markdown || "");
-  if (buf === doc.diskText) return null;
+  /* The Source surface is only the truth while it holds something the model has
+     not taken yet (`zSourceValue`, see renderRaw): assigning `value` can
+     normalize what it was given, and a readback that differs from the model for
+     that reason alone is not an edit. */
+  const buf = ta && ta.value !== ta.zSourceValue ? ta.value : String(doc.markdown || "");
+  /* a refused edit lives only on the screen (`visualStale`): the guard must
+     fire for it, since leaving would unmount the only copy without a word */
+  if (visualStale === doc) {
+    const rows = buf === doc.diskText ? [] : changedLineDiff(doc.diskText, buf);
+    return [{ marker: "+", text: "An edit that cannot be written as Markdown (undo it, or discard)" }, ...rows];
+  }
+  if (buf === doc.diskText) {
+    return [...state.reveal.values()].some((e) => e.path === doc.path && e.dirty)
+      ? [{ marker: "+", text: "Edited secret block (plaintext hidden)" }]
+      : null;
+  }
   /* This confirmation is deliberately terser than the save-conflict view:
      the request is to show ONLY what changed from the original document, not
      one unchanged context row on either side. */
@@ -148,10 +168,12 @@ export function closeExitGuard() {
   state.exitGuard = null;
   $("#xgVeil").classList.remove("show");
   if (!g) return;
-  /* back to exactly where you were: still Raw, still dirty, caret in the text.
+  /* back to exactly where you were: same mode, still dirty, caret in the text.
      The dialog cost a focus and nothing else. */
   const ta = $("#rawArea");
-  if (ta && state.mode === "raw") focusQuiet(ta);
+  if (state.mode === "raw") {
+    if (ta) focusQuiet(ta);
+  } else visual?.focus();
   /* KEEP EDITING IS A CANCELLATION for whoever was trying to leave. Almost
      every caller passes no hook — its action simply does not happen, which is
      the whole point of the guard. The one that has to hear about it is the
@@ -173,6 +195,10 @@ function exitGuardProceed(g) {
  * runs, because two of the destinations (`openDoc`, `setMode`) open with a
  * `syncRaw()` that copies the editor over the model — reverting only the
  * model would have the buffer immediately overwrite it.
+ *
+ * A REVEAL is part of what is being discarded: its plaintext was typed against
+ * text that no longer exists, so the entry goes and the block paints locked
+ * again from the restored armor.
  */
 export function exitGuardDiscard() {
   const g = state.exitGuard;
@@ -184,18 +210,17 @@ export function exitGuardDiscard() {
   const doc = state.docs.get(g.path);
   if (doc && doc.diskText != null) {
     doc.markdown = doc.diskText;
-    const ta = $("#rawArea");
-    if (ta && state.mode === "raw" && state.active === g.path) {
-      /* `value =` puts the caret at the END (textarea semantics, kept by ADR
-         0032's surface), and the forced `setMode("preview")` this route
-         proceeds into records that as the caret Enter resumes at (ADR 0036).
-         Clamped: the reverted text is shorter than what was typed over it. */
-      const at = ta.selectionStart;
-      ta.value = doc.markdown;
-      const back = Math.max(0, Math.min(at, ta.value.length));
-      ta.setSelectionRange(back, back);
-    }
+    for (const [key, entry] of state.reveal) if (entry.path === g.path) state.reveal.delete(key);
     if (g.path === state.active) {
+      /* the screen is the discarded text again, so whatever refused to
+         serialize is gone with it and this doc may be written once more */
+      visualStale = null;
+      visual?.setMarkdown(doc.markdown);
+      repaintSecretsUI();
+      syncRawFromModel(doc);
+      /* the restored text is where the next undo run starts from, in either
+         mode — `syncRawFromModel` only reaches the Source surface */
+      markTextBaseline(g.path, doc.markdown);
       /* the debounce is armed against text that no longer exists */
       clearTimeout(dirtyT);
       state.dirty = false;
@@ -232,11 +257,18 @@ export async function exitGuardSave() {
     if (cancel) cancel();
     return toast("Could not save " + g.path + " — your changes are still in this tab");
   }
+  /* A write that landed and left the buffer dirty anyway (a keystroke mid-flight,
+     a reveal still waiting for the worker) has not answered the question this
+     dialog asked, so it asks again rather than leaving the new text behind. */
+  if (g.path === state.active && rawExitDiff()) {
+    guardRawExit(g.proceed, cancel);
+    return;
+  }
   exitGuardProceed(g);
 }
 
 /* ============================================================
-   RAW MODE
+   SOURCE MODE (`raw`)
 
    EVERY STRUCTURAL EDIT THIS FILE MAKES GOES THROUGH `ta.replaceRange`, the
    Raw surface's own write primitive (ADR 0032): the one path into the buffer
@@ -304,7 +336,7 @@ export function syncWrapUI() {
   const raw = state.view === "doc" && state.mode === "raw";
   chip.hidden = !raw;
   chip.dataset.wrap = state.wordWrap ? "on" : "off";
-  chip.title = (state.wordWrap ? "Disable" : "Enable") + " Raw word wrapping (⌥Z)";
+  chip.title = (state.wordWrap ? "Disable" : "Enable") + " Source word wrapping (⌥Z)";
   const txt = $("#stWrapTxt");
   if (txt) txt.textContent = state.wordWrap ? "Wrap" : "No wrap";
 }
@@ -376,11 +408,9 @@ function listContinuation(text) {
 function markdownContinuation(value, caret) {
   const lineStart = value.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
   const before = value.slice(lineStart, caret);
-  /* A quote continues the way a list does (spec 0019). The shape restates
-     markdown.js's `quoteInfo` — the renderer and the editor do not import each
-     other for this, the same bargain `RE_LIST`/`RAW_LIST` already strike — and
-     the markers are carried EXACTLY as typed, so `> > ` stays two deep and a
-     marker written without its space keeps its own spelling. */
+  /* A quote continues the way a list does (spec 0019), and the markers are
+     carried EXACTLY as typed, so `> > ` stays two deep and a marker written
+     without its space keeps its own spelling. */
   const quote = /^(?<indent>[ \t]*)(?<markers>(?:>[ ]?)+)/.exec(before);
   if (quote) {
     const g = quote.groups;
@@ -620,6 +650,10 @@ function renderRaw(doc, host) {
   ta.setAttribute("data-gramm", "false");
   ta.setAttribute("data-enable-grammarly", "false");
   ta.value = doc.markdown;
+  /* WHAT THIS SURFACE WAS GIVEN, read back out of it. A surface may normalize
+     what it is handed (a CRLF document is the case that bites), and `syncRaw`
+     must not report that readback as an edit the user made. */
+  ta.zSourceValue = ta.value;
   ta.setAttribute("aria-label", "Markdown source · " + doc.path);
   /* the placeholder is a STARTING POINT, not a notice: an empty note announcing
      its own emptiness says nothing the blank page did not already say */
@@ -640,6 +674,7 @@ function renderRaw(doc, host) {
        run left, and opening the run has to happen while that is still true. */
     noteTextEdit(doc.path);
     doc.markdown = ta.value;
+    ta.zSourceValue = ta.value;
     markDirty();
     updateMeta();
     keepRawCaretVisible();
@@ -666,7 +701,12 @@ export function syncRaw() {
   if (state.mode !== "raw") return;
   const ta = $("#rawArea");
   const doc = activeDoc();
-  if (ta && doc) doc.markdown = ta.value;
+  /* only what the surface actually holds that the model does not: see
+     `renderRaw` on `zSourceValue` */
+  if (ta && doc && ta.value !== ta.zSourceValue) {
+    doc.markdown = ta.value;
+    ta.zSourceValue = ta.value;
+  }
   /* THE RUN BOUNDARY. Every caller of this is a moment the user left the text
      alone — a mode switch, a doc switch, a save — which is exactly where "what
      I just typed" ends. One flush here covers all three rather than three
@@ -692,6 +732,7 @@ export function syncRawFromModel(doc) {
   const a = ta.selectionStart;
   const b = ta.selectionEnd;
   ta.value = doc.markdown;
+  ta.zSourceValue = ta.value;
   const n = ta.value.length;
   try {
     ta.setSelectionRange(Math.min(a, n), Math.min(b, n));
@@ -769,60 +810,202 @@ export function startHeaderRename() {
   } catch (_) {}
 }
 
+/* ============================================================
+   EDIT MODE (`preview`) — the BlockNote island
+
+   One mounted controller at a time, for one path. The island is a leaf by
+   construction: it speaks markdown, lines and callbacks, and knows nothing
+   about the shell — every bridge back into the app is in this section.
+
+   LINE NUMBERS. The island counts source lines from 1 (a file's own
+   numbering); everything in this file counts from 0. The conversion happens
+   here and nowhere else.
+   ============================================================ */
+let visual = null;
+let visualPath = null;
+/* THE BUFFER STOPPED FOLLOWING THE SCREEN. The island could not write the
+   document back as Markdown, so `doc.markdown` is the last text that DID
+   serialize — older than what the user can see. Writes for that doc are refused
+   until an edit serializes again: autosaving those bytes would replace the
+   visible edit with the previous ones, and say "Saved" while doing it. The DOC
+   OBJECT, not its path: a rename moves the buffer, not the problem. */
+let visualStale = null;
+/* Mounting is asynchronous, so a second render can start before the first has
+   finished importing. Only the newest generation may install itself. */
+let mountGeneration = 0;
+/* a reveal asked for before the island existed: `{ line, anchor }`, 0-based */
+let pendingReveal = null;
+let editorBundle;
+
+/** Unmount, and hand the secret ids the island was holding back to secrets.js
+    so the next mount can bind its own. Called before every re-render. */
+export function destroyEditor() {
+  mountGeneration++;
+  pendingReveal = null;
+  visualStale = null;
+  if (visual) {
+    releaseSecretIds(visualPath, visual.getSecrets());
+    visual.destroy();
+  }
+  visual = null;
+  visualPath = null;
+}
+
+/** Whether the mounted island still holds a step of its OWN history. Undo in
+    Edit is BlockNote's (ADR 0014 as amended) only for as long as this is true:
+    with that history exhausted ⌘Z is the app timeline's again, so a file
+    operation made from inside Edit is still undoable without leaving it. */
+export function visualCanStep(redo) {
+  if (!visual) return false;
+  return redo ? visual.canRedo() : visual.canUndo();
+}
+
+/** Swap one block's ciphertext in the mounted island — the Edit-mode half of
+    `replaceArmorInDoc` (secrets.js), keyed by the block id rather than by the
+    armor, because identical ciphertext can appear twice in one doc. */
+export function replaceVisualSecret(path, id, ciphertext) {
+  if (visualPath !== path || !visual) return null;
+  return visual.replaceSecret(id, ciphertext);
+}
+
+function revealVisual(line, anchor) {
+  if (visual) visual.revealLine(line + 1, anchor);
+  else pendingReveal = { line, anchor };
+}
+
+async function renderVisual(doc, host) {
+  const generation = mountGeneration;
+  const surface = el("div", "block-editor-host");
+  surface.textContent = "Loading editor…";
+  host.appendChild(surface);
+  try {
+    /* The bundle is fetched once per page and cached; a failed import must not
+       be cached, or a recovered network would never get a second chance. */
+    editorBundle ||= import("/vendor/editor.js").catch((err) => {
+      editorBundle = null;
+      throw err;
+    });
+    const css = $("#editor-css");
+    /* The stylesheet is a plain <link> in the head, so the only honest signals
+       are its own events and the flags its inline handlers leave behind (the
+       load may have finished before this code ever ran). */
+    const stylesheet = new Promise((resolve, reject) => {
+      if (css.dataset.failed) return reject(new Error("Editor stylesheet failed"));
+      if (css.sheet || css.dataset.loaded) return resolve();
+      css.addEventListener("load", resolve, { once: true });
+      css.addEventListener("error", reject, { once: true });
+    });
+    const [{ mountEditor }] = await Promise.all([editorBundle, stylesheet]);
+    if (generation !== mountGeneration || !surface.isConnected) return;
+    surface.textContent = "";
+    visualPath = doc.path;
+    visual = mountEditor(surface, {
+      markdown: doc.markdown,
+      copyText,
+      onChange(markdown) {
+        if (generation !== mountGeneration) return;
+        visualStale = null;
+        doc.markdown = markdown;
+        /* NOT `noteTextEdit`: undo inside Edit is the island's own
+           (ProseMirror history, ADR 0014 as amended) — recording every
+           transaction on the app timeline would give ⌘Z two owners. */
+        markDirty();
+        updateMeta();
+      },
+      onSource(line) {
+        line = Math.max(0, line - 1);
+        setMode("raw", { caret: lineOffset(doc.markdown, line), line });
+      },
+      /* The document on screen is not expressible as Markdown (nesting the
+         adapter cannot re-import, formatting Source owns). Saying so beats a
+         document that quietly stops being written: the buffer is marked unsaved,
+         the write is blocked below, and the edit is still there to undo. */
+      onError(message) {
+        if (generation !== mountGeneration) return;
+        visualStale = doc;
+        state.dirty = true;
+        setSaveIndicator("Unsaved changes", "dirty");
+        toast("This edit cannot be written as Markdown — " + message + ". Undo it, or edit the block in Source.");
+      },
+      /* The block the island draws for an ```age fence is the app's own secret
+         DOM: reveal, edit, copy and lock stay where they have always been, and
+         no plaintext ever enters the editor's model. `ord` is the ordinal of
+         this ciphertext among the copies of itself ABOVE this block, which is
+         what makes two identical fences two different blocks. */
+      renderSecret({ id, ciphertext, line, indent = "" }) {
+        const prefix = doc.markdown.split("\n").slice(0, line - 1).join("\n");
+        const ord = prefix.split(ciphertext).length - 1;
+        bindSecretIds(doc.path, ciphertext, ord, id);
+        /* the block moved on from the armor a reveal was taken against (an
+           edit, a re-encrypt), so that plaintext no longer describes it */
+        for (const [key, entry] of state.reveal) {
+          if (entry.path === doc.path && entry.ord === id && entry.armor !== ciphertext) state.reveal.delete(key);
+        }
+        const existing = $$("#doc .secret").find((n) => n.zSecret?.ord === id && n.zSecret.armor === ciphertext);
+        return existing || secretEl(doc.path, ciphertext, indent, id);
+      },
+      resolveWikiLink(target) {
+        return lookupLink(target).path || undefined;
+      },
+      /* through the app's ONE link handler (app.js), so multi-vault
+         resolution, the create-on-missing branch and the exit guard all behave
+         exactly as they do for a pill the user clicked */
+      onWikiLink(target) {
+        const link = el("a", "wl");
+        link.dataset.link = target;
+        host.appendChild(link);
+        link.click();
+        link.remove();
+      },
+    });
+    if (pendingReveal) visual.revealLine(pendingReveal.line + 1, pendingReveal.anchor);
+    pendingReveal = null;
+  } catch (err) {
+    if (generation !== mountGeneration || !surface.isConnected) return;
+    console.error("The visual editor could not load", err);
+    /* THE DOC IS STILL EDITABLE. The bundle or its stylesheet is the only thing
+       that failed; Source needs neither, so the pane falls back to it and says
+       why instead of leaving a blank page behind (SPEC §11). */
+    destroyEditor();
+    surface.remove();
+    state.mode = "raw";
+    syncModeUI();
+    host.classList.add("raw-mode");
+    const notice = el("div", "note bad");
+    notice.textContent = "The visual editor could not load. You can keep editing in Source.";
+    host.appendChild(notice);
+    renderRaw(doc, host);
+  }
+}
+
 export function renderDoc(opts) {
   opts = opts || {};
   const doc = activeDoc();
   const host = $("#doc");
+  /* before the DOM goes: the island holds secret ids and a React root, and
+     both have to be handed back rather than thrown away with the innerHTML */
+  destroyEditor();
   host.innerHTML = "";
   if (!doc) return;
   host.classList.toggle("raw-mode", state.mode === "raw");
   /* ONE TAB IS ONE WIDTH IN BOTH MODES. `.raw` carries the setting on its own
-     element (`renderRaw`), and Preview had no tab width at all until quotes
-     started keeping their whitespace (spec 0019) — a `pre-wrap` span with no
-     rule takes the UA's 8, so a tab-aligned quote reflowed 4x on ⌘E. The
-     shared container is where both inherit it from; `.code pre`'s tab-size: 4
-     is the code block's own and is left alone. */
+     element (`renderRaw`), and the shared container is where the island
+     inherits it from. */
   host.style.tabSize = String(settingAt("editor.tabSize"));
 
-  /* The `.mode-note` that used to end this line ("raw source · click outside to
-     preview" / "preview · click a line to edit") is gone. It restated an
-     affordance the statusbar's mode chip already names and the pane itself
-     already teaches on the first click, on every doc, forever — and it was the
-     one item in the meta line that was about the CHROME rather than the doc. */
+  /* The `.mode-note` that used to end this line is gone: it restated an
+     affordance the statusbar's mode chip already names, and it was the one item
+     in the meta line that was about the CHROME rather than the doc. */
   const meta = el("div", "doc-meta");
   meta.innerHTML =
     '<span class="tag">' + esc(doc.path) + "</span>" +
     "<span>" + esc(relTime(doc.mtime)) + "</span>";
   host.appendChild(meta);
 
+  /* An empty doc is an empty editor: there is nothing to announce to somebody
+     whose caret is already in the place they would type. */
   if (state.mode === "raw") renderRaw(doc, host);
-  else if (!String(doc.markdown).trim()) {
-    /* A NEW NOTE SAYS ITS NAME AND NOTHING ELSE.
-       The instruction that used to sit here ("This note is empty. Switch to
-       Raw (⌘E) to write markdown.") described the blank page it was printed
-       on, and named a chord half the app's widths do not have. What stays is
-       the click TARGET — `previewClickToEdit` opens Raw from `.empty-doc`, so
-       the affordance survives the words being deleted. */
-    const e = el("div", "empty-doc");
-    e.innerHTML = '<div class="ring">' + I.note + "</div><h3>" + esc(doc.title) + "</h3>";
-    host.appendChild(e);
-  } else {
-    /* PREVIEW IS ALSO THE BOOT SCREEN. `/` opens the doc this browser left on
-       (ADR 0035), so a renderer that throws on ONE document does not merely
-       blank the pane — it strands the app on `#boot` with no way back that
-       does not involve knowing another doc's URL. The source is what the
-       reader came for and Raw still edits it, so a render that fails prints
-       it verbatim and says so. */
-    try {
-      renderPreview(doc, host);
-    } catch (err) {
-      console.error("Preview render failed for " + doc.path, err);
-      const pre = el("pre", "render-error");
-      pre.appendChild(el("div", "note", "Preview could not render this doc — Raw still works"));
-      pre.appendChild(document.createTextNode(String(doc.markdown ?? "")));
-      host.appendChild(pre);
-    }
-  }
+  else renderVisual(doc, host);
 
   /* the entrance animation belongs to navigation; a mode switch must not
      translate or fade the container (amendment 11) */
@@ -995,10 +1178,6 @@ export async function openDoc(path, opts) {
     if (nav === navSeq) navPending = false;
   };
   syncRaw();
-  /* …and the caret with it, while the editor holding it is still mounted: the
-     app-level mode does not change here, so this navigation never passes
-     through `setMode`'s way out (ADR 0036). */
-  rememberRawCaret();
   if (state.dirty && state.active && state.active !== path) {
     /* the indicator is about to read "Saved" for the NEW doc — say so out loud
        if the old one did not actually reach disk */
@@ -1030,8 +1209,12 @@ export async function openDoc(path, opts) {
      Without this, opening a doc from the palette or a [[link]] would still
      create beside whatever folder was last clicked. */
   state.pick = null;
-  state.dirty = false;
-  setSaveIndicator("Saved");
+  /* A doc can arrive dirty: this tab may have been holding unsaved text for it
+     already (a buffer left behind by an earlier visit, a proposal written into
+     a doc that was not on screen). The baseline is the only honest answer. */
+  const doc = activeDoc();
+  state.dirty = doc.markdown !== doc.diskText;
+  setSaveIndicator(state.dirty ? "Unsaved changes" : "Saved", state.dirty ? "dirty" : undefined);
   /* Opening a doc from the settings page IS how you leave it — the tree, ⌘K,
      a [[link]] and the home button are all navigations, and the pane shows one
      place at a time. Before routeDoc, so the entry it writes describes what is
@@ -1051,7 +1234,7 @@ export async function openDoc(path, opts) {
 }
 
 /* ============================================================
-   PREVIEW ⇄ RAW
+   EDIT ⇄ SOURCE
    ============================================================ */
 /* The mode affordance is one muted word in the STATUSBAR (#stMode), not a
    segmented control in the topbar: which of two views of the same document you
@@ -1064,9 +1247,9 @@ export function syncModeUI() {
   const chip = $("#stMode");
   if (chip) {
     chip.dataset.mode = state.mode;
-    chip.title = raw ? "Raw markdown source — click (or ⌘E) for Preview" : "Rendered preview — click (or ⌘E) for Raw";
+    chip.title = raw ? "Markdown source — click (or ⌘E) for Edit" : "Visual editing — click (or ⌘E) for Source";
     const txt = $("#stModeTxt");
-    if (txt) txt.textContent = raw ? "Raw" : "Preview";
+    if (txt) txt.textContent = raw ? "Source" : "Edit";
   }
   /* encrypt-selection only means anything over a selection in the source — and
      only when secrets work at all. A live button whose only possible outcome is
@@ -1120,43 +1303,24 @@ function scrollRawTo(offset, anchor) {
   sc.scrollTop = Math.max(0, Math.min(want, sc.scrollHeight - sc.clientHeight));
 }
 
-/* ---------- keeping your place across a mode switch ----------
+/* ---------- keeping your place across a mode switch (ADR 0027) ----------
 
-   Preview and Raw are two renderings of one document at two different heights,
+   Edit and Source are two renderings of one document at two different heights,
    so the scroll OFFSET means nothing across the switch — the further into a
    note you are, the further the same pixel lands from the same words. The
-   coordinate the two modes do share is the SOURCE LINE, which every rendered
-   block already carries (ADR 0015). So a switch reads the line the reader is
-   looking at and where on screen it sits, and puts it back there.
+   coordinate the two modes do share is the SOURCE LINE. So a switch reads the
+   line the reader is looking at and where on screen it sits, and puts it back
+   there; on the Edit side both halves of that are measured inside the island,
+   which is the only thing that knows which block is which line. */
 
-   A click already knows its line; these are for ⌘E, the mode chip and Esc. */
-
-/** The rendered block a source line lives in — the last `[data-line]` at or
-    above it, the rule `revealLine` and `ensureLineVisible` already share. */
-function blockForLine(lineNo) {
-  let best = null;
-  $$("#doc [data-line]").forEach((b) => {
-    const l = parseInt(b.dataset.line, 10);
-    if (l <= lineNo && (!best || l >= parseInt(best.dataset.line, 10))) best = b;
-  });
-  return best;
+/** The first line still on screen in Edit, and how far down it sits — the
+    island's own measurement, translated into this file's 0-based lines. */
+function visualAnchor() {
+  const at = visual && visual.anchorLine();
+  return at ? { line: Math.max(0, at.line - 1), anchor: at.anchor } : null;
 }
 
-/** The first source line still on screen in Preview, and how far down it sits. */
-function previewAnchor() {
-  const sc = $("#scroll");
-  if (!sc) return null;
-  const top = sc.getBoundingClientRect().top;
-  for (const b of $$("#doc [data-line]")) {
-    const r = b.getBoundingClientRect();
-    if (r.bottom <= top + 1) continue;
-    const line = parseInt(b.dataset.line, 10);
-    if (!isNaN(line)) return { line, anchor: r.top - top };
-  }
-  return null;
-}
-
-/** The same question asked of Raw, answered by the caret — the place the user
+/** The same question asked of Source, answered by the caret — the place the user
     was actually working. Null when it is off screen: anchoring to something
     nobody can see would BE the jump this exists to prevent, so that case keeps
     the offset it has rather than inventing a better one. */
@@ -1170,69 +1334,6 @@ function rawAnchor() {
   return { line: ta.value.slice(0, ta.selectionStart).split("\n").length - 1, anchor: box.top - r.top };
 }
 
-/** Put `at.line` back `at.anchor` pixels down the Preview pane. A line inside a
-    folded section has no box to aim at (ADR 0023 hides it outright) — and a
-    fold is not a thing a mode switch may open, so that case keeps the offset it
-    has rather than scrolling to a rect of zeroes. */
-function alignPreview(at) {
-  const sc = $("#scroll");
-  const b = at && blockForLine(at.line);
-  if (!sc || !b || !b.offsetParent) return;
-  const want = sc.scrollTop + (b.getBoundingClientRect().top - sc.getBoundingClientRect().top) - at.anchor;
-  sc.scrollTop = Math.max(0, Math.min(want, sc.scrollHeight - sc.clientHeight));
-}
-
-/* ---------- the way back in (ADR 0036) ----------
-
-   Where the caret was when Raw was last left, per doc: Esc is only half a
-   round trip until something remembers the far end of it.
-
-   Nothing clears this. A stale offset is clamped to the document's length on
-   use (an SSE reload, an accepted proposal and an undo all change the text
-   under it), and the map holds one number per doc opened this session. It is
-   deliberately NOT persisted: a reload starts the reading fresh. */
-const rawCaret = new Map();
-
-/** Write the live Raw caret into the map under the doc that owns it. TWO doors
-    leave a mounted Raw editor behind: `setMode` going to Preview, and `openDoc`
-    swapping the doc underneath a Raw that stays Raw. Editing A, clicking B,
-    then coming back to A resumed at offset 0 while only the first remembered. */
-function rememberRawCaret() {
-  const ta = $("#rawArea");
-  if (ta) rawCaret.set(state.active, ta.selectionStart);
-}
-
-/**
- * Re-enter Raw at the caret Preview was entered from, with that caret's line
- * held where it already sits on screen — ADR 0027's rule aimed at the caret
- * line rather than the top one, because "carry on typing" is about the caret.
- *
- * Returns whether it fired, so the key handler knows whether to claim Enter.
- * A caret whose line is scrolled away (or folded, ADR 0023) has no box to aim
- * at, and an undefined anchor is what makes `scrollRawTo` fall back to its
- * default — Enter still means "continue editing", just scrolled into view.
- */
-export function resumeRaw() {
-  const doc = activeDoc();
-  if (!doc || state.view !== "doc" || state.mode !== "preview") return false;
-  const md = String(doc.markdown || "");
-  const caret = Math.max(0, Math.min(rawCaret.get(doc.path) ?? 0, md.length));
-  const line = md.slice(0, caret).split("\n").length - 1;
-  const sc = $("#scroll");
-  const b = blockForLine(line);
-  let anchor;
-  if (b && b.offsetParent && sc) {
-    const r = b.getBoundingClientRect();
-    const s = sc.getBoundingClientRect();
-    if (r.bottom > s.top && r.top < s.bottom) anchor = r.top - s.top;
-  }
-  /* `line` is always passed so setMode keeps THIS caret instead of replacing it
-     with the top-of-pane line; `silent` because the caret blinking in the
-     source is the answer, and a toast over it adds nothing. */
-  setMode("raw", { caret, line, anchor, silent: true });
-  return true;
-}
-
 export function setMode(m, opts) {
   opts = opts || {};
   if (m !== "raw" && m !== "preview") return;
@@ -1240,21 +1341,16 @@ export function setMode(m, opts) {
     if (m === "raw" && opts.caret != null) focusRaw(opts);
     return;
   }
-  /* THE ONE DOOR out of Raw. ⌘E, the statusbar mode chip, a click on
-     the pane whitespace and Esc all leave through this call, so the unsaved-work
-     guard is here rather than repeated at four call sites — `force` is what the
-     dialog's own Save/Discard come back through. */
+  /* THE ONE DOOR out of Source. ⌘E, the statusbar mode chip and Esc all leave
+     through this call, so the unsaved-work guard is here rather than repeated at
+     three call sites — `force` is what the dialog's own Save/Discard come back
+     through. */
   if (m === "preview" && !opts.force && !guardRawExit(() => setMode("preview", Object.assign({}, opts, { force: true })))) return;
   syncRaw();
   const sc = $("#scroll");
   const keep = sc ? sc.scrollTop : 0;
   /* read the shared coordinate BEFORE the DOM is replaced under us */
-  const carry = opts.line != null ? null : state.mode === "preview" ? previewAnchor() : rawAnchor();
-  /* …and, on the way out of Raw, the caret itself — through whichever door
-     (Esc, ⌘E, the chip, a click on the pane, Back on a phone), because Enter
-     is the way back to it (ADR 0036). The anchor above is not enough: it is a
-     LINE, and resuming halfway through a sentence is the whole point. */
-  if (m === "preview") rememberRawCaret();
+  const carry = opts.line != null ? null : state.mode === "preview" ? visualAnchor() : rawAnchor();
   state.mode = m;
   syncModeUI();
   renderDoc({ noFade: true });
@@ -1273,96 +1369,30 @@ export function setMode(m, opts) {
     if (!isSheet() || opts.caret != null) focusRaw(at);
     else if (at.line != null) scrollRawTo(at.caret, at.anchor);
     /* …and, on a phone only, make sure Back has an entry to spend on leaving
-       Raw. `onPop` intercepts that press, and an interception needs a popstate
-       to intercept — at the bottom of the stack there is none. See
+       Source. `onPop` intercepts that press, and an interception needs a
+       popstate to intercept — at the bottom of the stack there is none. See
        `markerForLayer`; it no-ops wherever an entry already exists. */
     if (isSheet()) markerForLayer();
   } else {
-    alignPreview(carry);
-    /* …and leaving Raw hands back a press nothing is owed any more, by whichever
-       door it left through — ⌘E, the chip, a click on the whitespace, Esc, or
-       the Back this was reserved for. See `retireLayerMarker`. */
+    /* the island is not mounted yet (it imports itself), so this is held and
+       applied by `renderVisual` the moment it is */
+    if (carry) revealVisual(carry.line, carry.anchor);
+    /* …and leaving Source hands back a press nothing is owed any more, by
+       whichever door it left through — ⌘E, the chip, Esc, or the Back this was
+       reserved for. See `retireLayerMarker`. */
     retireLayerMarker();
   }
-  if (!opts.silent) toast(m === "raw" ? "Raw markdown" : "Rendered preview");
+  if (!opts.silent) toast(m === "raw" ? "Markdown source" : "Visual editing");
 }
 
-/* ---------- click a rendered line → edit that line in Raw ---------- */
-let downPt = null;
-let downInRaw = false;
-
-/** The pointerdown half of the two click zones — owned here so the state it
-    writes stays module-local; wiring only registers it. */
-export function trackScrollPointerDown(e) {
-  downPt = { x: e.clientX, y: e.clientY };
-  downInRaw = !!(e.target && e.target.closest && e.target.closest(".raw"));
-}
-
-export function previewClickToEdit(e) {
-  if (state.mode !== "preview") return;
-  if (settingAt("editor.clickToEdit") === false) return;
-  const t = e.target;
-  if (!t || !t.closest) return;
-  if (t.closest("button, a, input, textarea, select, .secret-bar, .cb, .wl")) return;
-  const sel = window.getSelection && window.getSelection();
-  if (sel && !sel.isCollapsed && String(sel).trim()) return;
-  if (downPt && (Math.abs(e.clientX - downPt.x) > 4 || Math.abs(e.clientY - downPt.y) > 4)) return;
-
-  const block = t.closest("[data-line]");
-  const doc = activeDoc();
-  if (!block) {
-    if (doc && !String(doc.markdown).trim() && t.closest(".empty-doc")) {
-      e.zModeSwitch = true;
-      setMode("raw", { caret: 0, silent: true });
-    }
-    return;
-  }
-  const lineNo = parseInt(block.dataset.line, 10);
-  if (isNaN(lineNo)) return;
-  /* claim the event: it still bubbles to #scroll, where click-outside lives */
-  e.zModeSwitch = true;
-  const sc = $("#scroll");
-  const anchor = block.getBoundingClientRect().top - sc.getBoundingClientRect().top;
-  setMode("raw", { caret: lineOffset(doc.markdown, lineNo), line: lineNo, anchor, silent: true });
-}
-
-export function paneClickToPreview(e) {
-  if (state.mode !== "raw") return;
-  if (e.zModeSwitch) return;
-  if (overlayOpen()) return;
-  const t = e.target;
-  if (!t || !t.closest || !t.isConnected) return;
-  if (t.closest(".raw")) return;
-  if (t.closest("button, a, input, textarea, select, label, kbd, .secret-bar")) return;
-  if (t.closest(".topbar, .statusbar, .sidebar, .chat, .modal, .veil, .pop")) return;
-  if (downInRaw) return;
-  const sel = window.getSelection && window.getSelection();
-  if (sel && !sel.isCollapsed && String(sel).trim()) return;
-  if (downPt && (Math.abs(e.clientX - downPt.x) > 4 || Math.abs(e.clientY - downPt.y) > 4)) return;
-  setMode("preview", { silent: true });
-}
-
+/** Put a source line in front of the reader: a search hit, an `openDoc({line})`,
+    an AI proposal's landing place. 0-based, the way every caller counts. */
 function revealLine(lineNo) {
   if (state.mode === "raw") {
     focusRaw({ caret: lineOffset(activeDoc().markdown, lineNo), line: lineNo, anchor: 140 });
     return;
   }
-  /* A collapsed section is not an answer to "take me to line N": unfold
-     whatever is covering the line before going looking for it (ADR 0023), the
-     way revealing a tree row force-opens the folders above it. */
-  ensureLineVisible(activeDoc(), lineNo);
-  const best = blockForLine(lineNo);
-  if (!best) return;
-  const sc = $("#scroll");
-  /* rects, not offsetTop: a foldable block is `position: relative` for its
-     chevron (ADR 0023), so a nested list item's offsetParent is its parent
-     item, not the scroller — offsetTop would put a search hit inside a
-     sub-list back at the top of the document */
-  sc.scrollTop = Math.max(0, sc.scrollTop + best.getBoundingClientRect().top - sc.getBoundingClientRect().top - 110);
-  best.classList.remove("flash-line");
-  void best.offsetWidth;
-  best.classList.add("flash-line");
-  setTimeout(() => best.classList.remove("flash-line"), 1300);
+  revealVisual(lineNo);
 }
 
 /* ============================================================
@@ -1481,6 +1511,7 @@ export async function applyTextHistory(entry, undoing) {
     const ta = $("#rawArea");
     if (ta) {
       ta.value = target;
+      ta.zSourceValue = ta.value;
       try {
         ta.focus();
         ta.setSelectionRange(caret, caret);
@@ -1564,7 +1595,11 @@ export function markDirty() {
   setSaveIndicator("Unsaved changes", "dirty");
   clearTimeout(dirtyT);
   const secs = settingAt("editor.autosaveSeconds");
-  dirtyT = setTimeout(() => saveDoc(state.active, { auto: true }), Math.max(600, secs * 1000));
+  /* the path is latched HERE, not read when the timer fires: a doc renamed from
+     another device inside the debounce window would otherwise autosave whatever
+     happened to be active by then */
+  const path = state.active;
+  dirtyT = setTimeout(() => saveDoc(path, { auto: true }), Math.max(600, secs * 1000));
 }
 
 function flashSave(txt) {
@@ -1581,7 +1616,12 @@ function flashSave(txt) {
   }, SAVE_FLASH_MS);
 }
 
-/* One save at a time per path.
+/* One save at a time per DOC, keyed by the doc object rather than by its path.
+
+   A rename from another device moves the buffer to a new path while a save is
+   in flight (`onDocChanged` retargets the same object, shell.js), and a queue
+   keyed by the old string would let the follow-up write to a path that no
+   longer exists — or, worse, race a second queue under the new one.
 
    `flushSecretEdits` re-encrypts a dirty reveal and only clears its `dirty`
    flag AFTER the worker round-trip, so two overlapping saves both saw the same
@@ -1591,34 +1631,41 @@ function flashSave(txt) {
    ⌘S is bound on the document, on the toolbar and on a 10s timer, so overlap is
    ordinary. At most one follow-up is queued: later keystrokes still get written,
    without a stampede of PUTs. */
-const saveInflight = new Map(); // path → { p, queued }
+const saveInflight = new Map(); // doc object → { p, queued }
 
 export function saveDoc(path, opts) {
   path = path || state.active;
-  if (!path) return Promise.resolve(false);
-  const cur = saveInflight.get(path);
+  const doc = path ? state.docs.get(path) : null;
+  if (!doc) return Promise.resolve(false);
+  const cur = saveInflight.get(doc);
   if (cur) {
     if (cur.queued) return cur.queued;
     cur.queued = cur.p.then(() => {
-      if (saveInflight.get(path) === cur) saveInflight.delete(path);
-      return saveDoc(path, opts);
+      if (saveInflight.get(doc) === cur) saveInflight.delete(doc);
+      /* `doc.path`, not `path`: the follow-up writes wherever the doc is by then */
+      return saveDoc(doc.path, opts);
     });
     return cur.queued;
   }
   const rec = { queued: null };
-  rec.p = doSaveDoc(path, opts).finally(() => {
-    if (saveInflight.get(path) === rec && !rec.queued) saveInflight.delete(path);
+  rec.p = doSaveDoc(doc, opts).finally(() => {
+    if (saveInflight.get(doc) === rec && !rec.queued) saveInflight.delete(doc);
   });
-  saveInflight.set(path, rec);
+  saveInflight.set(doc, rec);
   return rec.p;
 }
 
 /** @returns {Promise<boolean>} whether the document actually reached the server */
-async function doSaveDoc(path, opts) {
+async function doSaveDoc(doc, opts) {
   opts = opts || {};
-  const doc = state.docs.get(path);
-  if (!doc) return false;
+  const path = doc.path;
   if (path === state.active) syncRaw();
+  /* `visualStale`: these bytes are older than the screen, so there is nothing
+     here that may be written. The notice went up when it happened. */
+  if (visualStale === doc) {
+    if (!opts.quiet) toast("Not saved — this doc has an edit that cannot be written as Markdown");
+    return false;
+  }
   /* THE leak gate (research §6 "Autosave"): the payload is built
      from doc.markdown, which holds armor only. A block that was revealed but
      not edited contributes its original bytes; a block that WAS edited is
@@ -1629,6 +1676,9 @@ async function doSaveDoc(path, opts) {
   } catch (err) {
     return false;
   }
+  /* An external move can complete while the worker re-encrypts a dirty secret —
+     start again at the path this doc now has rather than PUTting to the old one. */
+  if (doc.path !== path) return doSaveDoc(doc, opts);
   clearTimeout(dirtyT);
   /* THE ORPHAN GATE. This buffer's file left the vault while it was dirty (see
      the `removed` branch in `connect`), so there is nothing to PUT to — and a
@@ -1655,18 +1705,26 @@ async function doSaveDoc(path, opts) {
     doc.mtime = r.mtime;
     doc.bytes = r.bytes;
     setBaseline(doc, sent);
-    if (path === state.active) state.dirty = false;
-    if (!opts.silent) flashSave(opts.auto ? "Autosaved" : "Saved");
-    /* A SILENT save still may not leave the indicator lying. `silent` has
-       always meant "no flash, no toast"; it never meant "go on reading Unsaved
-       changes over text that is now on disk". Harmless while the only silent
-       saves were on a page that was leaving — and wrong the moment the
-       lifecycle flush started running on a page that comes BACK. */
-    else if (path === state.active) setSaveIndicator("Saved");
+    if (path === state.active) {
+      /* WHAT THE SERVER TOOK IS NOT NECESSARILY WHAT IS IN FRONT OF THE USER: a
+         keystroke that landed mid-flight, or a reveal still holding an unsaved
+         edit, leaves the buffer dirty over text that did reach disk. Saying
+         "Saved" there would be the lie the exit guard then acts on. */
+      state.dirty = doc.markdown !== sent || [...state.reveal.values()].some((e) => e.path === path && e.dirty);
+      if (state.dirty) markDirty();
+      else if (!opts.silent) flashSave(opts.auto ? "Autosaved" : "Saved");
+      /* A SILENT save still may not leave the indicator lying. `silent` has
+         always meant "no flash, no toast"; it never meant "go on reading Unsaved
+         changes over text that is now on disk". */
+      else setSaveIndicator("Saved");
+    } else if (!opts.silent) flashSave(opts.auto ? "Autosaved" : "Saved");
     if (!opts.auto && !opts.silent) toast(state.sync && state.sync.remote ? "Saved to disk · " + state.sync.remote : "Saved to disk");
     refreshSessionStats();
     return true;
   } catch (err) {
+    /* …and the same move can land while the PUT is in flight: the write failed
+       against a path this doc has left, so it is reissued rather than reported. */
+    if (doc.path !== path) return doSaveDoc(doc, opts);
     /* A PUT to a doc that is not there. The `doc-changed` that would have told
        us can be lost (the stream was down, the tab was frozen) or simply not
        have arrived yet, so the 404 is the SECOND way into the orphan state and

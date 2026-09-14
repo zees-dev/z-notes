@@ -102,70 +102,11 @@ async function serverMarkdown(path = ALPHA): Promise<string> {
   return r.body.markdown;
 }
 
-async function rawPaneWhitespacePoint() {
-  return page.evaluate(() => {
-    const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-    const r = ta.getBoundingClientRect();
-    const doc = document.getElementById("doc")!.getBoundingClientRect();
-    const lineHeight = parseFloat(getComputedStyle(ta).lineHeight);
-    const textBottom = r.top + lineHeight * ta.value.split("\n").length;
-    const y = textBottom + 12;
-    const x = r.left + 24;
-    return {
-      x,
-      y,
-      target: (document.elementFromPoint(x, y) as HTMLElement | null)?.id ?? "",
-      belowText: y > textBottom,
-      outsideTextarea: y > r.bottom,
-      insideDocumentPane: y < doc.bottom,
-    };
-  });
-}
-
+/* The pane-whitespace click zone is gone with the Preview renderer (spec 0020):
+   Edit owns every pixel of the document pane, so ⌘E and the mode chip are the
+   only doors out of Source. Its three cases are re-expressed through ⌘E below. */
 describe("unsaved Raw exit", () => {
-  test("clicking below a short note exits Raw through the pane whitespace", async () => {
-    await app.clickDoc(SHORT);
-    await enterRaw();
-
-    const click = await rawPaneWhitespacePoint();
-    expect(click.target).toBe("doc");
-    expect(click.belowText).toBe(true);
-    expect(click.outsideTextarea).toBe(true);
-    expect(click.insideDocumentPane).toBe(true);
-
-    await page.mouse.click(click.x, click.y);
-    expect(await page.evaluate(() => document.getElementById("stMode")!.dataset.mode)).toBe("preview");
-    expect(await guardOpen()).toBe(false);
-    expect(pageErrors).toEqual([]);
-  }, 30000);
-
-  test("clicking below a dirty short note opens the staged-diff exit guard", async () => {
-    await app.clickDoc(SHORT);
-    await enterRaw();
-    await typeMarkdown("# Short\nchanged second line");
-
-    const click = await rawPaneWhitespacePoint();
-    expect(click.target).toBe("doc");
-    expect(click.outsideTextarea).toBe(true);
-    await page.mouse.click(click.x, click.y);
-    await waitGuard(true);
-
-    expect(await page.evaluate(() => document.getElementById("stMode")!.dataset.mode)).toBe("raw");
-    expect(await page.$$eval("#xgDiff .dl", (rows) =>
-      rows.map((row) => ({
-        marker: row.querySelector(".g")?.textContent ?? "",
-        text: row.querySelector(".t")?.textContent ?? "",
-      }))
-    )).toEqual([
-      { marker: "-", text: "second line" },
-      { marker: "+", text: "changed second line" },
-    ]);
-    await page.keyboard.press("Escape");
-    await waitGuard(false);
-    expect(pageErrors).toEqual([]);
-  }, 30000);
-
-  test("Esc shows only changed lines; Esc keeps editing; Discard changes lands in Preview", async () => {
+  test("Esc shows only changed lines; Esc keeps editing; Discard changes lands in Edit", async () => {
     await enterRaw();
     await typeMarkdown(EDITED);
 
@@ -224,7 +165,7 @@ describe("unsaved Raw exit", () => {
     expect(pageErrors).toEqual([]);
   }, 60000);
 
-  test("turning off Ask before leaving edits saves before Preview and navigation without a prompt", async () => {
+  test("turning off Ask before leaving edits saves before Edit and navigation without a prompt", async () => {
     expect((await srv.get("/api/settings")).body.settings.editor.confirmBeforeExit).toBe(true);
     try {
       await gotoSettings(page);
@@ -235,11 +176,12 @@ describe("unsaved Raw exit", () => {
       /* Saving the draft applies the preference live; no reload is needed. */
       await app.clickDoc(SHORT);
       await enterRaw();
-      const previewBytes = "# Short\n\nauto-saved before Preview\n";
+      const previewBytes = "# Short\n\nauto-saved before Edit\n";
       await typeMarkdown(previewBytes);
 
-      const click = await rawPaneWhitespacePoint();
-      await page.mouse.click(click.x, click.y);
+      /* ⌘E, the door the click zone used to be: with the preference off it
+         writes first and leaves for Edit without asking */
+      await pressChord(page, "KeyE");
       await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", {
         timeout: 10000,
       });

@@ -34,12 +34,6 @@ export const state = {
      Seeded from the server's `folders.open`; tree.js mirrors every user toggle
      into `znotes.tree-open`, so a reload draws the tree as it was left. */
   folderOpen: new Map(),
-  /* Preview's collapsed sections — qualified path → Set of fold keys (ADR
-     0023). The twin of `folderOpen` one pane over: a view choice the server has
-     no opinion about, kept OUTSIDE the DOM because every render rebuilds `#doc`
-     from scratch, so a mode switch or an SSE refresh re-applies it for free.
-     markdown.js is its only writer and mirrors it into localStorage. */
-  folds: new Map(),
   active: null,
   /* Which PLACE the editor pane is showing: the open doc, or the settings page
      at `/settings`. `active` keeps naming the doc either way — settings is a
@@ -52,7 +46,7 @@ export const state = {
   settingsExit: "open",
   settingsSection: "", // the `/settings/<section>` the address bar carries, if any
   mode: "preview",
-  /* Raw word wrapping is a view choice, like mode rather than file content.
+  /* Source word wrapping is a view choice, like mode rather than file content.
      It is remembered per browser and never changes the markdown bytes. */
   wordWrap: true,
   dirty: false,

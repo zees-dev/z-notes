@@ -66,7 +66,6 @@ export const NUMBERS: Record<string, NumberSpec> = {
 
 /** Settings that are strictly true/false, healed and validated as a group. */
 export const BOOLEANS = [
-  "editor.clickToEdit",
   "editor.confirmBeforeExit",
   "git.autoSync",
   "terminal.enabled",
@@ -106,7 +105,6 @@ export const DEFAULTS = {
   editor: {
     autosaveSeconds: 10,
     tabSize: 2,
-    clickToEdit: true,
     confirmBeforeExit: true,
     homeDoc: HOME_DOC_DEFAULT,
   },
@@ -1306,7 +1304,6 @@ const KEY_DOC: Record<string, string> = {
   colorScheme: "system | dark | light. `system` follows the OS and repaints live.",
   "editor.autosaveSeconds": "Write to disk this long after you stop typing.",
   "editor.tabSize": "Spaces inserted by Tab in Raw mode, and the width used to display literal tab bytes.",
-  "editor.clickToEdit": "Clicking rendered text jumps to that line in Raw.",
   "editor.confirmBeforeExit": "Ask before leaving edits that have not reached disk; off saves them first.",
   "editor.homeDoc":
     "Doc the vault button (top left) opens. Vault-relative path; empty means the first doc.",

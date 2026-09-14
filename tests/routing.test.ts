@@ -233,7 +233,7 @@ describe("routing — BACK and FORWARD walk the docs", () => {
 
   test("a [[wiki-link]] click pushes an entry that BACK undoes", async () => {
     await boot("/"); // A = event-pipeline, which carries [[z-notes-design]]
-    await page.click('#doc .wl[data-link="z-notes-design"]');
+    await page.locator('#doc button.wiki-link[data-target="z-notes-design"]').click();
     await settled(B);
     await backTo(A);
     expect(await shown()).toBe(A);
@@ -242,7 +242,7 @@ describe("routing — BACK and FORWARD walk the docs", () => {
   test("a qualified double-extension [[wiki-link]] resolves exactly and navigates", async () => {
     await boot("/");
     await clickDoc(LINK_SOURCE);
-    const selector = `#doc .wl[data-link="${LINK_TARGET}"]`;
+    const selector = `#doc button.wiki-link[data-target="${LINK_TARGET}"]`;
     await page.waitForSelector(selector);
     expect(await page.$eval(selector, (link) => link.classList.contains("broken"))).toBe(false);
     await page.click(selector);
@@ -253,7 +253,7 @@ describe("routing — BACK and FORWARD walk the docs", () => {
   test("a ./-qualified root double-extension [[wiki-link]] stays distinct from its sibling", async () => {
     await boot("/");
     await clickDoc(ROOT_LINK_SOURCE);
-    const selector = `#doc .wl[data-link="./${ROOT_LINK_TARGET}"]`;
+    const selector = `#doc button.wiki-link[data-target="./${ROOT_LINK_TARGET}"]`;
     await page.waitForSelector(selector);
     expect(await page.$eval(selector, (link) => link.classList.contains("broken"))).toBe(false);
     await page.click(selector);

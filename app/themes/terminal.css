@@ -185,7 +185,6 @@
   --scroll-thumb-hover: #2e4a3f;
   --mark-fg: #e8b14b;                  /* fzf-style amber hit */
   --code-inline-fg: #e8b14b;
-  --hover-tint: rgba(111, 209, 139, .06);
   --scrim-bg: rgba(3, 6, 5, .72);
 
   /* --- lit elevation ----------------------------------------------------- */
@@ -274,7 +273,6 @@
                                           darker than --panel-3 — so the amber
                                           goes a step deeper than --warn */
   --code-inline-fg: #6f4c0d;
-  --hover-tint: rgba(47, 107, 69, .06);
   --scrim-bg: rgba(38, 42, 36, .35);
 
   /* --- elevation: paper casts a soft shadow, not a glow ------------------ */
@@ -377,7 +375,7 @@
     9 · Bordered segmented controls, cyan folder rows, the secret block's green
         fence, the phosphor glow on the live-connection lamp, and squaring the
         handful of radii base hardcodes instead of tokenising (send button,
-        secret icon, empty-doc ring, switch knob).
+        secret icon, switch knob).
    10 · The five hard-coded cyan/magenta hues above are the only colours here
         that are not tokens (they are ornament, not palette), so the light
         scheme restates exactly those five — nothing else needs a light twin.
@@ -412,13 +410,6 @@ html[data-theme="terminal"] .stack-t::after,
 html[data-theme="terminal"] .grp-t::after,
 html[data-theme="terminal"] .pop h4::after { content: " ├"; color: var(--muted-2); }
 
-/* 4 · markdown syntax markers */
-html[data-theme="terminal"] .md h1::before { content: "# ";   color: var(--accent);  opacity: var(--heading-prefix-opacity); }
-html[data-theme="terminal"] .md h2::before { content: "## ";  color: var(--ok-bd);   opacity: 1; }
-html[data-theme="terminal"] .md h3::before { content: "### "; color: var(--muted-2); opacity: 1; }
-html[data-theme="terminal"] .md h2 { color: var(--accent); }
-html[data-theme="terminal"] .md h3 { color: #63c9d6; }
-
 /* 5 · prompt glyphs and speaker colours */
 html[data-theme="terminal"] .msg.user .bubble::before { content: "❯ "; color: var(--accent); }
 html[data-theme="terminal"] .msg.user .who { color: #63c9d6; }
@@ -449,7 +440,6 @@ html[data-theme="terminal"] .conn .dot { box-shadow: 0 0 8px rgba(111, 209, 139,
 html[data-theme="terminal"] .send,
 html[data-theme="terminal"] .secret-ico,
 html[data-theme="terminal"] .secret-mask > i,
-html[data-theme="terminal"] .empty-doc .ring,
 html[data-theme="terminal"] .sw::after { border-radius: 0; }
 html[data-theme="terminal"] .sw::after { background: var(--muted); }
 html[data-theme="terminal"] .sw.on::after { background: var(--accent-on); }
@@ -457,7 +447,6 @@ html[data-theme="terminal"] .sw.on::after { background: var(--accent-on); }
 /* 10 · the ornament hues, restated for paper. #63c9d6 (5.6:1 on carbon) is
        1.9:1 on cream and #d38ac2 is 2.6:1 — both illegible — so the cyan
        becomes a teal at 4.8:1 and the magenta a plum at 5.4:1. */
-html[data-theme="terminal"][data-scheme="light"] .md h3 { color: #1f6b78; }
 html[data-theme="terminal"][data-scheme="light"] .msg.user .who { color: #1f6b78; }
 html[data-theme="terminal"][data-scheme="light"] .msg.ai .who { color: #8b3d78; }
 html[data-theme="terminal"][data-scheme="light"] .msg.ai .bubble { box-shadow: inset 1px 0 0 rgba(139, 61, 120, .5); }

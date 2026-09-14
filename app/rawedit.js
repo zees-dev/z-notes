@@ -1,15 +1,14 @@
 /* ============================================================
    rawedit.js — the Raw surface, as a LINE EDITOR (ADR 0032).
 
-   A `<textarea>` has exactly one font size. Preview does not: an `h1` is
+   A `<textarea>` has exactly one font size. Edit does not: an `h1` is
    `--h1-size`, body copy is `--d-font`, and a link is the accent colour. So
-   every ⌘E and every click-to-edit resized the whole document, the one thing
-   ADR 0027 could not fix: it keeps the LINE under the reader, not the line's
-   size. Per-line typography is not expressible in a textarea at all, so the
-   textarea is gone. What replaces it is one `contenteditable` root with one
-   block element per SOURCE LINE, styled by what that line is, and links
-   painted through the CSS Custom Highlight API so no inline DOM ever changes
-   under the caret.
+   every ⌘E resized the whole document, the one thing ADR 0027 could not fix:
+   it keeps the LINE under the reader, not the line's size. Per-line typography
+   is not expressible in a textarea at all, so the textarea is gone. What
+   replaces it is one `contenteditable` root with one block element per SOURCE
+   LINE, styled by what that line is, and links painted through the CSS Custom
+   Highlight API so no inline DOM ever changes under the caret.
 
    THE SEAM IS THE TEXTAREA'S OWN VOCABULARY. This element answers to `value`,
    `selectionStart`/`selectionEnd`, `setSelectionRange`, `placeholder`, `wrap`
@@ -44,14 +43,14 @@ import { $, trimUrlTail } from "./ui.js";
 /* ============================================================
    THE TWO PURE PASSES
 
-   Both restate rules that live in markdown.js / ui.js rather than importing
-   them: this module is a LEAF of the editor, not a peer of the renderer, and
-   the renderer's versions work on escaped HTML mid-emission. Keep them in step
-   with the sources the citations below name.
+   Both restate rules that live in ui.js or in the theme rather than importing
+   them: this module is a LEAF of the editor, and ui.js's version works on
+   escaped HTML mid-emission. Keep them in step with the sources the citations
+   below name.
    ============================================================ */
 
-/* app/markdown.js's own two, verbatim. Preview renders only `#`–`###` as
-   headings, so `####` is a paragraph there and body-sized here. */
+/* The themes size three heading levels (`--h1-size`–`--h3-size`, base.css),
+   the same three Edit draws, so `####` is body copy there and here. */
 const RE_FENCE = /^\s*```/;
 const RE_HEAD = /^(#{1,3})\s+(.+)$/;
 
@@ -93,10 +92,10 @@ const RE_SCHEME = /^(https?:\/\/|mailto:)/i;
 /**
  * The link ranges over `text`, as `[{start, end}]` offsets into it.
  *
- * Never inside an inline code span and never inside a fence, because Preview
- * does not link there either — the promise a fence makes is that what is in it
- * is literal, and a highlight that disagreed would be the renderer lying about
- * the file.
+ * Never inside an inline code span and never inside a fence, because Edit does
+ * not link there either — the promise a fence makes is that what is in it is
+ * literal, and a highlight that disagreed would be the editor lying about the
+ * file.
  */
 export function linkRanges(text) {
   const src = String(text);

@@ -14,7 +14,7 @@ import * as api from "./api.js";
 import { dedentArmor, indentArmor, isArmorShape } from "./armor.js";
 import { state } from "./state.js";
 import { $, $$, I, activeDoc, el, esc, toast } from "./ui.js";
-import { autoGrow, markDirty, saveDoc, syncModeUI, syncRawFromModel, updateMeta, viewedPath } from "./editor.js";
+import { autoGrow, markDirty, replaceVisualSecret, saveDoc, syncModeUI, syncRawFromModel, updateMeta, viewedPath } from "./editor.js";
 import { settingAt } from "./settings.js";
 
 /* ============================================================
@@ -267,8 +267,11 @@ async function onVaultLocked(reason) {
   toast(why ? "Vault locked — " + why : "Vault locked");
   for (const [p, ents] of pending) {
     try {
-      await flushSecretEdits(state.docs.get(p), ents);
-      await saveDoc(p, { silent: true });
+      /* the doc object, not the snapshotted path: a `moved` echo can retarget it
+         while the flush is with the worker, and the write must follow the file */
+      const doc = state.docs.get(p);
+      await flushSecretEdits(doc, ents);
+      await saveDoc(doc?.path || p, { silent: true });
     } catch (e) {}
   }
 }
@@ -729,8 +732,16 @@ function armorOffset(md, armor, ord) {
     wrong fence whenever a document held the same ciphertext twice — the edit
     landed on the other block and that block's own content was destroyed, both
     silently, under a "Saved to disk" toast.
+
+    A STRING `ord` is a mounted block's stable island id, which survives both
+    identical ciphertext and a drag: the island owns the model then, so the swap
+    goes through it and the offset is read back from the new markdown.
     @returns the offset the swap happened at, or -1 if the block is gone. */
 function replaceArmorInDoc(doc, oldArmor, newArmor, ord) {
+  if (typeof ord === "string") {
+    const replaced = replaceVisualSecret(doc.path, ord, newArmor);
+    return replaced ? doc.markdown.indexOf(newArmor) : -1;
+  }
   const at = armorOffset(doc.markdown, oldArmor, ord);
   if (at < 0) return -1;
   doc.markdown = doc.markdown.slice(0, at) + newArmor + doc.markdown.slice(at + oldArmor.length);
@@ -748,6 +759,81 @@ function rekeyReveals(path) {
     state.reveal.delete(k);
   }
   for (const e of ents) state.reveal.set(revealKey(path, e.armor, e.ord), e);
+}
+
+/* ---------- block identity across the two surfaces ----------
+
+   A reveal is keyed by (path, armor, ord). In Source the ord is the SOURCE
+   OCCURRENCE NUMBER of that ciphertext; while the island is mounted it is the
+   block's stable island ID (a string), which is the only identifier that follows
+   a dragged block and tells two identical ciphertexts apart. `bindSecretIds`
+   converts on mount, `releaseSecretIds` converts back on unmount, and a reveal
+   whose block is gone from the model is dropped rather than re-keyed. */
+
+/* Entries whose ciphertext is with the worker right now: they are out of
+   `state.reveal` (locking clears it) but their identity still has to be moved by
+   every retarget below, or the swap lands on the wrong block. */
+const flushingSecrets = new Set();
+
+/** Follow a moved doc. Called after the island released its ids and before the
+    moved doc mounts, so every identity in flight is a source ordinal. */
+export function retargetSecrets(from, to) {
+  dropRevealsInFlight();
+  for (const entry of new Set([...state.reveal.values(), ...flushingSecrets])) {
+    if (entry.path === from) entry.path = to;
+  }
+  rekeyReveals(to);
+  for (const [key, failure] of secretFailures) {
+    if (!key.startsWith(from + "\0")) continue;
+    secretFailures.delete(key);
+    secretFailures.set(to + key.slice(from.length), failure);
+  }
+}
+
+/** Carry a block's sticky decrypt failure onto its new identity. */
+function moveFailure(path, armor, from, to) {
+  const failure = secretFailures.get(revealKey(path, armor, from));
+  if (!failure) return;
+  secretFailures.delete(revealKey(path, armor, from));
+  secretFailures.set(revealKey(path, armor, to), failure);
+}
+
+/** Source ordinal → island id, as the island mounts this block. */
+export function bindSecretIds(path, armor, ord, id) {
+  moveFailure(path, armor, ord, id);
+  const key = revealKey(path, armor, ord);
+  const entry = state.reveal.get(key);
+  for (const pending of flushingSecrets) {
+    if (pending.path === path && pending.armor === armor && pending.ord === ord) pending.ord = id;
+  }
+  if (entry) {
+    state.reveal.delete(key);
+    entry.ord = id;
+    state.reveal.set(revealKey(path, armor, id), entry);
+  }
+}
+
+/** Island ids → source ordinals, as the island unmounts. `blocks` is the
+    island's secret blocks IN SOURCE ORDER, which is what defines the ordinals. */
+export function releaseSecretIds(path, blocks) {
+  dropRevealsInFlight();
+  const counts = new Map();
+  const positions = new Map();
+  for (const block of blocks) {
+    const ord = counts.get(block.ciphertext) || 0;
+    moveFailure(path, block.ciphertext, block.id, ord);
+    positions.set(block.id, ord);
+    counts.set(block.ciphertext, ord + 1);
+  }
+  for (const entry of flushingSecrets) {
+    if (entry.path === path && positions.has(entry.ord)) entry.ord = positions.get(entry.ord);
+  }
+  for (const [key, entry] of state.reveal) {
+    if (entry.path !== path || typeof entry.ord !== "string") continue;
+    if (!positions.has(entry.ord)) state.reveal.delete(key);
+    else entry.ord = positions.get(entry.ord);
+  }
+  rekeyReveals(path);
 }
 
 /**
@@ -770,62 +856,84 @@ export async function flushSecretEdits(doc, entries) {
     for (const e of state.reveal.values()) if (e.path === doc.path && e.dirty) dirty.push(e);
   }
   if (!dirty.length) return;
-  for (const e of dirty) {
-    const prev = e.armor;
-    const prevOrd = e.ord || 0;
-    /* what we are ENCRYPTING, snapshotted before the await: anything typed
-       during the worker round-trip is not in this ciphertext, and clearing
-       `dirty` for it would drop the keystrokes on the floor */
-    const sent = e.plain;
-    let out;
-    try {
-      out = await secretsCall("encrypt", { plaintext: sent });
-    } catch (err) {
-      toast("Could not re-encrypt a secret block — nothing was saved");
-      throw err;
+  /* out of `state.reveal` and still identified: a lock clears the map, and a
+     retarget in the meantime has to move these entries too */
+  for (const e of dirty) flushingSecrets.add(e);
+  try {
+    for (const e of dirty) {
+      const prev = e.armor;
+      /* what we are ENCRYPTING, snapshotted before the await: anything typed
+         during the worker round-trip is not in this ciphertext, and clearing
+         `dirty` for it would drop the keystrokes on the floor */
+      const sent = e.plain;
+      let out;
+      try {
+        out = await secretsCall("encrypt", { plaintext: sent });
+      } catch (err) {
+        toast("Could not re-encrypt a secret block — nothing was saved");
+        throw err;
+      }
+      /* read AFTER the await: a mount or unmount inside the round trip changes
+         which identity this entry carries */
+      const prevOrd = e.ord || 0;
+      const next = indentArmor(out.armor, e.indent);
+      /* An island id keeps its identity across the swap, so the entry and the
+         live nodes are moved onto the new armor BEFORE the transaction — React
+         may repaint synchronously inside it. */
+      if (typeof prevOrd === "string") {
+        e.armor = next;
+        rekeyReveals(doc.path);
+        for (const node of $$("#doc .secret")) {
+          if (node.zSecret?.path === doc.path && node.zSecret.ord === prevOrd) node.zSecret.armor = next;
+        }
+      }
+      const at = replaceArmorInDoc(doc, prev, next, prevOrd);
+      if (at < 0) {
+        /* The block is simply GONE from the document — deleted in Source, replaced
+           by a proposal, overwritten from disk. That is an ordinary thing to do,
+           and the old behaviour (throw, and let saveDoc swallow it) wedged every
+           subsequent save of this doc for the rest of the session and then lost
+           the buffer on the next navigation. Drop the orphan and keep going. */
+        state.reveal.delete(revealKey(doc.path, e.armor, prevOrd));
+        toast("A revealed secret block is no longer in this document — its edit could not be re-attached");
+        continue;
+      }
+      /* which copy of the NEW armor this is (age is nondeterministic, so this is
+         0 — asked rather than assumed); an island id is unchanged by the swap */
+      let nextOrd = prevOrd;
+      if (typeof prevOrd !== "string") {
+        nextOrd = 0;
+        for (let hit = doc.markdown.indexOf(next); hit >= 0 && hit < at; hit = doc.markdown.indexOf(next, hit + next.length)) nextOrd++;
+        /* every later copy of `prev` just moved up one place */
+        const seen = new Set(state.reveal.values());
+        for (const o of dirty) seen.add(o);
+        for (const o of seen) {
+          if (typeof o.ord !== "string" && o !== e && o.path === doc.path && o.armor === prev && (o.ord || 0) > prevOrd) o.ord = (o.ord || 0) - 1;
+        }
+      }
+      /* the live node keeps its identity across the swap, so an open editor is
+         not yanked out from under the cursor mid-autosave — and ONLY that node:
+         retargeting every node with matching armor handed the untouched twin the
+         edited block's new ciphertext */
+      $$("#doc .secret").forEach((w) => {
+        const c = w.zSecret;
+        if (!c || c.path !== doc.path || c.armor !== prev) return;
+        if ((c.ord || 0) === prevOrd) {
+          c.armor = next;
+          c.ord = nextOrd;
+        } else if (typeof prevOrd !== "string" && typeof c.ord !== "string" && (c.ord || 0) > prevOrd) c.ord = (c.ord || 0) - 1;
+      });
+      e.armor = next;
+      e.ord = nextOrd;
+      /* only clean if the plaintext is still the one we just encrypted */
+      e.dirty = e.plain !== sent;
+      rekeyReveals(doc.path);
     }
-    const next = indentArmor(out.armor, e.indent);
-    const at = replaceArmorInDoc(doc, prev, next, prevOrd);
-    if (at < 0) {
-      /* The block is simply GONE from the document — deleted in Raw, replaced
-         by a proposal, overwritten from disk. That is an ordinary thing to do,
-         and the old behaviour (throw, and let saveDoc swallow it) wedged every
-         subsequent save of this doc for the rest of the session and then lost
-         the buffer on the next navigation. Drop the orphan and keep going. */
-      state.reveal.delete(revealKey(doc.path, prev, prevOrd));
-      toast("A revealed secret block is no longer in this document — its edit could not be re-attached");
-      continue;
-    }
-    /* which copy of the NEW armor this is (age is nondeterministic, so this is
-       0 — asked rather than assumed) */
-    let nextOrd = 0;
-    for (let hit = doc.markdown.indexOf(next); hit >= 0 && hit < at; hit = doc.markdown.indexOf(next, hit + next.length)) nextOrd++;
-    /* every later copy of `prev` just moved up one place */
-    const seen = new Set(state.reveal.values());
-    for (const o of dirty) seen.add(o);
-    for (const o of seen) {
-      if (o !== e && o.path === doc.path && o.armor === prev && (o.ord || 0) > prevOrd) o.ord = (o.ord || 0) - 1;
-    }
-    /* the live node keeps its identity across the swap, so an open editor is
-       not yanked out from under the cursor mid-autosave — and ONLY that node:
-       retargeting every node with matching armor handed the untouched twin the
-       edited block's new ciphertext */
-    $$("#doc .secret").forEach((w) => {
-      const c = w.zSecret;
-      if (!c || c.path !== doc.path || c.armor !== prev) return;
-      if ((c.ord || 0) === prevOrd) {
-        c.armor = next;
-        c.ord = nextOrd;
-      } else if ((c.ord || 0) > prevOrd) c.ord = (c.ord || 0) - 1;
-    });
-    e.armor = next;
-    e.ord = nextOrd;
-    /* only clean if the plaintext is still the one we just encrypted */
-    e.dirty = e.plain !== sent;
-    rekeyReveals(doc.path);
+  } finally {
+    for (const e of dirty) flushingSecrets.delete(e);
   }
   updateMeta();
-  /* the model moved under the Raw textarea — push it back, or the next
+  /* the model moved under the Source textarea — push it back, or the next
      syncRaw() writes the pre-flush armor over what was just saved */
   syncRawFromModel(doc);
 }
@@ -882,7 +990,7 @@ export async function encryptSelection() {
        the keyring, which is also what makes encryption possible again */
     if (!(await ensureUnlocked())) return;
   }
-  if (state.mode !== "raw") return toast("Switch to Raw (⌘E) to encrypt a selection");
+  if (state.mode !== "raw") return toast("Switch to Source (⌘E) to encrypt a selection");
   const ta = $("#rawArea");
   const doc = activeDoc();
   if (!ta || !doc) return;
@@ -951,7 +1059,7 @@ const secretFailures = new Map();
 
 /* Decrypts IN FLIGHT, keyed exactly the way `state.reveal` is. Every render
    path asks for a reveal (renderDoc, repaintSecret, an SSE reconcile, ⌘E back
-   into Preview), so the ask has to be idempotent: one worker round trip per
+   into Edit), so the ask has to be idempotent: one worker round trip per
    block, no matter how many times the block is painted while it is running. */
 const revealing = new Set();
 
@@ -985,11 +1093,10 @@ const MASK_CELLS = 14;
  * A locked block used to render the armor — first inline, then behind a
  * disclosure. Both were wrong for the same reason: several hundred bytes of
  * base64 in the middle of a document READ as an exposed secret, whatever the
- * badge above them said, and a disclosure spanning the doc width in a pane
- * that invites you to click a line is one stray click from the same wall. So
- * the block shows nothing of itself at all — no armor, no header line, no byte
- * or line count. Raw mode (⌘E) is the honest way to see the source, and it is
- * the only one.
+ * badge above them said, and a disclosure spanning the doc width is one stray
+ * click from the same wall. So the block shows nothing of itself at all — no
+ * armor, no header line, no byte or line count. Source mode (⌘E) is the honest
+ * way to see the source, and it is the only one.
  *
  * There are no text nodes in here, so neither `innerText` nor `textContent`
  * can carry a byte of the block, and it is `aria-hidden` because it says
@@ -998,7 +1105,7 @@ const MASK_CELLS = 14;
 function maskedBody(pending) {
   const m = el("div", "secret-mask" + (pending ? " pending" : ""));
   m.setAttribute("aria-hidden", "true");
-  m.title = pending ? "Decrypting…" : "Ciphertext hidden — press ⌘E for the raw source";
+  m.title = pending ? "Decrypting…" : "Ciphertext hidden — press ⌘E for Source";
   for (let i = 0; i < MASK_CELLS; i++) m.appendChild(el("i"));
   return m;
 }
@@ -1165,7 +1272,7 @@ export function secretEl(docPath, armor, indent, ord) {
       secretNote(
         "This ```age fence does not contain age armor, so nothing here is encrypted — " +
           "the text above is stored, committed and pushed exactly as you see it. " +
-          "Encrypt it with ⌘⇧E in Raw mode, or remove the fence."
+          "Encrypt it with ⌘⇧E in Source mode, or remove the fence."
       )
     );
   } else {

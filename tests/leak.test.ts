@@ -60,14 +60,16 @@ const SEED = {
     armorBlock("", "\r\n") +
     "\r\nCRLFAFTERMARKER prose below\r\n",
 
-  /* ---- prefixes the RENDERER accepts and the server's probe did not ----
+  /* ---- prefixes a CLIENT can accept and the server's probe did not ----
 
-     app/markdown.js opens a fence on /^\s*```/ and JS `\s` is far wider than the
-     `[ \t>]` the server used: a no-break space, a form feed, an ideographic
-     space or a BOM in front of the fence made a block that the browser paints
-     as "Secret block · Locked" and offers to unlock, while `redact()` never
-     saw it — so the armor went into sqlite, into FTS5 and back out of
-     /api/search. Invisible characters, so nothing looks wrong. */
+     The widest fence opener this app has ever painted as a secret block is
+     `/^\s*```/`, and JS `\s` is far wider than the `[ \t>]` the server used: a
+     no-break space, a form feed, an ideographic space or a BOM in front of the
+     fence made a block the browser offered to unlock while `redact()` never saw
+     it — so the armor went into sqlite, into FTS5 and back out of /api/search.
+     Invisible characters, so nothing looks wrong. The hand-written preview
+     renderer that read fences that way is gone (spec 0020); the server contract
+     it exposed is what these docs assert, and it is unchanged. */
   "nbsp.md":
     "# NBSP\n\nNBSPBEFOREMARKER prose above\n\n" + armorBlock("\u00A0", "\n") + "\nNBSPAFTERMARKER prose below\n",
   "formfeed.md":
@@ -226,16 +228,22 @@ describe("leak canary", () => {
 
    vault.ts's comment says hasSecrets() and redact() "MUST agree by
    construction" — but the construction only ever compared the server's two
-   probes with each other. The reader that actually decides whether a user
-   BELIEVES a block is encrypted is the renderer, and its opener is
-   `/^\s*```/` (app/markdown.js RE_FENCE). A server probe narrower than that is a
-   fence the browser paints as a secret and the indexer swallows whole.
+   probes with each other. What a server probe must never be narrower than is
+   the grammar a CLIENT can read a secret block by: the widest one this app has
+   ever shipped is `/^\s*```/`, the opener of the hand-written preview renderer
+   (`app/markdown.js` RE_FENCE). That renderer is gone — Edit reads fences by
+   CommonMark now, through the MDAST adapter (ADR 0037), which is strictly
+   narrower — but the grammar is kept here verbatim as the FLOOR, because what
+   is asserted below is the server's own contract and that contract has not
+   changed: a fence some client can paint as a secret while the indexer swallows
+   it whole is the leak, whoever that client is.
 
    Direction matters and only one direction is a leak: the server may be WIDER
    (it then over-redacts, which costs search recall, never confidentiality).
    ============================================================ */
-describe("fence grammar — the server is never narrower than the renderer", () => {
-  /* the renderer's own opener, verbatim from app/markdown.js */
+describe("fence grammar — the server is never narrower than the widest client", () => {
+  /* the widest opener any client of this app has read as a fence, verbatim from
+     the deleted app/markdown.js */
   const RE_FENCE = /^\s*```/;
 
   const PREFIXES = [
@@ -252,14 +260,12 @@ describe("fence grammar — the server is never narrower than the renderer", () 
     ["  \t", "mixed"],
   ] as const;
 
-  test("every opener the renderer treats as ```age is a secret block server-side", async () => {
+  test("every opener that grammar treats as ```age is a secret block server-side", async () => {
     const { hasSecrets } = await import("../server/vault");
     for (const [prefix, label] of PREFIXES) {
       const line = prefix + "```age";
-      /* precondition: this really is a fence to the renderer */
-      expect(`${label} opens a fence in the renderer: ${RE_FENCE.test(line)}`).toBe(
-        `${label} opens a fence in the renderer: true`
-      );
+      /* precondition: this really is a fence to that grammar */
+      expect(`${label} opens a fence: ${RE_FENCE.test(line)}`).toBe(`${label} opens a fence: true`);
       const md = "# doc\n\n" + line + "\n" + ARMOR_HEAD + "\n" + ARMOR_B64_1 + "\n" + ARMOR_TAIL + "\n```\n";
       expect(`${label} → hasSecrets ${hasSecrets(md)}`).toBe(`${label} → hasSecrets true`);
     }
@@ -289,18 +295,18 @@ describe("fence grammar — the server is never narrower than the renderer", () 
 
   /* ----------------------------------------------------------------
      The OTHER half of the same parity, and the half that was missing:
-     the prefix cases above all walk the text BEFORE the backticks. The
-     renderer's info string is `line.replace(/^\s*```/, "").trim()`, so the
-     whitespace AFTER the backticks is equally load-bearing — ``` ``` age ```
-     paints a locked secret block in the browser while a probe that demanded
-     `age` abut the ticks saw an ordinary paragraph. Every server probe is
-     built on that one opener, so a miss meant hasSecrets=false, redact()
+     the prefix cases above all walk the text BEFORE the backticks. The info
+     string is `line.replace(/^\s*```/, "").trim()`, so the whitespace AFTER the
+     backticks is equally load-bearing — ``` ``` age ``` is a locked secret
+     block to that grammar while a probe that demanded `age` abut the ticks saw
+     an ordinary paragraph. Every server probe is built on that one opener, so a
+     miss meant hasSecrets=false, redact()
      leaving the armor, redactForAi() leaving the armor, and ageFenceRanges()
      empty — i.e. armor in sqlite/FTS/search AND a `rewrite` sailing past the
      secret_intersect guard to delete a real block.
 
-     So this asserts the invariant DIRECTLY, over the renderer's own classifier:
-     for every opener the renderer calls a secret block, all four probes agree.
+     So this asserts the invariant DIRECTLY, over that classifier: for every
+     opener it calls a secret block, all four server probes agree.
      ---------------------------------------------------------------- */
   const OPENERS: Array<[string, string, boolean]> = [
     ["```age", "canonical", true],
@@ -311,24 +317,25 @@ describe("fence grammar — the server is never narrower than the renderer", () 
     ["  ``` age", "indented, space after the ticks", true],
     ["\u00A0``` age", "U+00A0 then a space after the ticks", true],
     ["```age ", "trailing space only", true],
-    /* the renderer does not open a fence after a blockquote marker; the server
+    /* the grammar does not open a fence after a blockquote marker; the server
        deliberately does, and being WIDER only ever over-redacts */
     ["> ``` age", "blockquoted, space after the ticks", false],
   ];
 
-  /** the renderer's own classifier, verbatim from app/markdown.js (the lang === "age" test in renderPreview) */
-  const rendererSaysSecret = (line: string) =>
+  /** that grammar's own classifier, verbatim from the deleted app/markdown.js
+      (the `lang === "age"` test in its renderPreview) */
+  const paintedAsSecret = (line: string) =>
     RE_FENCE.test(line) && line.replace(RE_FENCE, "").trim() === "age";
 
-  test("the info string is parsed as the renderer parses it, not pattern-matched", async () => {
+  test("the info string is parsed as a client parses it, not pattern-matched", async () => {
     const { hasSecrets, redact, redactForAi, ageFenceRanges, intersectsAgeFence } = await import("../server/vault");
 
     for (const [opener, label, rendered] of OPENERS) {
       const md = "# doc\n\nBEFOREMARKER\n\n" + opener + "\n" + ARMOR_HEAD + "\n" + ARMOR_B64_1 + "\n" + ARMOR_TAIL + "\n```\n\nAFTERMARKER\n";
 
-      /* precondition: the browser really does paint this as "Secret · Locked" */
-      expect(`${label} is a secret block to the renderer: ${rendererSaysSecret(opener)}`).toBe(
-        `${label} is a secret block to the renderer: ${rendered}`
+      /* precondition: a client really can read this as "Secret · Locked" */
+      expect(`${label} is a secret block to that grammar: ${paintedAsSecret(opener)}`).toBe(
+        `${label} is a secret block to that grammar: ${rendered}`
       );
 
       expect(`${label} → hasSecrets ${hasSecrets(md)}`).toBe(`${label} → hasSecrets true`);
@@ -354,11 +361,11 @@ describe("fence grammar — the server is never narrower than the renderer", () 
   /* ----------------------------------------------------------------
      The CLOSE probe, whose direction is INVERTED.
 
-     For an opener, wider-than-the-renderer is the safe side. For a close it is
-     the leak: a line the server accepts as the end of the fence but the
-     renderer does not ENDS the redacted region early, while app.js keeps
-     consuming lines into the same "Secret" block. Everything after that line
-     and before the real close is painted encrypted in the browser and stored
+     For an opener, wider-than-the-client is the safe side. For a close it is
+     the leak: a line the server accepts as the end of the fence but a client
+     does not ENDS the redacted region early, while the client keeps consuming
+     lines into the same "Secret" block. Everything after that line and before
+     the real close is encrypted as far as the reader can tell and stored
      verbatim in files.body / files_fts — searchable, and sent to the AI, with
      the BEGIN-AGE canary sitting harmlessly in the redacted half.
 
@@ -371,16 +378,14 @@ describe("fence grammar — the server is never narrower than the renderer", () 
     [">> ```", "twice-blockquoted close"],
   ];
 
-  test("a close the renderer does not honour never ends the server's redaction", async () => {
+  test("a close that grammar does not honour never ends the server's redaction", async () => {
     const { redact, redactForAi, ageFenceRanges } = await import("../server/vault");
     const LEAKED = ["ZZZZLEAKEDLINE", "QQQQALSOLEAKED"];
 
     for (const [closer, label] of CLOSERS) {
-      /* precondition: the renderer walks straight past this line — its body
-         loop is `while (!RE_FENCE.test(lines[i]))` */
-      expect(`${label} closes the fence in the renderer: ${RE_FENCE.test(closer)}`).toBe(
-        `${label} closes the fence in the renderer: false`
-      );
+      /* precondition: that grammar walks straight past this line — its body
+         loop was `while (!RE_FENCE.test(lines[i]))` */
+      expect(`${label} closes the fence: ${RE_FENCE.test(closer)}`).toBe(`${label} closes the fence: false`);
 
       const md =
         "# doc\n\n```age\n" +
@@ -398,7 +403,7 @@ describe("fence grammar — the server is never narrower than the renderer", () 
           `${label} → redactForAi leaks ${line}: false`
         );
       }
-      /* one region, and it runs to the fence the renderer actually stops at */
+      /* one region, and it runs to the fence that grammar actually stops at */
       const ranges = ageFenceRanges(md);
       expect(`${label} → ageFenceRanges found ${ranges.length}`).toBe(`${label} → ageFenceRanges found 1`);
       const covered = md.slice(ranges[0].start, ranges[0].end);
@@ -415,15 +420,15 @@ describe("fence grammar — the server is never narrower than the renderer", () 
 
   /* The deliberate asymmetry, pinned so the fix above is not "solved" by
      narrowing the close everywhere: a fence whose OPENER is blockquoted is one
-     the renderer never opened, so nothing can be falsely painted encrypted
-     after it — and its close is blockquoted too. Refusing `>` there would
-     blank the rest of the file. */
-  test("a blockquoted fence — invisible to the renderer — still closes on its blockquoted fence", async () => {
+     no client ever opened, so nothing can be falsely painted encrypted after
+     it — and its close is blockquoted too. Refusing `>` there would blank the
+     rest of the file. */
+  test("a blockquoted fence — invisible to every client — still closes on its blockquoted fence", async () => {
     const { redact } = await import("../server/vault");
     const md =
       "# doc\n\n> ```age\n> " + ARMOR_HEAD + "\n> " + ARMOR_B64_1 + "\n> " + ARMOR_TAIL + "\n> ```\n\nQUOTEDTAILMARKER\n";
-    expect(`the renderer opens a fence there: ${RE_FENCE.test("> ```age")}`).toBe(
-      "the renderer opens a fence there: false"
+    expect(`that grammar opens a fence there: ${RE_FENCE.test("> ```age")}`).toBe(
+      "that grammar opens a fence there: false"
     );
     const out = redact(md);
     for (const token of ARMOR_TOKENS) {
@@ -1278,6 +1283,12 @@ describe("leak canary — the vault is OPEN and every block is revealed (phase 6
     await page.click(`#tree .row.file[data-doc="${DOC}"]`);
     await page.waitForFunction((p) => document.getElementById("stPath")!.textContent === p, { timeout: 10000 }, DOC);
 
+    /* Edit mounts asynchronously (a lazy import plus its stylesheet), and the
+       secret block's controls are the DOM the island asks `secrets.js` for — so
+       there is nothing to click until the island is up */
+    await page.waitForSelector("#doc .bn-editor", { timeout: 30000 });
+    await page.waitForSelector(".secret button", { timeout: 30000 });
+
     /* one Unlock, one passphrase — and the whole vault opens */
     const clicked = await page.evaluate(() => {
       const b = [...document.querySelectorAll(".secret button")].find((n) => /unlock/i.test(n.textContent ?? ""));
@@ -1305,9 +1316,13 @@ describe("leak canary — the vault is OPEN and every block is revealed (phase 6
     expect(`the plaintext is live in the DOM: ${shown.includes(PT_CANARY)}`).toBe(
       "the plaintext is live in the DOM: true"
     );
-    /* …and the ciphertext is NOT, which is the other half of the rule */
-    const html = await page.evaluate(() => document.documentElement.outerHTML);
-    expect(`the armor is on screen too: ${html.includes(ARMOR_HEAD)}`).toBe("the armor is on screen too: false");
+    /* …and the ciphertext is NOT ON SCREEN, which is the other half of the rule.
+       Measured on rendered TEXT, not on the markup: the island keeps each secret
+       block's ciphertext in its own block props (it is what a re-serialisation
+       writes back), so the armor is legitimately inside the document's DOM —
+       what must never happen is a reader seeing it where the plaintext belongs. */
+    const visible = await page.$eval("#doc", (n) => (n as HTMLElement).innerText);
+    expect(`the armor is on screen too: ${visible.includes(ARMOR_HEAD)}`).toBe("the armor is on screen too: false");
   }, 120000);
 
   test("a save with every block revealed writes armor — and sqlite never sees the canary", async () => {
@@ -1377,6 +1392,7 @@ describe("leak canary — the vault is OPEN and every block is revealed (phase 6
     /* the one thing that is allowed to change the file while the vault is open,
        and the only thing that may carry the typed plaintext anywhere is FRESH
        ARMOR that decrypts to it */
+    await page.waitForSelector(".secret.open textarea", { timeout: 30000 });
     await page.evaluate(() => {
       const ta = document.querySelector(".secret.open textarea") as HTMLTextAreaElement;
       ta.focus();

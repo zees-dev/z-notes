@@ -12,8 +12,9 @@
    The third describe is the other half of that bargain: the edits this module
    deliberately does NOT perform. A `plaintext-only` host tells nobody what a
    `delete*` applies to (Chromium hands back empty `getTargetRanges()`), so a
-   collapsed-caret delete is the browser's — which is the only way ⌥⌫ deletes a
-   word and ⌫ takes a whole grapheme cluster rather than half of one.
+   collapsed-caret delete is the browser's — which is the only way the host's
+   delete-word chord takes a word and ⌫ takes a whole grapheme cluster rather
+   than half of one.
 
    Prior art: tests/ux-e2e.test.ts (the Raw editing suite) for the seed/read
    shape, tests/mobile-editing-e2e.test.ts for keyboard-driven editing.
@@ -93,14 +94,23 @@ describe("rawedit — a Raw line is the size of the Preview block it would rende
   test("headings, body and a fenced # measure the same in both modes", async () => {
     await app.boot("/d/" + DOC);
 
-    /* Preview first: the sizes Raw has to match */
+    /* Edit first: the sizes Source has to match. The island mounts
+       ASYNCHRONOUSLY, and a heading's size lives on `.bn-block-content` — level
+       1 carries NO `data-level` (BlockNote omits a prop still at its default),
+       so the level is read from the attribute with 1 as the fallback rather
+       than selected for. The text element inside is the `h1`…`h3` the UA sheet
+       would otherwise size for itself, so measure THAT. */
     await ensureMode(page, "preview", { settle: 200 });
+    await page.waitForSelector("#doc .bn-editor", { timeout: 20000 });
     const preview = await page.evaluate(() => {
-      const px = (s: string) => {
-        const n = document.querySelector("#doc " + s) as HTMLElement | null;
-        return n ? getComputedStyle(n).fontSize : "(missing)";
-      };
-      return { h1: px("h1"), h2: px("h2"), h3: px("h3"), p: px("p") };
+      const size = (n: Element | null | undefined) => (n ? getComputedStyle(n as HTMLElement).fontSize : "(missing)");
+      const text = (b: HTMLElement) => b.querySelector(".bn-inline-content");
+      const out: Record<string, string> = { h1: "(missing)", h2: "(missing)", h3: "(missing)", p: "(missing)" };
+      for (const b of [...document.querySelectorAll("#doc .bn-editor .bn-block-content")] as HTMLElement[]) {
+        if (b.dataset.contentType === "heading") out["h" + (b.dataset.level ?? "1")] = size(text(b));
+        else if (b.dataset.contentType === "paragraph" && out.p === "(missing)") out.p = size(text(b));
+      }
+      return out;
     });
 
     await ensureMode(page, "raw", { settle: 200 });
@@ -130,7 +140,7 @@ describe("rawedit — a Raw line is the size of the Preview block it would rende
     expect(`a heading is bigger than body copy: ${parseFloat(raw.h1) > parseFloat(raw.p)}`).toBe(
       "a heading is bigger than body copy: true"
     );
-    /* a `#` inside a fence is not a heading — Preview says so, so Raw does */
+    /* a `#` inside a fence is not a heading — Edit says so, so Source does */
     expect(`the fenced line's class: ${raw.fencedClass}`).toBe("the fenced line's class: ln code");
     expect(`one .ln per source line: ${raw.lineCount}`).toBe(`one .ln per source line: ${SRC.split("\n").length}`);
     expect(pageErrors).toEqual([]);
@@ -303,19 +313,25 @@ describe("rawedit — the deletes the browser keeps", () => {
     );
   }
 
-  test("⌥⌫ takes the word, not one character", async () => {
+  /* The delete-word chord is the PLATFORM's, which is the whole point of this
+     test — the browser decides what "a word" is and nothing in the app can be
+     asked that question. macOS spells it ⌥⌫; this Chromium on Linux binds
+     `deleteWordBackward` to Control+Backspace, and Alt+Backspace there is not a
+     word delete at all. Ask for the chord the host actually has. */
+  const WORD_DELETE_MOD = process.platform === "darwin" ? "Alt" : "Control";
+
+  test("the delete-word chord takes the word, not one character", async () => {
     await openRaw(OTHER);
     const line = "alpha beta gamma\ntail\n";
     await seed(line, "alpha beta".length);
-    /* the real chord, through the real keyboard: the whole point is that the
-       BROWSER decides what "a word" is here, and nothing in the app can be
-       asked that question */
-    await page.keyboard.down("Alt");
+    await page.keyboard.down(WORD_DELETE_MOD);
     await page.keyboard.press("Backspace");
-    await page.keyboard.up("Alt");
+    await page.keyboard.up(WORD_DELETE_MOD);
     await sleep(150);
     /* exactly what a textarea does: the word goes, the space before it stays */
-    expect(`after ⌥⌫: ${JSON.stringify(await buffer())}`).toBe(`after ⌥⌫: ${JSON.stringify("alpha  gamma\ntail\n")}`);
+    expect(`after ${WORD_DELETE_MOD}+⌫: ${JSON.stringify(await buffer())}`).toBe(
+      `after ${WORD_DELETE_MOD}+⌫: ${JSON.stringify("alpha  gamma\ntail\n")}`
+    );
     expect(`.ln per line: ${await page.$$eval("#rawArea .ln", (n) => n.length)}`).toBe(".ln per line: 3");
     expect(pageErrors).toEqual([]);
   }, 60000);

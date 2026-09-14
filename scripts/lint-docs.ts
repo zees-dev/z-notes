@@ -12,7 +12,7 @@
      4. specs in docs/specs/{open,done} carry all seven template sections
      5. server/ layering is forward-only (the table below IS the law;
         docs/architecture.md restates it for humans — keep both in sync)
-     6. app/ leaf modules import only leaves; no `export let` in app/
+     6. app/ leaf modules (.js/.ts/.tsx) import only leaves; no `export let` in app/
      7. every agent commit path runs clean-code first
      8. every .agents/skills entry is a skill dir mirrored by a symlink in
         .claude/skills — skills are canonical in .agents/, harness dirs link
@@ -138,14 +138,15 @@ for (const f of readdirSync(serverDir)) {
 }
 
 /* ---------- 6. app/ leaves + no export let ---------- */
-const LEAVES = new Set(["state", "ui", "api", "armor", "entropy", "dialogs", "crypto-worker"]);
+const LEAVES = new Set(["state", "ui", "api", "armor", "entropy", "dialogs", "crypto-worker", "markdown-source"]);
 const appDir = join(ROOT, "app");
 for (const f of readdirSync(appDir)) {
-  if (!f.endsWith(".js")) continue;
-  const mod = f.replace(/\.js$/, "");
+  if (!/\.(js|ts|tsx)$/.test(f)) continue;
+  const mod = f.replace(/\.(js|ts|tsx)$/, "");
   const text = readFileSync(join(appDir, f), "utf8");
   if (LEAVES.has(mod)) {
-    for (const m of text.matchAll(/from "\.\/([\w-]+)\.js"/g)) {
+    // the bundled modules are imported extensionless as often as not
+    for (const m of text.matchAll(/from ["']\.\/([\w-]+)(?:\.(?:js|ts|tsx))?["']/g)) {
       if (!LEAVES.has(m[1]))
         fail(`app/${f}`, `leaf module imports feature module ./${m[1]}.js`, "leaves stay leaves: inject the feature function from app.js (see dialogs.js wireDialogs) or move the logic");
     }

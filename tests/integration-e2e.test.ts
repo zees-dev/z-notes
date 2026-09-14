@@ -495,7 +495,7 @@ describe("routing × Settings — every way in is one navigation to /settings", 
 
     /* a spread of control types: segmented, switch, numeric */
     await page.click("#themeSeg button[data-v='minimal']");
-    await page.click("[data-sw='editor.clickToEdit']");
+    await page.click("[data-sw='editor.confirmBeforeExit']");
     await setNumberField("secrets.sessionHours", "6");
     await sleep(900);
 
@@ -515,7 +515,7 @@ describe("routing × Settings — every way in is one navigation to /settings", 
     expect(`still the same doc after Save: ${await shown()}`).toBe(`still the same doc after Save: ${B}`);
 
     await page.click("#themeSeg button[data-v='modern']");
-    await page.click("[data-sw='editor.clickToEdit']");
+    await page.click("[data-sw='editor.confirmBeforeExit']");
     await saveSettings();
   }, 90000);
 

@@ -504,7 +504,7 @@ results, distinguishable only by their prefix.
     "theme": "minimal",
     "density": "comfy",
     "colorScheme": "system",
-    "editor": { "autosaveSeconds": 10, "tabSize": 2, "clickToEdit": true,
+    "editor": { "autosaveSeconds": 10, "tabSize": 2,
                 "confirmBeforeExit": true, "homeDoc": "index.md" },
     "trash": { "retentionDays": 7 },
     "upload": { "extensions": "md, html, txt, log" },
@@ -733,7 +733,7 @@ is refused if any check fails. This table is the complete list for this route:
 | `unknown-theme` / `unknown-density` / `unknown-color-scheme` | not in the matching `meta` list |
 | `bad-number` | a `meta.numbers` path that is not a positive number (message names the path and its unit) |
 | `bad-auto-sync-seconds` | the same, for `git.autoSyncSeconds` |
-| `bad-boolean` / `bad-auto-sync` | `editor.clickToEdit`, `editor.confirmBeforeExit`, `git.autoSync`, `terminal.enabled`, `terminal.allowAiAutoRun` given a non-boolean |
+| `bad-boolean` / `bad-auto-sync` | `editor.confirmBeforeExit`, `git.autoSync`, `terminal.enabled`, `terminal.allowAiAutoRun` given a non-boolean |
 | `bad-shell` / `bad-startupcwd` | `terminal.shell` / `terminal.startupCwd` is not a string, or is a relative path (`""` is legal and means the default) |
 | `bad-branch` | `git.branch` empty, leading `-`, or not a legal ref name |
 | `bad-base-url` | `ai.baseUrl` unparseable or not `http:`/`https:` |

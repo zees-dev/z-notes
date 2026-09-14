@@ -47,7 +47,7 @@ describe("dedentArmor — the read path undoes what indentArmor did", () => {
     e.addRecipient(recipient);
     const armor = age.armor.encode(await e.encrypt("LISTITEMSECRET=yes\n")).trimEnd();
 
-    /* exactly what renderPreview captures for
+    /* exactly what the fence grammar captures for
          - an item with a secret:
            ```age
            …

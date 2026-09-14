@@ -383,7 +383,7 @@ const TOOLS = [
     inputSchema: schema(
       {
         path: DOC_PATH,
-        mode: { type: "string", enum: ["raw", "preview"], description: "Which view to land in. Defaults to the current one." },
+        mode: { type: "string", enum: ["raw", "preview"], description: 'Which view to land in: "preview" is the visual editor (Edit), "raw" the Markdown source (Source). Defaults to the current one.' },
         line: { type: "integer", description: "1-based source line to scroll to and put the caret on." },
       },
       ["path"]
@@ -399,8 +399,8 @@ const TOOLS = [
   },
   {
     name: "set_mode",
-    description: "Switch the editor pane between the rendered preview and the raw markdown source. An unsaved buffer is written first, so the switch never asks the user anything.",
-    inputSchema: schema({ mode: { type: "string", enum: ["raw", "preview"], description: 'Which view to show: "raw" or "preview".' } }, ["mode"]),
+    description: 'Switch the editor pane between the visual editor (Edit, "preview") and the Markdown source (Source, "raw"). An unsaved buffer is written first, so the switch never asks the user anything.',
+    inputSchema: schema({ mode: { type: "string", enum: ["raw", "preview"], description: 'Which view to show: "preview" for the visual editor (Edit), "raw" for the Markdown source (Source).' } }, ["mode"]),
     execute: async ({ mode }) => {
       if (mode !== "raw" && mode !== "preview") throw deny("bad-mode", 'Mode is "raw" or "preview".');
       if (!state.active) throw deny("no-active-doc", "No doc is open.");
@@ -412,10 +412,10 @@ const TOOLS = [
   {
     name: "indent_lines",
     description:
-      "Indent or outdent every line the raw editor's selection touches, exactly as Tab and Shift-Tab do: a list line moves one hierarchy level, any other line gains or loses the configured tab size. This is the button a phone gets instead of a Tab key. It needs the raw editor open and no dialog over it.",
+      "Indent or outdent every line the Source selection touches, exactly as Tab and Shift-Tab do: a list line moves one hierarchy level, any other line gains or loses the configured tab size. This is the button a phone gets instead of a Tab key. It needs the Markdown source open (mode \"raw\") and no dialog over it.",
     inputSchema: schema({ outdent: { type: "boolean", description: "True to move the lines out one level instead of in. Defaults to false." } }),
     execute: async ({ outdent }) => {
-      if (!indentSelection(!!outdent)) throw deny("not-raw", "The raw editor is not open. Switch to Raw first.");
+      if (!indentSelection(!!outdent)) throw deny("not-raw", "The Markdown source is not open. Switch to Source first.");
       return { ok: true };
     },
   },
@@ -621,7 +621,7 @@ const TOOLS = [
   /* ---------- settings and vaults ---------- */
   {
     name: "set_setting",
-    description: "Set one setting by its dotted path (theme, editor.clickToEdit, git.autoSync, ai.effort). The page repaints and settings.toml records it. Answers with the value that was stored, which may be clamped or normalised. get_settings lists what each one accepts.",
+    description: "Set one setting by its dotted path (theme, editor.confirmBeforeExit, git.autoSync, ai.effort). The page repaints and settings.toml records it. Answers with the value that was stored, which may be clamped or normalised. get_settings lists what each one accepts.",
     inputSchema: schema(
       {
         path: { type: "string", description: "Dotted setting path, e.g. theme, density, editor.homeDoc, git.autoSyncSeconds." },

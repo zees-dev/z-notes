@@ -99,6 +99,12 @@ scar": many comments cite the bug that forced the shape
 - **`bun --hot` keeps `globalThis`** across reloads; module-level state that
   must survive dev reloads relies on this. Don't move it into closures
   casually.
+- **The editor island is bundled at boot, not on edit.** `app/block-editor.tsx`
+  and `app/markdown-source.ts` are TypeScript/React that `server/index.ts`
+  bundles once at startup; `bun --hot` does not rebuild them when they change
+  — restart `bun run dev`. BlockNote's look is overridden in base.css through
+  its `--bn-colors-*` properties mapped from the theme tokens; theme files stay
+  layout-free (ADR 0003), so a BlockNote override belongs in base.css.
 - **Comment citations are load-bearing**: code cites `docs/*.md §sections` and
   research docs. If you rename or move a doc, sweep the citations in the same
   change (`bun run lint:docs` catches broken relative links in docs, not in

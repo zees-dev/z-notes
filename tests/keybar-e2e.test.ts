@@ -191,23 +191,23 @@ describe("the soft keyboard's editing bar", () => {
     expect(pageErrors).toEqual([]);
   }, 45000);
 
-  test("Done leaves Raw for Preview and drops the keyboard with the focus", async () => {
+  test("Done leaves Source for Edit and drops the keyboard with the focus", async () => {
     await rawWithKeyboard(0);
     await tap("done");
     await page.waitForFunction(() => !document.getElementById("doc")!.classList.contains("raw-mode"), {
       timeout: 8000,
     });
-    expect(await page.evaluate(() => document.getElementById("stModeTxt")!.textContent)).toBe("Preview");
+    expect(await page.evaluate(() => document.getElementById("stModeTxt")!.textContent)).toBe("Edit");
     expect(await focused()).not.toBe("rawArea");
     expect(pageErrors).toEqual([]);
   }, 45000);
 
   test("indent_lines is the same edit through the agent's door", async () => {
     await app.boot("/d/" + DOC);
-    /* Preview: the tool answers with the API's error shape rather than throwing */
+    /* Edit: the tool answers with the API's error shape rather than throwing */
     expect(await callTool(page, "indent_lines")).toEqual({
       error: "not-raw",
-      message: "The raw editor is not open. Switch to Raw first.",
+      message: "The Markdown source is not open. Switch to Source first.",
     });
 
     await ensureMode(page, "raw", { via: "chip", settle: 160 });

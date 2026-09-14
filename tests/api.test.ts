@@ -741,7 +741,7 @@ describe("/api/settings", () => {
     expect(m.densities.some((d: any) => d.id === s.density)).toBe(true);
     expect(m.colorSchemes).toContain(s.colorScheme);
     expect(typeof s.editor.autosaveSeconds).toBe("number");
-    expect(typeof s.editor.clickToEdit).toBe("boolean");
+    expect(typeof s.editor.confirmBeforeExit).toBe("boolean");
     expect(typeof s.git.branch).toBe("string");
     expect(typeof s.git.autoSync).toBe("boolean");
     expect(typeof s.ai.baseUrl).toBe("string");
@@ -751,7 +751,7 @@ describe("/api/settings", () => {
 
   test("PUT deep-merges one level and leaves siblings alone", async () => {
     const before = await srv.get("/api/settings");
-    const keepClickToEdit = before.body.settings.editor.clickToEdit;
+    const keepConfirm = before.body.settings.editor.confirmBeforeExit;
 
     const r = await srv.api("PUT", "/api/settings", {
       theme: "terminal",
@@ -760,7 +760,7 @@ describe("/api/settings", () => {
     expect(r.status).toBe(200);
     expect(r.body.settings.theme).toBe("terminal");
     expect(r.body.settings.editor.autosaveSeconds).toBe(20);
-    expect(r.body.settings.editor.clickToEdit).toBe(keepClickToEdit);
+    expect(r.body.settings.editor.confirmBeforeExit).toBe(keepConfirm);
     expect(r.body.settings.git.branch).toBe(before.body.settings.git.branch);
     expect(r.body.meta.themes.length).toBe(before.body.meta.themes.length);
 

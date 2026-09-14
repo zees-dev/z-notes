@@ -435,6 +435,8 @@ export async function startServer(opts: StartOptions = {}): Promise<TestServer> 
       ...process.env,
       ZNOTES_VAULT: vault,
       ZNOTES_PORT: String(port),
+      // NixOS's login-shell logout hook writes a terminal-title escape to stdout
+      NOSYSBASHLOGOUT: "1",
       /* A SIBLING of this server's own vault, and never the default. The
          default is `./vaults` beside the repo — the developer's real secondary
          vaults — so a suite that did not name one would boot indexing them, and

@@ -18,19 +18,18 @@
 #   ES module. Running `bun build ./app/index.html --outdir=dist` would emit a
 #   *different* tree (content-hashed asset names, rewritten tags) at a path the
 #   server does not look at, so it would either do nothing or break serving.
-#   The one thing that genuinely needs bundling — the `age-encryption` browser
-#   module — is bundled by the server itself at boot (buildVendor(), held in
-#   memory, served from /vendor/age.<hash>.js) and therefore needs node_modules
-#   present at runtime, which is why we install deps rather than tree-shake them
-#   away. If prod serving ever moves to a dist/ tree, add the build here AND
-#   point APP_DIR at it in the same change.
+#   The two things that genuinely need bundling — the `age-encryption` browser
+#   module and the BlockNote editing island (app/block-editor.tsx) — are bundled
+#   by the server itself at boot (buildVendor()/buildEditor(), held in memory,
+#   served from content-addressed /vendor/ URLs) and therefore need node_modules
+#   present at runtime. That is why both are runtime `dependencies` and why we
+#   install deps rather than tree-shake them away. If prod serving ever moves to
+#   a dist/ tree, add the build here AND point APP_DIR at it in the same change.
 #
-#   MERMAID IS NOT THAT, deliberately (ADR 0010). It is a devDependency and
-#   `app/vendor/mermaid.js` is a COMMITTED artifact, so it arrives via
-#   `COPY app ./app` like any other static file and `--production` leaves its
-#   181 MB of node_modules behind. Bundling it at boot the way age is bundled
-#   would have required it at runtime and grown this image by that much, for a
-#   library only ever executed in a browser. Do not "tidy" it into buildVendor().
+#   MERMAID rides in with the island: `@blocknote/diagram-block` depends on it,
+#   so it is a runtime dependency like the rest and there is no committed
+#   `app/vendor/mermaid.js` any more. A fence is still untrusted input (ADR 0010)
+#   — the island locks mermaid's config down, which is app code, not a build step.
 #
 # NOT `bun build --compile`: the compiled binary reports import.meta.dir as
 #   /$bunfs/root (research §5), and server/index.ts derives APP_DIR, VENDOR_ENTRY

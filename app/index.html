@@ -57,6 +57,11 @@
      also the manifest's background_color, so the launch screen, the tile and
      the status bar are one colour rather than three -->
 <meta name="theme-color" content="#121412">
+<!-- the visual editor's own stylesheet, bundled at boot beside its script and
+     served from /vendor (ADR 0037). BEFORE base.css, so the app's rules win
+     every collision; the two data flags are what renderVisual waits on, since a
+     <link> that has already finished loading fires no event for it. -->
+<link rel="stylesheet" id="editor-css" href="/vendor/editor.css" onload="this.dataset.loaded='true'" onerror="this.dataset.failed='true'">
 <link rel="stylesheet" href="./themes/base.css">
 <!-- swapped live by the Settings › Theme control; ?theme=<id> overrides at boot.
      The href below is the DEFAULT theme; the resolver under it rewrites it from
@@ -266,13 +271,12 @@
         <span class="pip"></span>
         <svg class="tick" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
       </span>
-      <!-- The Raw/Preview SEGMENTED CONTROL used to sit here. It is gone: which
+      <!-- The Edit/Source SEGMENTED CONTROL used to sit here. It is gone: which
            of two views of the same document you are looking at is *state*, and
            the statusbar is where this app says state. The replacement is the
            `#stMode` chip down there — one muted word, the same weight as the
-           line and word counts, clickable, and still ⌘E. A 100px two-button
-           control in the topbar was more chrome than the fact deserved. -->
-      <!-- raw mode only: wrap the selection in an ```age fence encrypted to the
+           line and word counts, clickable, and still ⌘E. -->
+      <!-- Source only: wrap the selection in an ```age fence encrypted to the
            vault recipient. Works while the vault is LOCKED. -->
       <button class="iconbtn" id="encBtn" data-act="encrypt-selection" title="Encrypt selection (⌘⇧E)" hidden>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
@@ -408,10 +412,6 @@
                 <input class="inp w-sm mono" data-num="editor.tabSize" value="" aria-label="Tab width">
                 <span class="unit"></span>
               </div>
-            </div>
-            <div class="field">
-              <div class="lab"><b>Click preview to edit</b><span>Clicking rendered text jumps to that line in Raw.</span></div>
-              <div class="ctl"><button class="sw" data-sw="editor.clickToEdit"></button></div>
             </div>
             <div class="field">
               <div class="lab"><b>Ask before leaving edits</b><span>Off saves automatically before leaving.</span></div>
@@ -756,17 +756,17 @@
       <span class="divider-v hide-sm sb-wide"></span>
       <span class="sb-i hide-sm sb-wide" id="stWords">— words</span>
       <!-- EDITOR MODE — the segmented control that used to live in the topbar.
-           It reads as state ("Preview", beside "9 lines"), it is a button, and
-           `data-mode` is what everything else addresses it by: app.js paints
+           It reads as state ("Edit", beside "9 lines"), it is a button, and
+           `data-mode` is what everything else addresses it by: editor.js paints
            it in syncModeUI(), the tests assert on it, and the title says both
            ways to change it. It is NEVER shed at any width — below 768px there
-           is no ⌘E to fall back on, so this chip is the only way to reach Raw
+           is no ⌘E to fall back on, so this chip is the only way to reach Source
            on a phone; only its divider goes. -->
       <span class="divider-v sb-mode-div"></span>
-      <button class="sb-i mode" id="stMode" data-act="toggle-mode" data-mode="preview" aria-label="Editor mode" title="Rendered preview — click (or ⌘E) for Raw">
-        <span id="stModeTxt">Preview</span>
+      <button class="sb-i mode" id="stMode" data-act="toggle-mode" data-mode="preview" aria-label="Editor mode" title="Visual editing — click (or ⌘E) for Source">
+        <span id="stModeTxt">Edit</span>
       </button>
-      <button class="sb-i wrap" id="stWrap" data-act="toggle-wrap" data-wrap="on" aria-label="Word wrapping" title="Disable Raw word wrapping (⌥Z)" hidden>
+      <button class="sb-i wrap" id="stWrap" data-act="toggle-wrap" data-wrap="on" aria-label="Word wrapping" title="Disable Source word wrapping (⌥Z)" hidden>
         <span id="stWrapTxt">Wrap</span>
       </button>
       <span class="spacer"></span>
@@ -844,7 +844,7 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10H10a5 5 0 0 0 0 10h4"/><path d="m17 6 4 4-4 4"/></svg>
       </button>
       <span class="spring"></span>
-      <button type="button" tabindex="-1" data-kb="done" class="done" title="Back to the rendered preview">Done</button>
+      <button type="button" tabindex="-1" data-kb="done" class="done" title="Back to Edit">Done</button>
     </div>
   </div>
 
@@ -1038,10 +1038,11 @@
   </div>
 </div>
 
-<!-- ================= UNSAVED RAW EXIT =================
-     Every way out of Raw mode reaches this one dialog. It contains only the
-     changed lines against the last server-confirmed document; the full note is
-     never duplicated into a modal just to ask whether it may be discarded. -->
+<!-- ================= UNSAVED EXIT =================
+     Leaving an unsaved doc buffer, in either mode, reaches this one dialog. It
+     contains only the changed lines against the last server-confirmed document;
+     the full note is never duplicated into a modal just to ask whether it may be
+     discarded. -->
 <div class="veil" id="xgVeil">
   <div class="modal cf" role="dialog" aria-modal="true" aria-labelledby="xgTitle" tabindex="-1">
     <div class="modal-head">
@@ -1109,18 +1110,18 @@
         <div class="sc-row">Search vault<span class="k"><kbd>⌘K</kbd><kbd>⌘P</kbd></span></div>
         <!-- the same toggle the statusbar's mode word is; there is no longer a
              segmented control in the topbar -->
-        <div class="sc-row">Toggle Preview / Raw — or click the mode in the statusbar<span class="k"><kbd>⌘E</kbd></span></div>
-        <div class="sc-row">Toggle Raw word wrapping — or click Wrap in the statusbar<span class="k"><kbd>⌥Z</kbd></span></div>
+        <div class="sc-row">Toggle Edit / Source — or click the mode in the statusbar<span class="k"><kbd>⌘E</kbd></span></div>
+        <div class="sc-row">Toggle Source word wrapping — or click Wrap in the statusbar<span class="k"><kbd>⌥Z</kbd></span></div>
         <!-- ADR 0013. A COLLAPSED caret only: with a selection all three are
              the browser's, untouched. ⌘V is listed with them because the line
              it puts back lands ABOVE the caret's line, which is the half a
              person would not predict. -->
-        <div class="sc-row">Cut / copy the whole line (Raw, nothing selected) — ⌘V puts it back above<span class="k"><kbd>⌘X</kbd><kbd>⌘C</kbd><kbd>⌘V</kbd></span></div>
+        <div class="sc-row">Cut / copy the whole line (Source, nothing selected) — ⌘V puts it back above<span class="k"><kbd>⌘X</kbd><kbd>⌘C</kbd><kbd>⌘V</kbd></span></div>
         <!-- ADR 0013 + 0014. One chord, two stacks, decided by where the caret
              is: inside a text surface it is the textarea's own history, and
              the app never touches it. Outside one it is the last FILE
              operation, and that one asks before it acts. -->
-        <div class="sc-row">Undo / redo — the text in Raw, the last file delete or create elsewhere (asks first)<span class="k"><kbd>⌘Z</kbd><kbd>⇧⌘Z</kbd></span></div>
+        <div class="sc-row">Undo / redo — the text in Source, the last file delete or create elsewhere (asks first)<span class="k"><kbd>⌘Z</kbd><kbd>⇧⌘Z</kbd></span></div>
         <!-- one chord, one meaning: "save what is in front of me". On the
              settings page that is the settings draft, because there is no
              document there — the topbar's Save is hidden for the same reason. -->
@@ -1159,7 +1160,7 @@
       </div>
     </div>
     <div class="modal-foot">
-      <span class="note">Click any rendered line in Preview to edit it in Raw.</span>
+      <span class="note">Edit formatted text directly, or use Source for Markdown.</span>
       <div class="spacer"></div>
       <button class="btn primary" data-act="close-shortcuts">Got it</button>
     </div>

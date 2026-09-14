@@ -9,14 +9,13 @@ no-build frontend, JSON/SSE API, client-side (age) secrets, git sync, AI edit re
   `index.ts` is the composition root + route table, `vaults.ts` the vault registry it routes through.
   Forward-only layering (`bun run lint:docs`): `vault db http sse` → `settings watch ai-edits` →
   `trash ai-endpoint` → `git terminal` → `ai docs` → `vaults` → `index`.
-- `app/` — the frontend. ES modules, no build step, no runtime deps. Leaf modules
-  (`state ui api armor entropy dialogs crypto-worker history`) never import feature modules —
-  `history` reaches editor.js and tree.js through callbacks the composition root injects (ADR 0014).
-  `webmcp.js` registers every UI operation as a WebMCP tool wrapping the function the click calls
-  (ADR 0031). `icons/` and `vendor/mermaid.js` are COMMITTED generator output, never a build step
-  (ADRs 0007, 0010; see [architecture](docs/architecture.md)).
-- `docs/` — the knowledge base; [API](docs/specs/done/0002-http-api-v0.md) is
-  normative and [product](docs/specs/done/0001-z-notes-v1.md) is the product spec.
+- `app/` — the frontend. ES modules served as-is, plus one React island the server bundles at boot:
+  `block-editor.tsx`, the BlockNote editor (Edit) over `markdown-source.ts`, a byte-preserving MDAST
+  adapter (ADR 0037). Leaf modules (`state ui api armor entropy dialogs crypto-worker history
+  markdown-source`) never import feature modules; `history` reaches editor.js/tree.js through injected
+  callbacks (ADR 0014). `webmcp.js` wraps every UI operation as a WebMCP tool (ADR 0031). `icons/` is
+  COMMITTED generator output (ADR 0007).
+- `docs/` — the knowledge base; [API](docs/specs/done/0002-http-api-v0.md) is normative, [product](docs/specs/done/0001-z-notes-v1.md) the product spec.
 - `tests/` — black-box by default (real server, real Chromium); `helpers.ts` +
   `browser.ts` are the harness, `mock-upstream.ts` fakes the AI endpoint. `bun run
   gates` = five acceptance suites plus `mermaid-e2e`: a fence is untrusted input
@@ -93,7 +92,8 @@ before any `git commit`, then runs `bun run gates` and `bun run lint:docs`.
   `age-encryption` — `tests/secrets.test.ts` enforces it.
 - The AI relay has no route to rename/delete (`tests/fileops.test.ts` greps all three `ai*.ts`); one
   deploy replica, ever (sqlite + fs.watch + git working tree; `deploy/k3s/20-deployment.yaml`).
-- Zero runtime deps beyond `age-encryption`; no frontend build step. A dependency is an ADR.
+- Runtime deps are exactly pinned: `age-encryption` plus the BlockNote/React/MDAST editor set (ADR 0037),
+  bundled by the server at boot — no separate build command. Any further dependency is an ADR.
 - Source-text tests (`docs/style.md` gotchas) fail on incidental reformatting of `server/ai*.ts`,
   crypto imports and theme CSS. `tests/api.test.ts` holds NUL bytes: grep skips it silently.
 - `bun run lint:docs` enforces: this file ≤100 lines, resolving links, server layering, spec templates.

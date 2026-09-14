@@ -7,7 +7,7 @@
 
      · THE MODE AFFORDANCE. It is statusbar text, not topbar chrome: one muted
        word that names the mode, clicks to toggle, and still answers to ⌘E,
-       while Preview is still what a doc opens in.
+       while Edit is still what a doc opens in.
      · THE CHORDS THAT SHARE A KEY WITH THE BROWSER. Settings answers to ⌘/ and
        to ⌘,; the chat panel answers to ⌘J and — only when the copy it would
        shadow is a no-op — to ⌘C. The ⌘C block below is the one that matters:
@@ -53,6 +53,11 @@ import {
 
 const NAV_DOC = "architecture/event-pipeline.md";
 const HOME_DOC = "projects/homelab.md";
+
+/* The prose a person would drag a selection across, in Edit: the island's own
+   paragraph content (ADR 0037). It mounts ASYNCHRONOUSLY after `renderDoc`, so
+   every use of it is behind a wait. */
+const PROSE = '#doc .bn-block-content[data-content-type="paragraph"] .bn-inline-content';
 
 let srv: TestServer;
 let browser: Browser;
@@ -204,8 +209,9 @@ async function clickMenuItem(label: string) {
    word in the statusbar (`#stMode`), because which of two views of a document
    you are looking at is state and this bar is where state is said. What the
    block asserts about the MODE itself is unchanged and is if anything stricter
-   — Preview is still the default, ⌘E still toggles, and the affordance must
-   name the mode in words. Only WHERE it looks has moved.
+   — Edit is still the default, ⌘E still toggles, and the affordance must
+   name the mode in words (ADR 0037 renamed the two views Edit and Source; the
+   persisted ids stay `preview` and `raw`). Only WHERE it looks has moved.
    ============================================================ */
 
 describe("ux — the mode affordance is statusbar text", () => {
@@ -248,7 +254,7 @@ describe("ux — the mode affordance is statusbar text", () => {
         expect(`${at} chip is in the statusbar: ${m.inStatusbar}`).toBe(`${at} chip is in the statusbar: true`);
         expect(`${at} chip is painted: ${m.painted}`).toBe(`${at} chip is painted: true`);
         expect(`${at} chip stays inside the bar: ${m.withinBar}`).toBe(`${at} chip stays inside the bar: true`);
-        expect(`${at} chip says: ${m.text}`).toBe(`${at} chip says: Preview`);
+        expect(`${at} chip says: ${m.text}`).toBe(`${at} chip says: Edit`);
         expect(`${at} chip matches its neighbours (size/weight/cursor): ${m.sameSize}/${m.sameWeight}/${m.clickable}`).toBe(
           `${at} chip matches its neighbours (size/weight/cursor): true/true/true`
         );
@@ -259,7 +265,7 @@ describe("ux — the mode affordance is statusbar text", () => {
     await setDensity("comfy");
   }, 120000);
 
-  test("Preview is still what a doc opens in; ⌘E toggles and so does clicking the chip", async () => {
+  test("Edit is still what a doc opens in; ⌘E toggles and so does clicking the chip", async () => {
     await app.clickDoc(NAV_DOC);
     const read = () =>
       page.evaluate(() => ({
@@ -272,16 +278,16 @@ describe("ux — the mode affordance is statusbar text", () => {
     const opened = await read();
     expect(`opened in raw-mode: ${opened.raw}`).toBe("opened in raw-mode: false");
     expect(`chip data-mode: ${opened.mode}`).toBe("chip data-mode: preview");
-    expect(`chip words: ${opened.text}`).toBe("chip words: Preview");
+    expect(`chip words: ${opened.text}`).toBe("chip words: Edit");
     /* a single word cannot say both what you are in and what a click does, so
        the title has to — and it has to name the chord as well */
     expect(`title names the chord: ${opened.title!.includes("⌘E")}`).toBe("title names the chord: true");
-    expect(`title names the destination: ${opened.title!.includes("Raw")}`).toBe("title names the destination: true");
+    expect(`title names the destination: ${opened.title!.includes("Source")}`).toBe("title names the destination: true");
 
     await app.chord("KeyE");
     await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
     const afterChord = await read();
-    expect(`after ⌘E: ${afterChord.mode} / ${afterChord.text}`).toBe("after ⌘E: raw / Raw");
+    expect(`after ⌘E: ${afterChord.mode} / ${afterChord.text}`).toBe("after ⌘E: raw / Source");
 
     await app.chord("KeyE");
     await page.waitForFunction(() => !document.getElementById("doc")!.classList.contains("raw-mode"), { timeout: 5000 });
@@ -291,7 +297,7 @@ describe("ux — the mode affordance is statusbar text", () => {
     await page.click("#stMode");
     await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
     const afterClick = await read();
-    expect(`after clicking the chip: ${afterClick.mode} / ${afterClick.text}`).toBe("after clicking the chip: raw / Raw");
+    expect(`after clicking the chip: ${afterClick.mode} / ${afterClick.text}`).toBe("after clicking the chip: raw / Source");
     await page.click("#stMode");
     await page.waitForFunction(() => !document.getElementById("doc")!.classList.contains("raw-mode"), { timeout: 5000 });
     expect(`after clicking it again: ${(await read()).mode}`).toBe("after clicking it again: preview");
@@ -420,7 +426,7 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
     };
 
     await app.clickDoc(NAV_DOC);
-    await page.waitForSelector("#doc p", { timeout: 5000 });
+    await page.waitForSelector(PROSE, { timeout: 8000 });
     await setChat(false);
     await page.evaluate(() => {
       (document.activeElement as HTMLElement | null)?.blur();
@@ -434,13 +440,13 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
 
     /* UNCONDITIONAL is the whole point of the move: the two states that used to
        hand ⌘C back to the browser must not hold ⌥C back. */
-    await page.evaluate(() => {
+    await page.evaluate((sel) => {
       const r = document.createRange();
-      r.selectNodeContents(document.querySelector("#doc p")!);
+      r.selectNodeContents(document.querySelector(sel)!);
       const s = getSelection()!;
       s.removeAllRanges();
       s.addRange(r);
-    });
+    }, PROSE);
     await altC();
     expect(`⌥C with a live selection: ${await chatOpenNow()}`).toBe("⌥C with a live selection: true");
 
@@ -484,24 +490,28 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
     const cdp = await clipboardSession();
     await setClip("UNTOUCHED");
     await app.clickDoc(NAV_DOC);
-    await page.waitForSelector("#doc p", { timeout: 5000 });
+    await page.waitForSelector(PROSE, { timeout: 8000 });
 
-    const want = await page.evaluate(() => {
+    const want = await page.evaluate((sel) => {
       (document.activeElement as HTMLElement | null)?.blur();
-      const p = document.querySelector("#doc p")!;
+      const p = document.querySelector(sel)!;
       const r = document.createRange();
       r.selectNodeContents(p);
       const s = getSelection()!;
       s.removeAllRanges();
       s.addRange(r);
       return String(s);
-    });
+    }, PROSE);
     expect(`there is something to copy: ${want.length > 10}`).toBe("there is something to copy: true");
     const before = await chatOpenNow();
 
     await cmdC(cdp);
     expect(`copies the browser performed: ${await copies()}`).toBe("copies the browser performed: 1");
-    expect(`clipboard === the selection: ${(await clip()) === want}`).toBe("clipboard === the selection: true");
+    /* Edit is a ProseMirror editor now (ADR 0037) and its clipboard serialiser
+       terminates a selected block with a newline — tolerated, nothing else is. */
+    expect(`clipboard === the selection: ${(await clip()).replace(/\n$/, "") === want}`).toBe(
+      "clipboard === the selection: true"
+    );
     expect(`chat stayed put: ${await chatOpenNow()}`).toBe(`chat stayed put: ${before}`);
   }, 60000);
 
@@ -571,14 +581,14 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
 
   test("⌘J is still the unconditional toggle, selection or not", async () => {
     await app.clickDoc(NAV_DOC);
-    await page.waitForSelector("#doc p", { timeout: 5000 });
-    await page.evaluate(() => {
+    await page.waitForSelector(PROSE, { timeout: 8000 });
+    await page.evaluate((sel) => {
       const r = document.createRange();
-      r.selectNodeContents(document.querySelector("#doc p")!);
+      r.selectNodeContents(document.querySelector(sel)!);
       const s = getSelection()!;
       s.removeAllRanges();
       s.addRange(r);
-    });
+    }, PROSE);
     const before = await chatOpenNow();
     await app.chord("KeyJ");
     await sleep(120);
@@ -1090,6 +1100,9 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     await page.type(".newrow input", "file-undo-created");
     await page.keyboard.press("Enter");
     await page.waitForFunction((m) => !!document.querySelector(`#tree .row.file[data-doc="${m}"]`), { timeout: 8000 }, made);
+    /* the row appears on the SSE re-render, the create lands on the timeline
+       a beat later — wait for the entry, not the row */
+    await page.waitForFunction(async () => !!(await import("/history.js")).pendingHistory(false), { timeout: 8000 });
 
     await fileZ();
     const p = await prompt();
@@ -1620,6 +1633,43 @@ describe("ux — Esc unwinds one layer at a time", () => {
     expect(`chat finally closed: ${await chatOpen()}`).toBe("chat finally closed: false");
   }, 90000);
 
+  /* EDIT OWNS THE CHORDS, NOT THE LAYER KEY. The island claims Escape while it
+     has something of its own to close — a slash menu, the caret it blurs — and
+     every one of those presses arrives at the app already handled. The presses
+     it does NOT claim are the app's, and they were being swallowed: focus on a
+     protected block's "Edit source" button is inside `.bn-container`, so no
+     number of presses reached the chat panel (which is not a veil). */
+  test("Edit hands back the Escape it has not claimed", async () => {
+    const PROTECTED_DOC = "esc-protected.md";
+    await srv
+      .api("POST", "/api/docs", { path: PROTECTED_DOC, type: "doc", markdown: "---\ntitle: esc\n---\n\nText here.\n" })
+      .catch(() => {});
+    await app.clickDoc(PROTECTED_DOC);
+    await page.waitForSelector("#doc .z-source-block button", { timeout: 15000 });
+
+    await page.$eval("#doc .z-source-block button", (b) => (b as HTMLElement).focus());
+    expect(`focus inside the island, chat open: ${await chatOpen()}`).toBe("focus inside the island, chat open: true");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.getElementById("app")!.classList.contains("chat-open"), {
+      timeout: 5000,
+    });
+    expect(`one unclaimed press reached the panel: ${await chatOpen()}`).toBe("one unclaimed press reached the panel: false");
+
+    /* …and the press the island DOES claim stays its own: with the caret in
+       prose, Esc blurs the editor and the panel below it is untouched. */
+    await app.chord("KeyJ");
+    await page.waitForFunction(() => document.getElementById("app")!.classList.contains("chat-open"), { timeout: 5000 });
+    await page.click(PROSE);
+    await page.keyboard.press("Escape");
+    await sleep(250);
+    expect(`the press Edit claims is Edit's: ${await chatOpen()}`).toBe("the press Edit claims is Edit's: true");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.getElementById("app")!.classList.contains("chat-open"), {
+      timeout: 5000,
+    });
+    expect(`the next press is the panel's: ${await chatOpen()}`).toBe("the next press is the panel's: false");
+  }, 90000);
+
   test("Esc mid-sentence costs the focus, not the panel — and never the draft", async () => {
     const DRAFT = "half-written question about the event pipeline";
     await page.click("#composer");
@@ -1651,8 +1701,15 @@ describe("ux — Esc unwinds one layer at a time", () => {
       "#composer is still in the document: true"
     );
 
-    /* and it is still there when the panel comes back */
-    await page.click("#chatBtn");
+    /* …and it is still there when the panel comes back. The collapse is a
+       TRANSITION on the grid column, and the topbar buttons slide with it, so a
+       click issued the instant `chat-open` drops lands beside a button that is
+       still moving and never reaches it. Wait the motion out — measured off the
+       running animations, not slept — then click what is really there. */
+    await page.$eval("#app", async (el) => {
+      await Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished));
+    });
+    await clickWhenHittable(page, "#chatBtn");
     await page.waitForFunction(() => document.getElementById("app")!.classList.contains("chat-open"), {
       timeout: 5000,
     });

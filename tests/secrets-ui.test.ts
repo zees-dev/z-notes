@@ -270,9 +270,19 @@ async function newPage(
   return p;
 }
 
+/** How long a doc may take to reach the statusbar. Edit parses the whole
+    source, ciphertext included, so the 6 MiB fixture below ("a decrypt still in
+    flight when the vault locks") is the one that sets this: 10.5 s, measured. */
+const OPEN_TIMEOUT_MS = 30000;
+
 async function openDoc(p: Page, path: string) {
-  await p.click(`#tree .row.file[data-doc="${path}"]`);
-  await p.waitForFunction((x) => document.getElementById("stPath")!.textContent === x, { timeout: 8000 }, path);
+  /* the tree re-renders whole, so the row handle can detach between the wait
+     and the click — the locator retries instead of throwing */
+  await p.locator(`#tree .row.file[data-doc="${path}"]`).click();
+  await p.waitForFunction((x) => document.getElementById("stPath")!.textContent === x, { timeout: OPEN_TIMEOUT_MS }, path);
+  /* Edit mounts its island asynchronously after `renderDoc`: nothing inside the
+     document — a secret block least of all — is addressable until it has */
+  await p.waitForSelector("#doc.raw-mode #rawArea, #doc .bn-editor", { timeout: 20000 });
   await sleep(250);
 }
 
@@ -1231,11 +1241,17 @@ describe("the create-identity modal reads as prose in every theme", () => {
       await openDoc(p, KEYS);
       await clickBlockButton(p, 0, /create vault identity/i);
       await p.waitForFunction(() => document.getElementById("ppVeil")!.classList.contains("show"), { timeout: 8000 });
+      /* the modal takes focus itself, one frame after it shows: typing before
+         that lands nowhere and the create silently asks again */
+      await p.waitForFunction(() => document.activeElement?.id === "ppInput", { timeout: 8000 });
 
       for (const id of ["ppInput", "ppConfirm"]) {
         await p.evaluate((x) => (document.getElementById(x as string) as HTMLInputElement).focus(), id);
         await p.keyboard.type("password password password");
       }
+      expect(
+        await p.$$eval("#ppInput, #ppConfirm", (nodes) => nodes.map((n) => (n as HTMLInputElement).value))
+      ).toEqual(["password password password", "password password password"]);
       await p.click('#ppVeil [data-act="pp-ok"]');
       await p.waitForFunction(() => !document.getElementById("ppVeil")!.classList.contains("show"), { timeout: 20000 });
       expect(`the identity was written: ${existsSync(join(emptyDir, ".znotes", "identity.age"))}`).toBe(
@@ -1303,7 +1319,9 @@ const waitForReveals = (p: Page, n: number, timeout = 30000) =>
 const waitForLocks = (p: Page, timeout = 30000) =>
   p.waitForFunction(
     () => document.querySelectorAll(".secret").length > 0 && !document.querySelector(".secret.open, .secret.revealing"),
-    { timeout }
+    /* a BACKGROUND tab gets no animation frames, so the default `raf` polling
+       never runs there — this predicate is watched in the tab that did not act */
+    { timeout, polling: 100 }
   );
 
 describe("a locked block shows no ciphertext at all", () => {
@@ -1721,7 +1739,7 @@ const carries = (p: Page, needle: string) =>
   );
 
 describe("a locked block leaks nothing through attributes or the a11y tree", () => {
-  test("no armor in any attribute, and none in the accessibility tree", async () => {
+  test("no armor in any attribute but the block's own prop, none on screen, none in the a11y tree", async () => {
     const p = await newPage(srv);
     try {
       await openDoc(p, KEYS);
@@ -1740,15 +1758,38 @@ describe("a locked block leaks nothing through attributes or the a11y tree", () 
         "the block is IN the a11y tree: true"
       );
 
-      const page = await p.evaluate(() => document.documentElement.outerHTML);
+      /* The ciphertext IS a prop of the Edit block that holds it, and the
+         editor mirrors its props into `data-ciphertext` on that block — that
+         one attribute is the model, not a leak. Every OTHER attribute in the
+         document, and everything a human can read, must still be armorless. */
+      const elsewhere = await p.evaluate(() => {
+        const out: string[] = [];
+        for (const el of document.querySelectorAll("*")) {
+          const own = el.matches('[data-content-type="secret"]');
+          for (const a of Array.from(el.attributes)) {
+            if (!(own && a.name === "data-ciphertext")) out.push(a.name + "=" + a.value);
+          }
+        }
+        return out.join("\n");
+      });
+      const holders = await p.evaluate(
+        (head) =>
+          [...document.querySelectorAll("*")].filter((el) =>
+            Array.from(el.attributes).some((a) => a.value.includes(head))
+          ).length,
+        ARMOR_HEAD
+      );
+      expect(`elements carrying armor in an attribute: ${holders}`).toBe("elements carrying armor in an attribute: 1");
+      const visible = await p.evaluate(() => document.body.innerText);
       for (const t of armorTokens(armor)) {
         const label = t.slice(0, 22).replace(/\n/g, "\\n");
         /* title=, aria-label=, data-anything= — the places a "hidden" armor
            gets parked when only the text nodes were cleaned up */
         expect(`${label} — in an attribute: ${g.attrs.includes(t)}`).toBe(`${label} — in an attribute: false`);
         expect(`${label} — in the a11y tree: ${a11y.includes(t)}`).toBe(`${label} — in the a11y tree: false`);
-        /* and not parked on an ancestor or in a template elsewhere on the page */
-        expect(`${label} — anywhere in the page: ${page.includes(t)}`).toBe(`${label} — anywhere in the page: false`);
+        /* nor parked on an ancestor, in a template, or on any other attribute */
+        expect(`${label} — in another attribute: ${elsewhere.includes(t)}`).toBe(`${label} — in another attribute: false`);
+        expect(`${label} — readable on screen: ${visible.includes(t)}`).toBe(`${label} — readable on screen: false`);
       }
     } finally {
       await p.close();
@@ -1839,6 +1880,9 @@ describe("locking one tab locks the other one's blocks too", () => {
     const a = await newPage(srv);
     const b = await newPage(srv);
     try {
+      /* clicking in a hidden tab hangs on the browser's own visibility check,
+         so each tab is brought forward before it is driven */
+      await a.bringToFront();
       await openDoc(a, SECOND);
       await clickBlockButton(a, 0, /unlock/i);
       await typePassphrase(a);
@@ -1846,6 +1890,7 @@ describe("locking one tab locks the other one's blocks too", () => {
 
       /* B has its own worker and its own scrypt run — two genuinely separate
          unlocked sessions, which is the state the lock signal exists for */
+      await b.bringToFront();
       await openDoc(b, KEYS);
       await clickBlockButton(b, 0, /unlock/i);
       await typePassphrase(b);
@@ -1854,6 +1899,7 @@ describe("locking one tab locks the other one's blocks too", () => {
       await clearToasts(b);
 
       /* the lock happens in A, and ONLY in A */
+      await a.bringToFront();
       await chord(a, "KeyL", "Meta", "Shift");
       await waitForLocks(a);
 
@@ -1877,6 +1923,7 @@ describe("locking one tab locks the other one's blocks too", () => {
         "B's block came back masked and armorless: true"
       );
       /* the entry point is back, and it asks again */
+      await b.bringToFront();
       await clickBlockButton(b, 0, /unlock/i);
       await b.waitForFunction(() => document.getElementById("ppVeil")!.classList.contains("show"), { timeout: 15000 });
     } finally {
@@ -2423,6 +2470,235 @@ describe("locking wipes the screen before it waits on the network", () => {
       );
     } finally {
       await p.setRequestInterception(false).catch(() => {});
+      await p.close();
+    }
+  }, 180000);
+});
+
+
+/* ============================================================
+   IDENTITY IN EDIT: the block ID is the entry's name
+
+   In Edit a revealed block is an island block whose id is the entry's ordinal
+   (`zSecret.ord` is a STRING there), and blocks move: drag one, and ciphertext
+   alone still cannot say which fence an edit belongs to. Two claims, measured
+   on the ProseMirror MODEL rather than on the injected secret DOM:
+
+     · a dirty reveal that is REORDERED among identical fences re-encrypts into
+       the fence it moved to, and the other one keeps its bytes;
+     · a re-encryption that lands while the user is typing keeps the newer
+       prose, and the ciphertext swap it performs is not an undoable edit —
+       while no plaintext ever enters the model, the undo history, the
+       clipboard serialisation or a request.
+   ============================================================ */
+
+/* the model behind the island: the node views are the secret UI's own DOM, so
+   "no plaintext in the editor" can only be read off the document itself */
+type PMNode = {
+  type: { name: string };
+  attrs: Record<string, string>;
+  nodeSize: number;
+  firstChild: PMNode | null;
+  content: { size: number };
+  toJSON(): unknown;
+  descendants(fn: (node: PMNode, pos: number) => void): void;
+  slice(from: number, to: number): PMSlice;
+};
+type PMSlice = { content: { size: number } };
+type PMTr = { delete(from: number, to: number): PMTr; insert(pos: number, node: PMNode): PMTr };
+type PMBranch = { items: { forEach(fn: (item: { step?: { toJSON(): unknown } }) => void): void } };
+type PMState = {
+  doc: PMNode;
+  tr: PMTr;
+  plugins: { getState(state: PMState): { done?: PMBranch; undone?: PMBranch } | undefined }[];
+};
+type PMView = {
+  state: PMState;
+  dispatch(tr: PMTr): void;
+  serializeForClipboard(slice: PMSlice): { dom: HTMLElement; text: string };
+};
+type EditorElement = HTMLElement & { editor: { view: PMView } };
+
+const EDITOR = "#doc .bn-editor";
+
+/** the document and every undo/redo step the island holds, as JSON */
+const visualState = (p: Page) =>
+  p.$eval(EDITOR, (element) => {
+    const view = (element as HTMLElement & { editor: { view: PMView } }).editor.view;
+    const history: unknown[] = [];
+    for (const plugin of view.state.plugins) {
+      const state = plugin.getState(view.state);
+      for (const branch of [state?.done, state?.undone]) {
+        branch?.items.forEach((item) => {
+          if (item.step) history.push(item.step.toJSON());
+        });
+      }
+    }
+    return JSON.stringify({ doc: view.state.doc.toJSON(), history });
+  });
+
+/** the ciphertext each secret block carries in the MODEL, in document order */
+const modelArmor = (p: Page) =>
+  p.$eval(EDITOR, (element) => {
+    const view = (element as HTMLElement & { editor: { view: PMView } }).editor.view;
+    const armor: string[] = [];
+    view.state.doc.descendants((node) => {
+      if (node.type.name === "secret") armor.push(node.attrs.ciphertext);
+    });
+    return armor;
+  });
+
+describe("a revealed secret that MOVES keeps its edit, and a re-encrypt mid-typing keeps the prose", () => {
+  const MOVED = "keys/visual-duplicate.md";
+
+  test("the dirty block follows its island id through a reorder, and typing survives the encrypt", async () => {
+    writeVaultFile(
+      vaultDir,
+      MOVED,
+      "# Visual duplicate\n\n" + fence(dupArmor) + "\nbetween\n\n" + fence(dupArmor) + "\ntail\n"
+    );
+    const p = await newPage(srv);
+    const requests: string[] = [];
+    p.on("request", (r) => requests.push(r.url() + (r.postData() ?? "")));
+    try {
+      await p.waitForSelector(`#tree .row.file[data-doc="${MOVED}"]`, { timeout: 20000 });
+      await openDoc(p, MOVED);
+      await unlockBlock(p, 0);
+      await waitForReveals(p, 2);
+
+      /* hold the NEXT encrypt in the worker: the save is then in flight for as
+         long as this test needs, which is the window the race lives in */
+      await p.evaluate(() => {
+        const w = window as unknown as { releaseEncryption?: () => void; encryptionHeld?: boolean };
+        const post = Worker.prototype.postMessage;
+        Worker.prototype.postMessage = function (message: unknown, options?: Transferable[] | StructuredSerializeOptions) {
+          if ((message as { op?: string }).op === "encrypt") {
+            w.encryptionHeld = true;
+            w.releaseEncryption = () => {
+              Worker.prototype.postMessage = post;
+              post.call(this, message, options as StructuredSerializeOptions);
+            };
+          } else post.call(this, message, options as StructuredSerializeOptions);
+        };
+      });
+
+      /* edit the SECOND copy, then drag it in front of the first one */
+      const edit = "MOVED_DIRTY_SECRET_CANARY=1\n";
+      await typeInto(p, 1, edit);
+      const moved = await p.$eval(EDITOR, (element) => {
+        const view = (element as unknown as EditorElement).editor.view;
+        const secrets: { pos: number; node: PMNode }[] = [];
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === "blockContainer" && node.firstChild?.type.name === "secret") secrets.push({ pos, node });
+        });
+        if (secrets.length !== 2) throw new Error(`expected two secret blocks, saw ${secrets.length}`);
+        const [first, second] = secrets;
+        view.dispatch(view.state.tr.delete(second.pos, second.pos + second.node.nodeSize).insert(first.pos, second.node));
+        return [second.node.attrs.id, first.node.attrs.id];
+      });
+      expect(
+        await p.$$eval(".secret", (nodes) => nodes.map((n) => n.closest("[data-id]")?.getAttribute("data-id")))
+      ).toEqual(moved);
+      expect(await revealedTexts(p)).toEqual([DUP_PLAIN + edit, DUP_PLAIN]);
+
+      /* save, and type while its encrypt is still held */
+      await chord(p, "KeyS");
+      await p.waitForFunction(() => (window as unknown as { encryptionHeld?: boolean }).encryptionHeld, {
+        timeout: 20000,
+        polling: 100,
+      });
+      await p.$eval('#doc [data-content-type="paragraph"]', (node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node.querySelector(".bn-inline-content") ?? node);
+        range.collapse(false);
+        const selection = window.getSelection()!;
+        selection.removeAllRanges();
+        selection.addRange(range);
+        (node.closest<HTMLElement>('[contenteditable="true"]') ?? (node as HTMLElement)).focus();
+      });
+      await p.keyboard.type(" TYPEDDURINGENCRYPTION");
+
+      const pendingModel = await visualState(p);
+      expect(pendingModel).toContain("TYPEDDURINGENCRYPTION");
+      expect(JSON.parse(pendingModel).history.length).toBeGreaterThan(0);
+      for (const needle of [DUP_PLAIN.trim(), edit.trim(), PASSPHRASE]) expect(pendingModel).not.toContain(needle);
+
+      /* what a copy of the whole document would carry: the island's own
+         serialisation, which is what the clipboard and the AI context read */
+      const copied = await p.$eval(EDITOR, (element) => {
+        const view = (element as unknown as EditorElement).editor.view;
+        const { dom, text } = view.serializeForClipboard(view.state.doc.slice(0, view.state.doc.content.size));
+        return text + dom.innerHTML;
+      });
+      expect(copied).toContain("TYPEDDURINGENCRYPTION");
+      for (const needle of [DUP_PLAIN.trim(), edit.trim()]) expect(copied).not.toContain(needle);
+
+      await p.evaluate(() => (window as unknown as { releaseEncryption(): void }).releaseEncryption());
+      const saved = await waitUntil(
+        () => {
+          const md = readVaultText(vaultDir, MOVED);
+          return md.includes("TYPEDDURINGENCRYPTION") && ageFences(md)[0] !== dupArmor ? md : null;
+        },
+        { timeout: 25000, label: "the new prose and the moved secret to both reach disk" }
+      );
+      const ciphertext = ageFences(saved);
+      expect(ciphertext).toHaveLength(2);
+      expect(await decryptArmor(ciphertext[0])).toBe(DUP_PLAIN + edit);
+      expect(`the fence that did not move is byte-identical: ${ciphertext[1] === dupArmor}`).toBe(
+        "the fence that did not move is byte-identical: true"
+      );
+
+      const settledModel = await visualState(p);
+      for (const needle of [DUP_PLAIN.trim(), edit.trim(), PASSPHRASE]) {
+        expect(`${needle.slice(0, 16)} in the model: ${settledModel.includes(needle)}`).toBe(
+          `${needle.slice(0, 16)} in the model: false`
+        );
+        expect(`${needle.slice(0, 16)} in a request: ${requests.join("\n").includes(needle)}`).toBe(
+          `${needle.slice(0, 16)} in a request: false`
+        );
+        expect(`${needle.slice(0, 16)} on disk: ${saved.includes(needle)}`).toBe(
+          `${needle.slice(0, 16)} on disk: false`
+        );
+      }
+
+      /* ciphertext maintenance is not an edit: undo steps over the prose, never
+         over the armor, and a save on either side stores the same two fences */
+      for (const redo of [false, true]) {
+        await p.$eval(EDITOR, (node) => (node as HTMLElement).focus());
+        await chord(p, "KeyZ", "Control", ...(redo ? ["Shift"] : []));
+        await p.waitForFunction(
+          (want) => document.querySelector("#doc .bn-editor")!.textContent!.includes("TYPEDDURINGENCRYPTION") === want,
+          { timeout: 10000, polling: 100 },
+          redo
+        );
+        expect(await modelArmor(p)).toEqual(ciphertext);
+        expect(await revealedTexts(p)).toEqual([DUP_PLAIN + edit, DUP_PLAIN]);
+        await chord(p, "KeyS");
+        const after = await waitUntil(
+          () => {
+            const md = readVaultText(vaultDir, MOVED);
+            return md.includes("TYPEDDURINGENCRYPTION") === redo ? md : null;
+          },
+          { timeout: 20000, label: redo ? "the redo to reach disk" : "the undo to reach disk" }
+        );
+        expect(ageFences(after)).toEqual(ciphertext);
+      }
+
+      /* and it is really on disk that way: a fresh session decrypts both */
+      await p.reload({ waitUntil: "domcontentloaded" });
+      await p.waitForSelector("#app:not([hidden])", { timeout: 25000 });
+      await openDoc(p, MOVED);
+      await unlockBlock(p, 0);
+      await waitForReveals(p, 2);
+      expect(await revealedTexts(p)).toEqual([DUP_PLAIN + edit, DUP_PLAIN]);
+      await clickBlockButton(p, 0, /^\s*lock\b/i);
+      await p.waitForFunction(() => !document.querySelector(".secret.open"), { timeout: 15000 });
+      expect(await p.$$eval(".secret textarea", (nodes) => nodes.length)).toBe(0);
+      await ensureRaw(p);
+      expect(await p.$eval("#rawArea", (node) => (node as HTMLTextAreaElement).value)).toBe(
+        readVaultText(vaultDir, MOVED)
+      );
+    } finally {
       await p.close();
     }
   }, 180000);

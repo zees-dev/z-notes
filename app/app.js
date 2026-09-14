@@ -21,7 +21,7 @@ import { pendingHistory, stepHistory, wireHistory } from "./history.js";
 import { LONGPRESS_MS, applyFileHistory, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
 import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, wireDialogs } from "./dialogs.js";
 import { refreshTrash, toggleTrash } from "./trash.js";
-import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, flushTextRun, initWordWrap, keepRawCaretVisible, openDoc, paneClickToPreview, previewClickToEdit, resumeRaw, saveDoc, setMode, startHeaderRename, syncModeUI, toggleWordWrap, trackScrollPointerDown, renderDoc, setBaseline, setSaveIndicator } from "./editor.js";
+import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, flushTextRun, initWordWrap, keepRawCaretVisible, openDoc, saveDoc, setMode, startHeaderRename, syncModeUI, toggleWordWrap, renderDoc, setBaseline, setSaveIndicator, visualCanStep } from "./editor.js";
 import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, palSetMode, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
@@ -237,11 +237,6 @@ function wire() {
     closeCtx();
   });
   window.addEventListener("blur", () => closeCtx(true));
-
-  /* two disjoint editor click zones (amendments 2 + 12) */
-  $("#scroll").addEventListener("pointerdown", trackScrollPointerDown);
-  $("#doc").addEventListener("click", previewClickToEdit);
-  $("#scroll").addEventListener("click", paneClickToPreview);
 
   /* backdrop click = dismiss, through the SAME closer table dismissTop uses.
      The if-chain this replaces was a second copy of that table, and it had
@@ -582,11 +577,6 @@ function wire() {
      still in it — under the narrower selector that Enter pressed Overwrite
      instead of starting a line. */
   const EDITABLE = '[contenteditable]:not([contenteditable="false"])';
-  /* Everything that has its own answer to Enter, as one selector: a control, a
-     link, a field, the shell's own regions and every floating layer. What is
-     left is the document pane and the page itself — the only place Enter is
-     free to mean "resume editing" (ADR 0036). */
-  const RESUME_BLOCKED = "button, a, input, textarea, select, " + EDITABLE + ", #sidebar, .chat, .topbar, .statusbar, .modal, .veil, .pop";
 
   const typing = () => {
     const a = document.activeElement;
@@ -595,6 +585,42 @@ function wire() {
 
   document.addEventListener("keydown", (e) => {
     const mod = e.metaKey || e.ctrlKey;
+    /* WHO OWNS THIS KEY. Inside the visual editor (its own DOM and its
+       portalled menus) every chord is BlockNote's — since undo in Edit is the
+       editor's own history (ADR 0014 as amended) — except the ones that are
+       about the app rather than the text. A veil over the editor takes them all
+       back: a dialog is not typing. The last line is the same rule for anything
+       else that has already claimed a key (the Raw surface, a field, a menu).
+
+       THE ALT CHORDS ARE THE APP'S EVERYWHERE, Edit included: ⌥C is the
+       assistant (ADR 0025), ⌥Z word wrap and ⌥N / ⌥⇧N the create row, and each
+       already pays for itself by swallowing a dead key wherever a note is being
+       written — a chord that dies in the document is not a chord. `e.code`
+       first, for the reason their own handlers read it: macOS resolves ⌥C and
+       ⌥N to a composition and `e.key` is then "Dead".
+
+       ⌘Z / ⌘⇧Z is BlockNote's while the island's history HOLDS a step and the
+       app's the moment it does not — a create or a rename is only ever on the
+       app timeline (ADR 0014/0020), and asking for it should not cost a click
+       outside the editor first. The two are exclusive: with nothing to undo
+       ProseMirror's own keymap declines the key. */
+    const key = e.key.toLowerCase();
+    const inEditor = e.target.closest?.(".bn-container, .bn-portal");
+    const altChord = e.altKey && !mod && (["KeyC", "KeyZ", "KeyN"].includes(e.code) || ["c", "z", "n"].includes(key));
+    const undoChord = !!inEditor && mod && !e.altKey && key === "z" && !visualCanStep(e.shiftKey);
+    const appChord =
+      altChord || undoChord || (mod && (["s", "e", "j", "k", "p", ",", "/", "n"].includes(key) || (e.shiftKey && key === "l")));
+    /* ESCAPE IS THE ONE KEY THE ISLAND SHARES. BlockNote claims it in place when
+       it has something of its own to close — a slash menu, a drag menu, the
+       caret it blurs — and every one of those arrives here `defaultPrevented`,
+       so that press is spent. An Escape the island did NOT claim (focus on a
+       protected block's Edit source button, a portalled surface with no menu
+       up) is the app's layer key, as it is on every other surface: it was
+       swallowed here instead, and no number of presses reached the chat panel
+       or the context menu, which are not veils. */
+    const escapeLayer = e.key === "Escape" && !e.defaultPrevented;
+    if (inEditor && !appChord && !escapeLayer && !VEILS.some(isOpen)) return;
+    if (e.defaultPrevented && !appChord) return;
     if (e.key === "Escape") {
       if (dismissTop()) e.preventDefault();
       return;
@@ -615,16 +641,6 @@ function wire() {
           return;
         }
       }
-      /* …and with nothing more specific claiming the key, Enter is the way back
-         INTO Raw, at the caret Esc left behind (ADR 0036) — Esc's other half.
-         The selector is deliberately WIDE: only "nothing focused, document
-         showing" is claimed, so a focused tree row still renames (tree.js
-         `rowKeys`), a [[link]] pill still follows, and a settings field, the
-         chat composer, the terminal line and every modal button keep their own
-         Enter. Modifiers are excluded outright — none of them mean this. */
-      const free =
-        state.view === "doc" && state.mode === "preview" && !overlayOpen() && !mod && !e.altKey && !e.shiftKey;
-      if (free && target && target.closest && !target.closest(RESUME_BLOCKED) && resumeRaw()) e.preventDefault();
     }
     /* ⇧F10 / the Menu key — the keyboard equivalent of the right-click, and the
        reason the menu is not a pointer-only affordance. Scoped to the sidebar:
@@ -712,7 +728,7 @@ function wire() {
 
          Outside a text surface the timeline is still the answer; the entry it
          lands on is simply more likely to be a file operation. */
-      if (typing() && document.activeElement && document.activeElement.id !== "rawArea") return;
+      if (typing() && !inEditor && document.activeElement && document.activeElement.id !== "rawArea") return;
       /* A dialog is already asking a question — including, often, the one THIS
          chord raised. Stepping the timeline underneath it would swap the
          question out from under a pointer already on its way to Confirm. */

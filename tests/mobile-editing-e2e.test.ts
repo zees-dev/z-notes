@@ -119,78 +119,45 @@ describe("phone editing regressions", () => {
     expect(pageErrors).toEqual([]);
   }, 45000);
 
-  test("Preview retains nested bullet and checklist hierarchy", async () => {
+  test("Edit retains nested bullet and checklist hierarchy", async () => {
+    /* NESTED is `- [x] parent` · `  - [ ] child` · `    - [ ] grandchild` ·
+       `  - sibling` · `- last`. In the island a nested item lives inside its
+       parent's `.bn-block-group` (`.bn-block-outer > .bn-block >
+       [.bn-block-content, .bn-block-group]`), and a checklist item carries a
+       real checkbox input rather than a painted mark — so depth is read off
+       the structure and "done" off the control, not off CSS. */
     await app.boot("/d/" + LIST_DOC);
+    await page.waitForSelector("#doc .bn-editor", { timeout: 20000 });
     const hierarchy = await page.evaluate(() => {
-      const item = (line: number) => document.querySelector<HTMLElement>(`.md li[data-line="${line}"]`);
-      const parent = item(2);
-      const child = item(3);
-      const grandchild = item(4);
-      const sibling = item(5);
-      return {
-        childParent: child?.parentElement?.closest("li")?.dataset.line ?? null,
-        grandchildParent: grandchild?.parentElement?.closest("li")?.dataset.line ?? null,
-        siblingParent: sibling?.parentElement?.closest("li")?.dataset.line ?? null,
-        grandchildTask: grandchild?.classList.contains("task") ?? false,
-        childMarkOpacity: child ? getComputedStyle(child.querySelector(".cb svg")!).opacity : null,
-      };
-    });
-    expect(hierarchy).toEqual({
-      childParent: "2",
-      grandchildParent: "3",
-      siblingParent: "2",
-      grandchildTask: true,
-      childMarkOpacity: "0",
-    });
-    expect((await srv.doc(LIST_DOC)).body.markdown).toBe(NESTED);
-    expect(pageErrors).toEqual([]);
-  }, 30000);
-
-  test("Preview uses circular bullet markers instead of dash rules", async () => {
-    /* Every bullet is a CIRCLE — square, fully rounded, drawn by CSS and not by
-       a background image, which is the claim this test exists for.
-       Depth decides whether that circle is FILLED or a RING, alternating so a
-       nested list is readable at a glance (base.css `.md ul ul li.bul::before`).
-       The ring is painted with an inset box-shadow over a transparent
-       background, so "no background colour" is the nested bullet working, not a
-       marker that failed to draw — asserting a filled colour at every depth is
-       what made this fail once nesting gained its own look.
-
-       NESTED is `- [x] parent` (line 2) · `  - [ ] child` (3) ·
-       `    - [ ] grandchild` (4) · `  - sibling` (5) · `- last` (6). */
-    await app.boot("/d/" + LIST_DOC);
-    const read = (line: number) =>
-      page.$eval(`.md li.bul[data-line="${line}"]`, (n) => {
-        const s = getComputedStyle(n, "::before");
+      const label = (content: Element) => content.querySelector(".bn-inline-content")?.textContent ?? "";
+      const items = [...document.querySelectorAll("#doc .bn-editor .bn-block-content")].filter((b) =>
+        (b as HTMLElement).dataset.contentType?.endsWith("ListItem")
+      ) as HTMLElement[];
+      return items.map((b) => {
+        /* .bn-block-content → .bn-block → .bn-block-outer → .bn-block-group,
+           whose own parent is the .bn-block of the item it is nested under */
+        const host = b.closest(".bn-block")?.parentElement?.parentElement?.parentElement;
+        const owner = host?.classList.contains("bn-block")
+          ? [...host.children].find((c) => c.classList.contains("bn-block-content"))
+          : undefined;
+        const box = b.querySelector<HTMLInputElement>('input[type="checkbox"]');
         return {
-          width: s.width,
-          height: s.height,
-          radius: s.borderRadius,
-          image: s.backgroundImage,
-          color: s.backgroundColor,
-          ring: s.boxShadow,
+          text: label(b),
+          type: b.dataset.contentType,
+          under: owner ? label(owner) : null,
+          checked: box ? box.checked : null,
         };
       });
-
-    const top = await read(6); // `- last`, depth 1
-    const nested = await read(5); // `  - sibling`, depth 2
-
-    for (const [what, m] of [
-      ["top-level", top],
-      ["nested", nested],
-    ] as const) {
-      expect(`${what} is square: ${m.width === m.height}`).toBe(`${what} is square: true`);
-      expect(`${what} radius: ${m.radius}`).toBe(`${what} radius: 50%`);
-      expect(`${what} image: ${m.image}`).toBe(`${what} image: none`);
-      /* neither depth may render as nothing at all */
-      expect(`${what} is drawn: ${m.color !== "rgba(0, 0, 0, 0)" || m.ring !== "none"}`).toBe(`${what} is drawn: true`);
-    }
-
-    /* …and the two depths are drawn DIFFERENTLY: filled, then hollow */
-    expect(`top-level is filled: ${top.color !== "rgba(0, 0, 0, 0)"}`).toBe("top-level is filled: true");
-    expect(`nested is hollow: ${nested.color === "rgba(0, 0, 0, 0)" && nested.ring !== "none"}`).toBe(
-      "nested is hollow: true"
-    );
+    });
+    expect(hierarchy).toEqual([
+      { text: "parent", type: "checkListItem", under: null, checked: true },
+      { text: "child", type: "checkListItem", under: "parent", checked: false },
+      { text: "grandchild", type: "checkListItem", under: "child", checked: false },
+      { text: "sibling", type: "bulletListItem", under: "parent", checked: null },
+      { text: "last", type: "bulletListItem", under: null, checked: null },
+    ]);
+    expect((await srv.doc(LIST_DOC)).body.markdown).toBe(NESTED);
+    expect(pageErrors).toEqual([]);
   }, 30000);
 
   test("Enter keeps indentation and continues bullets, checklists and ordered markers", async () => {

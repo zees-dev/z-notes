@@ -55,7 +55,6 @@
   --code-inline-fg: var(--text-2);
   --code-inline-bg: rgba(23, 24, 26, .04);
   --code-inline-bd: transparent;
-  --hover-tint: rgba(78, 110, 93, .05);   /* click-to-edit: a sage whisper */
   --scrim-bg: rgba(23, 24, 26, .16);
 
   /* --- typography --- */
@@ -241,7 +240,6 @@
   --scroll-thumb: rgba(236, 239, 233, .16);
   --scroll-thumb-hover: rgba(236, 239, 233, .3);
   --code-inline-bg: rgba(236, 239, 233, .07);
-  --hover-tint: rgba(143, 191, 162, .07);
   --scrim-bg: rgba(0, 0, 0, .5);
 
   /* --- elevation: still nothing floats until it has to --- */

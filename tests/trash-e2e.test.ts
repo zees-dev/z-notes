@@ -751,6 +751,11 @@ describe("the trash at phone width and in every theme", () => {
         await installTrashRoutes(p);
         await boot(p, "?theme=" + theme);
         await p.waitForFunction(() => !document.getElementById("sbTrash")!.hidden, { timeout: 15000 });
+        /* the link is QUIET while closed; open, it takes the same ink as Settings
+           (its aria-expanded rule), so the comparison belongs to the closed state */
+        const quieter = await p.evaluate(
+          () => getComputedStyle(document.getElementById("trashLink")!).color !== getComputedStyle(document.getElementById("settingsLink")!).color
+        );
         await openTrash(p);
         const m = await p.evaluate((th) => {
           const link = document.getElementById("trashLink")!;
@@ -765,7 +770,6 @@ describe("the trash at phone width and in every theme", () => {
               link.getBoundingClientRect().right <= document.getElementById("sidebar")!.getBoundingClientRect().right + 0.5,
             ink: cs.color,
             size: cs.fontSize,
-            quieter: cs.color !== getComputedStyle(document.getElementById("settingsLink")!).color,
             painted: !!item && item.getBoundingClientRect().height > 0,
           };
         }, theme);
@@ -773,7 +777,7 @@ describe("the trash at phone width and in every theme", () => {
         expect(`${theme}: above the footer, inside the sidebar: ${m.above && m.inSidebar}`).toBe(
           `${theme}: above the footer, inside the sidebar: true`
         );
-        expect(`${theme}: quieter than Settings: ${m.quieter}`).toBe(`${theme}: quieter than Settings: true`);
+        expect(`${theme}: quieter than Settings: ${quieter}`).toBe(`${theme}: quieter than Settings: true`);
         expect(`${theme}: the drawer paints: ${m.painted}`).toBe(`${theme}: the drawer paints: true`);
         report.push(`${theme} → ${m.size} ${m.ink}`);
       } finally {

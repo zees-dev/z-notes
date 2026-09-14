@@ -50,7 +50,6 @@
   /* --- misc palette --- */
   --scroll-thumb: #d2d7e3;
   --scroll-thumb-hover: #b9c0d1;
-  --hover-tint: rgba(79, 70, 229, .038);
 
   /* --- typography --- */
   --w-med: 550; --w-semi: 620; --w-bold: 700;
@@ -181,7 +180,6 @@
   --scroll-thumb: #2f3542;
   --scroll-thumb-hover: #434b5b;
   --code-inline-fg: #ff8ab8;
-  --hover-tint: rgba(162, 155, 255, .07);
   --scrim-bg: rgba(3, 5, 12, .62);
 
   /* --- elevation --- */

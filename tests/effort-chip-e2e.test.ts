@@ -153,6 +153,13 @@ describe("effort chip e2e — picking an effort", () => {
       label: "the chip to repaint model · low",
     });
     expect(await storedEffort()).toBe("low");
+    /* the chip repaints from the session refetch, which now lands a beat BEFORE
+       `pickEffort` closes the menu (measured: 58 ms after the repaint). The
+       claim is that the pick closes the menu, not that both land in one frame. */
+    await waitUntil(async () => !(await menuOpen()), {
+      timeout: 4000,
+      label: "the effort menu to close after the pick",
+    });
     expect(await menuOpen()).toBe(false);
 
     /* the menu, reopened, marks the new current */

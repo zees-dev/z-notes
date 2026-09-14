@@ -131,6 +131,12 @@ const TREE_INPUT = "#tree input";
 const ANY_INPUT = "#tree input, .veil.show input, .veil.show textarea";
 
 async function openDoc(p: Page, path: string) {
+  /* Clicking in a BACKGROUND tab hangs: the click waits for the row to be
+     scrolled into view, and a hidden page never reaches a rendering
+     opportunity to report that. Two-page tests must therefore say which page
+     they are driving — and the other page's waits poll on a timer (below)
+     rather than on animation frames, which a hidden page does not get. */
+  await p.bringToFront();
   /* the tree re-renders whole; a row handle can detach between the wait and
      the click, which is a race in the test, never a product defect */
   for (let i = 0; ; i++) {
@@ -739,14 +745,14 @@ describe("e2e — a broken [[link]] is flagged and offers to create the doc", ()
     await openDoc(page, BROKEN);
     await ensurePreview(page);
     await page.waitForFunction(
-      (s) => !!document.querySelector(`#doc a.wl[data-link="${s}"]`),
+      (s) => !!document.querySelector(`#doc button.wiki-link[data-target="${s}"]`),
       { timeout: 10000 },
       BROKEN_SLUG
     );
 
     const pills = await page.evaluate((s) => {
       const read = (link: string) => {
-        const a = document.querySelector<HTMLElement>(`#doc a.wl[data-link="${link}"]`);
+        const a = document.querySelector<HTMLElement>(`#doc button.wiki-link[data-target="${link}"]`);
         if (!a) return null;
         return {
           cls: a.className,
@@ -772,7 +778,7 @@ describe("e2e — a broken [[link]] is flagged and offers to create the doc", ()
 
     /* the create affordance: a control inside the pill, or the pill itself */
     await page.evaluate((s) => {
-      const a = document.querySelector<HTMLElement>(`#doc a.wl[data-link="${s}"]`)!;
+      const a = document.querySelector<HTMLElement>(`#doc button.wiki-link[data-target="${s}"]`)!;
       const inner = [...a.querySelectorAll("[data-act]")].find((b) =>
         /create|new/i.test(b.getAttribute("data-act") || "")
       ) as HTMLElement | undefined;
@@ -799,7 +805,7 @@ describe("e2e — a broken [[link]] is flagged and offers to create the doc", ()
     await page
       .waitForFunction(
         (s) => {
-          const a = document.querySelector<HTMLElement>(`#doc a.wl[data-link="${s}"]`);
+          const a = document.querySelector<HTMLElement>(`#doc button.wiki-link[data-target="${s}"]`);
           return !!a && !/broken|missing|dead|unresolved/i.test(a.className);
         },
         { timeout: 5000 },
@@ -807,7 +813,7 @@ describe("e2e — a broken [[link]] is flagged and offers to create the doc", ()
       )
       .catch(() => {}); // let the assertion below produce the readable failure
     const after = await page.evaluate((s) => {
-      const a = document.querySelector<HTMLElement>(`#doc a.wl[data-link="${s}"]`);
+      const a = document.querySelector<HTMLElement>(`#doc button.wiki-link[data-target="${s}"]`);
       return a ? a.className : "(gone)";
     }, BROKEN_SLUG);
     expect(`the pill stopped being flagged: ${!/broken|missing|dead|unresolved/i.test(after)} (class="${after}")`).toBe(
@@ -844,7 +850,7 @@ describe("e2e — a second page converges after a rename, with no refresh (SSE)"
           const rows = [...document.querySelectorAll<HTMLElement>("#tree .row.file")].map((r) => r.dataset.doc);
           return rows.includes(to) && !rows.includes(from);
         },
-        { timeout: 15000 },
+        { timeout: 15000, polling: 100 },
         CONVERGE_FROM,
         CONVERGE_TO
       );
@@ -853,7 +859,11 @@ describe("e2e — a second page converges after a rename, with no refresh (SSE)"
       expect(`page two reloaded to converge: ${stillOne !== 1}`).toBe("page two reloaded to converge: false");
 
       /* its open editor followed too, rather than sitting on a 404 path */
-      await p2.waitForFunction((to) => document.getElementById("stPath")!.textContent === to, { timeout: 15000 }, CONVERGE_TO);
+      await p2.waitForFunction(
+        (to) => document.getElementById("stPath")!.textContent === to,
+        { timeout: 15000, polling: 100 },
+        CONVERGE_TO
+      );
       expect(await statusPath(p2)).toBe(CONVERGE_TO);
 
       const active = await p2.evaluate(
@@ -1022,7 +1032,7 @@ describe("e2e — creation is context-aware and path-aware", () => {
     await escape();
   }, 45000);
 
-  test("a/b/c.md creates the intermediate folders and the doc, and opens it in Raw", async () => {
+  test("a/b/c.md creates the intermediate folders and the doc, and opens it in Source", async () => {
     await openDoc(page, KEEPER);
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     try {
@@ -1040,9 +1050,10 @@ describe("e2e — creation is context-aware and path-aware", () => {
         "the folders are real: true"
       );
       expect(`url: ${await page.evaluate(() => location.pathname)}`).toBe("url: /d/notes/a/b/c.md");
-      expect(`opens in Raw: ${await page.evaluate(() => document.getElementById("doc")!.classList.contains("raw-mode"))}`).toBe(
-        "opens in Raw: true"
-      );
+      /* every human create route opens the new doc in Source (`mintEntry`) */
+      expect(
+        `opens in Source: ${await page.evaluate(() => document.getElementById("doc")!.classList.contains("raw-mode"))}`
+      ).toBe("opens in Source: true");
     } finally {
       await del("notes/a/b/c.md");
     }

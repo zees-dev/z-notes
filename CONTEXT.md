@@ -46,17 +46,20 @@ has happened or is likely, because agents invent synonyms.
 
 ## The document pane
 
-- **Preview / Raw** — the two renderings of the open doc, toggled by ⌘E and
-  by the statusbar mode chip. **Raw** is a *line editor*, not a textarea
-  (ADR 0032): one `contenteditable` with one block per source line, each drawn
-  at the size the Preview block would be. *Banned:* "the raw textarea",
-  "source mode".
-- **fold** — Preview's outline disclosure (ADR 0023): hiding a heading's
-  section or a list item's sub-list, as a pure view state. A **fold key** is
-  content plus ordinal (`h2:Today:0`), never a line number; the **chevron** is
-  the gutter control that toggles it. *Banned:* "collapse"/"expand" as the noun
-  or the state (they survive only in the chevron's aria-label), "outline mode"
-  (there is no mode — folding is Preview).
+- **Edit / Source** — the two surfaces of the open doc, toggled by ⌘E and by
+  the statusbar mode chip (ADR 0037). **Edit** is the BlockNote island
+  (`app/block-editor.tsx`): formatted blocks edited in place. **Source** is
+  the *line editor* (ADR 0032): one `contenteditable` with one block per
+  source line, each drawn at the size its Edit block would be. The persisted
+  mode ids and the WebMCP enum stay `preview` (Edit) and `raw` (Source) —
+  identifiers, never words for a person. *Banned:* "Preview" for the visual
+  editor, "Raw mode" in UI text, "the raw textarea".
+- **source group** — one top-level Markdown node with its byte range, the
+  unit `app/markdown-source.ts` preserves: an untouched group keeps its
+  bytes, an edited one is re-serialised. A **protected block** is a group the
+  adapter cannot edit visually (frontmatter, nested secrets, unsupported
+  syntax); it shows its source and an "Edit source" door. *Banned:* "chunk",
+  "segment".
 
 ## Text size
 

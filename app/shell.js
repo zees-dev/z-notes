@@ -13,8 +13,8 @@ import { $, $$, apiFail, dirname, toast, vaultOf, withDefaultExtension } from ".
 import { adoptVaultSync, closeCtx, loadTree, renderTree, revealFolder } from "./tree.js";
 import { closeConfirm, closeConflict, confirmDialog } from "./dialogs.js";
 import { adoptTrash, refreshTrash } from "./trash.js";
-import { closeExitGuard, guardRawExit, navGate, openDoc, rawExitDiff, renderDoc, saveDoc, setBaseline, setMode, syncRaw, viewedPath } from "./editor.js";
-import { closePP } from "./secrets.js";
+import { closeExitGuard, destroyEditor, guardRawExit, markDirty, navGate, openDoc, rawExitDiff, renderDoc, saveDoc, setBaseline, setMode, syncRaw, viewedPath } from "./editor.js";
+import { closePP, retargetSecrets } from "./secrets.js";
 import { closeEffort, closePal, renderChat, updateSessionUI } from "./chat.js";
 import { adoptSettings, cacheLook, commitFocusedNumber, exitSettings, guardSettingsExit, paintAiStatus, paintGitRemote, paintVaults, settingAt, settingsDirty, showSettings } from "./settings.js";
 import { loadCommands } from "./terminal.js";
@@ -372,32 +372,38 @@ export function connect() {
         const cached = state.docs.get(d.path);
         state.docs.delete(d.path);
         if (wasActive && d.to) {
-          state.active = d.to;
-          if (state.dirty) {
-            /* never clobber typing: keep the buffer, just retarget it. The next
-               save is an ordinary write to the new path. */
-            if (cached) state.docs.set(d.to, Object.assign({}, cached, { path: d.to, name: d.to.split("/").pop() }));
-            await loadTree().catch(() => {});
-            /* the buffer stays put but its address changed — the one place a
-               re-home cannot go through openDoc, so the URL and the resume
-               store (ADR 0035) are both followed here instead */
+          const nav = navGate();
+          if (state.active === d.path && cached?.loaded) {
+            /* The SAME doc object is retargeted, never a copy: the mounted
+               editor's callbacks, the pending autosave and any in-flight save
+               all hold it, and a clean buffer can still take typing while the
+               tree request below is on the wire. */
+            destroyEditor(); // visual secret ids are released against the OLD path
+            state.docs.set(d.to, Object.assign(cached, { path: d.to, name: d.to.split("/").pop() }));
+            retargetSecrets(d.path, d.to);
+            state.active = d.to;
+            /* the one place a re-home cannot go through openDoc, so the URL and
+               the resume store (ADR 0035) are both followed here instead */
             routeDoc(d.to, true);
             rememberLastDoc(d.to);
             renderDoc({ noFade: true });
-            /* sticky for the same reason the deleted half is: the doc under an
-               unsaved buffer changed address, and the user has to be able to
-               still be reading that when they look back at the screen */
-            toast("Moved to " + d.to + " — your unsaved changes are still here", { sticky: true });
+            if (state.dirty) markDirty(); // the armed autosave still names the old path
+            const ours = () => nav() && viewedPath() === d.to;
+            await loadTree().catch(() => {});
+            if (!ours()) return;
+            await refreshDoc(d.to, false, ours);
+            /* sticky while unsaved: the doc under an unsaved buffer changed
+               address, and that has to still be on screen on a later look */
+            if (ours()) toast("Moved to " + d.to + (state.dirty ? " — your unsaved changes are still here" : ""), { sticky: state.dirty });
             return;
           }
-          const ours = navGate();
-          state.active = null;
+          // No mounted buffer at the moved path yet — a navigation is still in flight.
           await loadTree().catch(() => {});
-          if (!ours()) return; // the user (or the local move) already navigated
+          if (!nav()) return; // the user (or the local move) already navigated
           const next = state.docs.get(d.to);
           if (next) next.loaded = false;
           await openDoc(d.to, { replace: true }).catch(() => {});
-          toast("Moved to " + d.to);
+          if (viewedPath() === d.to) toast("Moved to " + d.to);
           return;
         }
         await loadTree().catch(() => {});
@@ -427,6 +433,7 @@ export function connect() {
         const keep = !!cached && d.path === state.active && state.dirty;
         if (keep) cached.orphaned = true;
         else state.docs.delete(d.path);
+        if (!keep && d.path === state.active) renderDoc({ noFade: true }); // the pane must not show a file that is gone
         loadTree().catch(() => {});
         /* something left the vault — from this tab, another tab, or an `rm`.
            Only a delete through the app puts it in the trash, but only the
@@ -441,41 +448,61 @@ export function connect() {
       }
       const cached = state.docs.get(d.path);
       if (cached && cached.rev === d.rev) return; // our own echo
-      if (state.saving.has(d.path)) return; // a write of ours is in flight
-      if (d.path === state.active && state.dirty) return; // never clobber typing
       if (d.reason === "created") {
         loadTree().catch(() => {});
         return;
       }
-      try {
-        const fresh = await api.getDoc(d.path);
-        state.docs.set(d.path, setBaseline(Object.assign({}, cached || {}, fresh, { loaded: true }), fresh.markdown));
-        if (d.path === state.active) {
-          const sc = $("#scroll");
-          const keep = sc ? sc.scrollTop : 0;
-          renderDoc({ noFade: true });
-          if (sc) sc.scrollTop = Math.min(keep, sc.scrollHeight - sc.clientHeight);
-          if (d.reason === "external") toast("Reloaded from disk");
-        }
-      } catch (e) {}
+      await refreshDoc(d.path, d.reason === "external");
     },
   });
 }
 
-/* Re-read everything we cannot know is still current after a stream gap. A
-   dirty buffer is never touched — the next save raises the conflict banner. */
-async function resyncAfterGap() {
-  await loadTree().catch(() => {});
-  const path = state.active;
-  if (!path || state.dirty || state.saving.has(path)) return;
+/* Adopt what is on disk, unless doing so would take work away from the user.
+   The PROTECTED BUFFER is the whole rule, and it is checked again AFTER the
+   fetch: a save, a keystroke, a reveal edit or a navigation can all land inside
+   the round trip, and adopting then would overwrite a buffer that is newer than
+   the response. `ours` is the caller's own navigation latch. */
+const refreshes = new Map();
+async function refreshDoc(path, notify, ours = () => true) {
+  const cached = state.docs.get(path);
+  const rev = cached?.rev, markdown = cached?.markdown, diskText = cached?.diskText;
+  const protectedBuffer = () =>
+    state.saving.has(path) ||
+    (path === state.active && (state.dirty || path !== viewedPath())) ||
+    (cached?.loaded && cached.markdown !== cached.diskText) ||
+    [...state.reveal.values()].some((e) => e.path === path && e.dirty);
+  if (protectedBuffer()) return;
+  const request = {};
+  refreshes.set(path, request); // newest request wins; a slower older one must not undo it
   try {
     const fresh = await api.getDoc(path);
-    const cached = state.docs.get(path);
-    if (cached && cached.rev === fresh.rev) return;
+    if (
+      refreshes.get(path) !== request || !ours() || protectedBuffer() ||
+      state.docs.get(path) !== cached || cached?.rev !== rev ||
+      cached?.markdown !== markdown || cached?.diskText !== diskText || rev === fresh.rev
+    )
+      return;
     state.docs.set(path, setBaseline(Object.assign({}, cached || {}, fresh, { loaded: true }), fresh.markdown));
-    renderDoc({ noFade: true });
-    toast("Reloaded from disk");
-  } catch (e) {}
+    if (path === state.active && path === viewedPath()) {
+      const sc = $("#scroll");
+      const keep = sc ? sc.scrollTop : 0;
+      renderDoc({ noFade: true });
+      if (sc) sc.scrollTop = Math.min(keep, sc.scrollHeight - sc.clientHeight);
+      if (notify) toast("Reloaded from disk");
+    }
+  } catch (e) {
+  } finally {
+    if (refreshes.get(path) === request) refreshes.delete(path);
+  }
+}
+
+/* Re-read what we cannot know is still current after a stream gap. A dirty
+   buffer is never touched — the next save raises the conflict banner. */
+async function resyncAfterGap() {
+  const path = state.active;
+  const ours = navGate();
+  await loadTree().catch(() => {});
+  if (path && ours()) await refreshDoc(path, true, ours);
 }
 
 /* ---------- the page's own lifecycle: flush on the way out, heal on the way in ----------
@@ -643,22 +670,16 @@ export function dismissTop() {
     return true;
   }
   /**
-   * THE EDITOR LAYER — Esc leaves Raw.
-   *
-   * It used to only BLUR the textarea, which is a state nothing else in this
-   * app can see: the mode chip still read "Raw", the caret was simply gone, and
-   * the second Esc closed the chat panel. Esc now does what the user means by
-   * it — go back to reading — and the mode it lands in is Preview.
+   * THE EDITOR LAYER — Esc leaves Source for Edit, and blurring is not enough:
+   * a bare blur is a state nothing else in the app can see (the chip still read
+   * "Source", the caret was simply gone, and the next Esc closed the chat panel).
    *
    * With a buffer that does not match the file, `setMode` stops at the exit
-   * guard instead and this Esc raises the diff. Either way Esc was consumed by
-   * the editor, so the layers below it (the drawer, the chat panel) do not also
-   * get it — which is the same ordering the blur had.
+   * guard instead and this Esc raises the diff. Either way Esc is consumed here,
+   * so the layers below (the drawer, the chat panel) do not also get it.
    *
-   * Scoped to focus that BELONGS to the editor. Esc with the caret in a sidebar
-   * filter, the terminal line or a settings field is that surface's Esc, and
-   * every one of those either handles it first or falls through to the layers
-   * below exactly as before.
+   * Scoped to focus that BELONGS to Source. Esc with the caret in a sidebar
+   * filter, the terminal line or a settings field is that surface's Esc.
    */
   const ta = $("#rawArea");
   const at = document.activeElement;
@@ -674,7 +695,7 @@ export function dismissTop() {
    * THE BOTTOM LAYER: the chat panel, at every width (it used to be dismissed
    * only in the mobile sheet). Deliberately last, so every rule above still
    * holds — a modal, the palette, the context menu, the session popover, an
-   * inline tree editor and Raw-to-Preview each take Esc first, and only
+   * inline tree editor and Source-to-Edit each take Esc first, and only
    * once nothing else is up does Esc close the panel.
    *
    * The DRAFT IS NEVER LOST. `toggleChat` collapses a grid column above
@@ -1090,10 +1111,10 @@ export function retireLayerMarker() {
  *      it navigates away from the current doc;
  *   3. the ASSISTANT, while it is an overlay — a layer over the document is
  *      dismissed by Back before the document itself is;
- *   4. RAW mode on a phone — Back means "stop editing" one press before it
- *      means "leave this note", because a phone has no ⌘E and the statusbar
- *      chip is a 30px target;
- *   5. an unsaved Raw buffer at every other width — the unsaved-work exit guard.
+ *   4. SOURCE mode on a phone — Back leaves the source one press before it
+ *      leaves the note, because a phone has no ⌘E and the statusbar chip is a
+ *      30px target;
+ *   5. an unsaved buffer at every other width — the unsaved-work exit guard.
  */
 let popHold = null;
 function holdPop(after, wasBack) {
@@ -1163,7 +1184,7 @@ export function onPop(e) {
   }
   /** THE SIDEBAR, while it is an off-canvas drawer. It is the most modal panel
    * over the doc — it owns the scrim — so Back closes it before the assistant,
-   * Raw mode or the current place gets a chance to consume the press. */
+   * Source mode or the current place gets a chance to consume the press. */
   if (back && !VEILS.some(isOpen) && isDrawer() && app.classList.contains("nav-open")) {
     holdPop(closeNav);
     return;
@@ -1183,16 +1204,15 @@ export function onPop(e) {
     return;
   }
   /**
-   * RAW → PREVIEW, on a phone, before Back means anything else.
+   * SOURCE → EDIT, on a phone, before Back means anything else.
    *
-   * W_SHEET and not W_DOCK, because this is about the ways OUT of Raw that a
-   * phone actually has: there is no ⌘E without a keyboard, `#stMode` is the
-   * 30px statusbar chip, and the click-on-the-whitespace exit competes with
-   * every tap that is trying to scroll. Back is the one gesture a phone has
-   * plenty of — so it stops editing first and leaves the note second.
+   * W_SHEET and not W_DOCK, because this is about the ways OUT of Source that a
+   * phone actually has: there is no ⌘E without a keyboard and `#stMode` is the
+   * 30px statusbar chip. Back is the one gesture a phone has plenty of — so it
+   * spends the Source layer first and leaves the note second.
    *
-   * `setMode` carries its own unsaved-work guard, so a DIRTY buffer still raises the
-   * staged-diff dialog here; Save and Discard both land in Preview instead of
+   * `setMode` carries its own unsaved-work guard, so a DIRTY buffer still raises
+   * the staged-diff dialog here; Save and Discard both land in Edit instead of
    * on the previous page, which is what the press asked for.
    */
   if (back && !VEILS.some(isOpen) && isSheet() && state.view !== "settings" && state.mode === "raw") {
@@ -1200,7 +1220,8 @@ export function onPop(e) {
     return;
   }
   /**
-   * BROWSER BACK OUT OF A DIRTY RAW BUFFER.
+   * BROWSER BACK OUT OF A DIRTY BUFFER, in either mode (`rawExitDiff` answers
+   * for Edit too).
    *
    * Only BACK, and only when the traversal really leaves: a pop that lands on
    * the entry directly under a marker with nothing below it changes nothing on
@@ -1553,26 +1574,31 @@ export function syncScrim() {
 }
 
 /**
- * THE SOFT KEYBOARD, published as one CSS length.
+ * THE SOFT KEYBOARD, published as two CSS lengths.
  *
  * `visualViewport` is the only thing that reports how much of the layout
  * viewport an on-screen keyboard is covering; without it the composer sits
- * underneath the keyboard it just raised. One listener, one custom property,
+ * underneath the keyboard it just raised. One listener, two custom properties,
  * and a clean no-op where the API is absent (it is not in the headless shell,
  * where the overlap is 0 in any case).
  *
- * `--kb` is applied to the SHARED `.doc` container and to the chat panel — and
- * never to #rawArea. A mobile-only inset on the raw textarea is precisely the
- * mode-parity break the acceptance gates exist to catch, and they could not
- * catch this one: headless there is no keyboard, so `--kb` is always 0 there.
+ * `--kb` is the overlap and belongs on the SHARED `.doc` container and on the
+ * chat panel — never on #rawArea. A mobile-only inset on the source textarea is
+ * precisely the mode-parity break the acceptance gates exist to catch, and they
+ * could not catch this one: headless there is no keyboard, so `--kb` is always 0.
+ *
+ * `--visual-bottom` is the visible bottom edge in layout coordinates, which the
+ * Edit toolbar docks on directly — it must not be derived from the overlap,
+ * because a scrolled visual viewport moves the edge without changing the inset.
  */
 export function wireVisualViewport(onChange) {
   const vv = window.visualViewport;
   if (!vv) return;
   const publish = () => {
-    const overlap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-    const kb = Math.round(overlap);
+    const bottom = vv.height + vv.offsetTop;
+    const kb = Math.round(Math.max(0, window.innerHeight - bottom));
     document.documentElement.style.setProperty("--kb", kb + "px");
+    document.documentElement.style.setProperty("--visual-bottom", bottom + "px");
     /* …and the same fact as a class, because a stylesheet cannot ask how long a
        length is. This is the only place in the app that can say "a soft
        keyboard is up", and the editing bar (ADR 0034) is drawn on it.
@@ -1587,5 +1613,6 @@ export function wireVisualViewport(onChange) {
   };
   vv.addEventListener("resize", publish);
   vv.addEventListener("scroll", publish);
+  window.addEventListener("resize", publish);
   publish();
 }

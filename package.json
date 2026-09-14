@@ -10,10 +10,23 @@
     "lint:docs": "bun scripts/lint-docs.ts"
   },
   "devDependencies": {
-    "mermaid": "11.16.1",
     "puppeteer-core": "^25.4.0"
   },
   "dependencies": {
-    "age-encryption": "0.3.0"
+    "@blocknote/core": "0.54.2",
+    "@blocknote/diagram-block": "0.54.2",
+    "@blocknote/mantine": "0.54.2",
+    "@blocknote/react": "0.54.2",
+    "@mantine/core": "9.6.1",
+    "@mantine/hooks": "9.6.1",
+    "age-encryption": "0.3.0",
+    "mdast-util-from-markdown": "2.0.3",
+    "mdast-util-frontmatter": "2.0.1",
+    "mdast-util-gfm": "3.1.0",
+    "mdast-util-to-markdown": "2.1.2",
+    "micromark-extension-frontmatter": "2.0.0",
+    "micromark-extension-gfm": "3.0.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   }
 }
