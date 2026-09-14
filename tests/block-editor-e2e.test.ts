@@ -13,7 +13,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, type Page } from "puppeteer-core";
 import { appDriver, ensureMode, launchTestBrowser, newAppPage, pressChord } from "./browser";
-import { readVaultText, startServer, waitUntil, type TestServer } from "./helpers";
+import { readVaultText, sleep, startServer, waitUntil, type TestServer } from "./helpers";
 import { CORPUS } from "./markdown-corpus";
 
 let srv: TestServer;
@@ -38,15 +38,26 @@ beforeEach(async () => {
   });
   path = `case-${++sequence}.md`;
 });
-async function boot(markdown: string) {
+/* `/d/{path}` resolves through the listing, which the watcher fills ~150 ms
+   after the write; a warm boot is quicker and would resume the previous doc. */
+async function writeDoc(markdown: string) {
   writeFileSync(join(srv.vault, path), markdown);
+  await waitUntil(async () => JSON.stringify((await srv.api("GET", "/api/docs")).body).includes(path), { label: path + " listed" });
+}
+async function boot(markdown: string) {
+  await writeDoc(markdown);
   await appDriver(page, srv.base).boot("/d/" + path);
   await page.waitForSelector('.bn-editor[contenteditable="true"]');
 }
-async function endOfFirst() {
-  await page.click('.bn-editor [data-content-type="paragraph"]');
+/* ProseMirror ignores DOM selection changes for 50 ms after a view update, so
+   a native caret move right after a click or a conversion is never seen. */
+const settled = () => sleep(80);
+async function endOfFirst(type = "paragraph") {
+  await page.click(`.bn-editor [data-content-type="${type}"]`);
+  await settled();
   await pressChord(page, "Home", "Control");
   await page.keyboard.press("End");
+  await settled();
 }
 async function currentMarkdown() {
   return page.evaluate(async () => {
@@ -87,7 +98,7 @@ async function dragBefore(selector: string, target: string) {
 test("heading conversion keeps the following paragraph separate after save and reload", async () => {
   await boot("# Title\nBody\n");
   await page.click('[data-content-type="heading"]');
-  await pressChord(page, "Digit0", "Control", "Alt");
+  await pressChord(page, "Digit0", "Meta", "Alt");
   await page.waitForFunction(() => !document.querySelector('[data-content-type="heading"]'));
   expect(await page.$$eval('[data-content-type="paragraph"]', nodes => nodes.map(node => node.textContent))).toEqual(["Title", "Body"]);
   await save();
@@ -166,23 +177,34 @@ test("native slash menu inserts a heading and floating toolbar formats selection
   expect(readVaultText(srv.vault, path)).toContain("## **Launch findings**");
 }, 40000);
 
-test("list controls and Tab/Shift-Tab preserve selection and produce nested Markdown", async () => {
+/* A desktop has no list toolbar (ADR 0037): list types are the Markdown
+   shortcuts and nesting is Tab / ⇧Tab. The mobile test below taps the buttons. */
+test("list shortcuts and Tab/Shift-Tab preserve selection and produce nested Markdown", async () => {
   await boot("First item\n");
   await endOfFirst();
-  await page.click('[aria-label="Bullet list"]');
+  expect(await page.$eval('.z-block-toolbar', e => e.getClientRects().length)).toBe(0);
+  /* a conversion re-renders the block: wait for it to be serialised and settle */
+  const converted = async (re: RegExp) => {
+    await waitUntil(async () => re.test(await currentMarkdown()), { label: String(re) });
+    await settled();
+  };
+  await page.keyboard.press("Home");
+  await page.keyboard.type("- ");
+  await converted(/^[-*] First item\n$/);
+  await endOfFirst("bulletListItem");
   await page.keyboard.press("Enter");
   await page.keyboard.type("Second item");
   await page.keyboard.press("Tab");
   expect(await currentMarkdown()).toMatch(/[-*] First item\n +[-*] Second item/);
   await pressChord(page, "Tab", "Shift");
   expect(await currentMarkdown()).toMatch(/[-*] First item\n[-*] Second item/);
-  await page.click('[aria-label="Indent"]');
-  expect(await currentMarkdown()).toMatch(/[-*] First item\n +[-*] Second item/);
-  await page.click('[aria-label="Outdent"]');
-  expect(await currentMarkdown()).toMatch(/[-*] First item\n[-*] Second item/);
-  await page.click('[aria-label="Numbered list"]');
+  await page.keyboard.press("Home");
+  await page.keyboard.type("1. ");
+  await converted(/\n1\. Second item\n$/);
   expect(await blocks("numberedListItem")).toHaveLength(1);
-  await page.click('[aria-label="Checklist"]');
+  await page.keyboard.press("Home");
+  await page.keyboard.type("[] ");
+  await converted(/\n[-*] \[ \] Second item\n$/);
   await page.click('.bn-editor input[type="checkbox"], .bn-editor [role="checkbox"]');
   await save();
   expect(readVaultText(srv.vault, path)).toContain("[x] Second item");
@@ -358,7 +380,7 @@ test("a failed editor bundle gives a visible error and usable Source editing", a
     if (/^\/vendor\/editor(?:\.js|\/editor\.[^/]+\.js)$/.test(path)) void request.abort("failed");
     else void request.continue();
   });
-  writeFileSync(join(srv.vault, path), "Recoverable source\n");
+  await writeDoc("Recoverable source\n");
   await appDriver(page, srv.base).boot("/d/" + path);
   await page.waitForSelector("#rawArea");
   expect(await page.$eval("#doc", e => e.textContent)).toMatch(/editor.*(unavailable|load|failed)|source.*available/i);

@@ -62,6 +62,12 @@ is ordinary Markdown files and stays one; the server never sees plaintext.
   Edit and Source; Source keeps ADR 0032's editor, the text-run timeline,
   Tab/⇧Tab, the keybar and encrypt-selection. Persisted ids stay `preview`
   and `raw`; the WebMCP enum is unchanged.
+- **The list toolbar is a phone's.** The Bullet / Numbered / Checklist /
+  Outdent / Indent row is drawn only at phone widths, and there only while
+  the island has focus — the focus that raises the soft keyboard. A desktop
+  never sees it: Tab, ⇧Tab and the Markdown shortcuts are its verbs, and the
+  ordinary row it used to get above the doc was chrome without a job
+  (amended 2026-09-15; the cutover had shipped it at every width).
 - **A source adapter keeps the bytes.** `SourceSession` parses the doc into
   top-level MDAST groups with positions. An untouched doc serialises to its
   exact original string; untouched groups and the separators between them
@@ -106,12 +112,11 @@ is ordinary Markdown files and stays one; the server never sees plaintext.
 - Measured regressions accepted with the cutover: a diagram renders with
   mermaid's default theme in both colour schemes (it takes the app font, not
   the app colours); fenced `js`/`ts` code is no longer token-highlighted (the
-  default BlockNote code block ships no highlighter); the Bullet / Numbered /
-  Checklist / Outdent / Indent row is shown above the doc on the desktop too,
-  not only on a phone; a 6 MiB doc takes ~10 s to open in Edit because the
-  adapter parses the whole source (Source opens as before); a locked secret's
-  ciphertext sits in the block's `data-ciphertext` attribute (never in text or
-  the accessibility tree); a group inserted into a CRLF doc is written with LF
-  inside itself, while untouched groups and separators keep their CRLF.
+  default BlockNote code block ships no highlighter); a 6 MiB doc takes
+  ~10 s to open in Edit because the adapter parses the whole source (Source
+  opens as before); a locked secret's ciphertext sits in the block's
+  `data-ciphertext` attribute (never in text or the accessibility tree); a
+  group inserted into a CRLF doc is written with LF inside itself, while
+  untouched groups and separators keep their CRLF.
 - Browser tests cannot prove physical keyboards or iOS WebKit; the user
   validated the phone toolbar on Android.

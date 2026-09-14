@@ -1446,7 +1446,9 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 @keyframes msgin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .msg.user { align-items: flex-end; }
 .msg .who { font-size: 10.5px; font-weight: var(--w-bold); letter-spacing: var(--label-tracking); text-transform: var(--label-transform); color: var(--muted-2); }
-.bubble { max-width: 94%; padding: var(--d-msg-pad); font-size: 13.4px; line-height: 1.62; }
+/* `anywhere`, not `break-word`: a relayed error body is one unbroken JSON run
+   wider than the panel, and only `anywhere` wraps it. */
+.bubble { max-width: 94%; min-width: 0; padding: var(--d-msg-pad); font-size: 13.4px; line-height: 1.62; overflow-wrap: anywhere; }
 .msg.user .bubble { background: var(--bubble-user-bg); color: var(--bubble-user-fg); border-radius: var(--bubble-user-radius); box-shadow: var(--sh-1); }
 .msg.ai .bubble { background: var(--bubble-ai-bg); color: var(--bubble-ai-fg); border: var(--bubble-ai-bd); border-radius: var(--bubble-ai-radius); box-shadow: var(--sh-1); }
 .msg.ai .bubble b, .msg.ai .bubble strong { color: var(--text); font-weight: var(--w-semi); }
@@ -2498,11 +2500,11 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .z-source-block pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12em; overflow-y: auto; }
 
 /* ---- the block toolbar (ADR 0034's Edit half) ----
-   On a desktop it is an ordinary row above the document. On a phone it DOCKS on
-   the soft keyboard's top edge, which is `--visual-bottom` (the visual
-   viewport's own bottom, published by shell.js) offset by the calibration the
-   user chose. */
-.z-block-toolbar { display: flex; gap: 4px; margin: 10px 0; padding: 5px; border: var(--bd); border-radius: var(--r); background: var(--panel); }
+   A phone's only (ADR 0037): it DOCKS on the soft keyboard's top edge, which
+   is `--visual-bottom` (the visual viewport's own bottom, published by
+   shell.js) offset by the calibration the user chose. A desktop has Tab, ⇧Tab
+   and the slash menu, and never draws it. */
+.z-block-toolbar { display: none; gap: 4px; padding: 5px; border: var(--bd); border-radius: var(--r); background: var(--panel); }
 .z-toolbar-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .z-toolbar-more, .z-toolbar-options { display: none; }
 .z-block-toolbar button { min-height: 30px; padding: 4px 8px; color: var(--btn-fg); background: var(--btn-bg); border: var(--bd); border-radius: var(--r-sm); font: 12px var(--font); cursor: pointer; }
@@ -2529,8 +2531,10 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   .z-toolbar-position span { margin-right: auto; }
   .z-toolbar-position button { display: grid; place-items: center; min-width: 36px; }
   .z-block-toolbar button { flex: 0 0 auto; min-height: 36px; }
-  /* the dock belongs to a focused document, not to the page */
-  .block-editor-host:not(:focus-within) .z-block-toolbar { display: none; }
+  /* the dock belongs to a focused document, not to the page. Focus is what
+     raises the soft keyboard; `kb-up` cannot stand in for it because Android
+     resizes the layout viewport and the overlap reads 0. */
+  .block-editor-host:focus-within .z-block-toolbar { display: flex; }
   /* a fixed dock cannot live under a transformed ancestor: it would scroll with
      the document for the length of the entrance animation */
   .doc.fade-in { animation: none; }

@@ -140,7 +140,7 @@ test('reported innerHeight mismatch leaves no keyboard gap and window resize rep
   } finally { await page.close(); }
 }, 90000);
 
-test('touch indent keeps the caret, keyboard dismissal leaves Mode reachable, desktop stays in flow', async () => {
+test('touch indent keeps the caret, keyboard dismissal leaves Mode reachable, a desktop has no toolbar', async () => {
   const page = await phone('short.md');
   try {
     await viewport(page, 500);
@@ -159,7 +159,8 @@ test('touch indent keeps the caret, keyboard dismissal leaves Mode reachable, de
     await page.setViewport({ width: 1440, height: 900 });
     await page.waitForSelector('.z-block-toolbar');
     await viewport(page, 900);
-    expect(await page.$eval('.z-block-toolbar', e => getComputedStyle(e).position)).toBe('static');
+    await page.focus('.bn-editor');
+    expect(await page.$eval('.z-block-toolbar', e => e.getClientRects().length)).toBe(0);
     await touchViewport(page, 390);
     await page.waitForSelector('.z-block-toolbar');
     await viewport(page, 844);

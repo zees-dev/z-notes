@@ -616,3 +616,27 @@ describe("ai e2e — the endpoint status item in the statusbar", () => {
     );
   }, 30000);
 });
+
+describe("ai e2e — an upstream error's body stays inside its bubble", () => {
+  test("an unbroken JSON run wraps instead of spilling past the panel", async () => {
+    /* the relay quotes the body verbatim, and a JSON error body has no space
+       between its keys: one run wider than the panel */
+    mock.setResponsesStatus(401);
+    try {
+      await send("are you there?");
+      await waitUntil(async () => (await lastAiText()).includes("answered 401"), { timeout: 15000, label: "the 401 reaches the bubble" });
+      const m = await page.evaluate(() => {
+        const nodes = document.querySelectorAll<HTMLElement>("#msgs .msg.ai .bubble");
+        const b = nodes[nodes.length - 1];
+        return {
+          spill: b.getBoundingClientRect().right - document.querySelector(".chat")!.getBoundingClientRect().right,
+          overflow: b.scrollWidth - b.clientWidth,
+        };
+      });
+      expect(`inside the panel: ${m.spill <= 0}`).toBe("inside the panel: true");
+      expect(`overflows its own box by ${m.overflow}px`).toBe("overflows its own box by 0px");
+    } finally {
+      mock.setResponsesStatus(null);
+    }
+  }, 30000);
+});
