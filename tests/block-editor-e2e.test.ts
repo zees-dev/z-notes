@@ -350,8 +350,12 @@ test("editing during an in-flight save keeps the newer visual input dirty", asyn
 
 test("a failed editor bundle gives a visible error and usable Source editing", async () => {
   await page.setRequestInterception(true);
+  /* The shell names the HASHED entry and preloads it (ADR 0038); the
+     `/vendor/editor.js` alias is only the fallback. Block both spellings, or
+     this stops simulating a failed island load and starts passing for free. */
   page.on("request", request => {
-    if (new URL(request.url()).pathname === "/vendor/editor.js") void request.abort("failed");
+    const path = new URL(request.url()).pathname;
+    if (/^\/vendor\/editor(?:\.js|\/editor\.[^/]+\.js)$/.test(path)) void request.abort("failed");
     else void request.continue();
   });
   writeFileSync(join(srv.vault, path), "Recoverable source\n");

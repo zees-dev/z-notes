@@ -121,8 +121,10 @@ test("gap refresh finishing after navigation preserves the new editor and select
 test("CSS-only editor load failure exposes usable Source and saves", async () => {
   await page.setRequestInterception(true);
   let cssRequests = 0;
+  // hashed href in the shell, alias as the fallback — ADR 0038
   page.on("request", request => {
-    if (new URL(request.url()).pathname === "/vendor/editor.css") { cssRequests++; void request.abort("failed"); }
+    const path = new URL(request.url()).pathname;
+    if (/^\/vendor\/editor(?:\.css|\/editor\.[^/]+\.css)$/.test(path)) { cssRequests++; void request.abort("failed"); }
     else void request.continue();
   });
   await appDriver(page, srv.base).boot("/d/" + path);

@@ -506,6 +506,25 @@ makes concurrent viewers safe.
 attach a `compress` or `buffering` middleware to this router. Either one makes
 live updates silently stop while every request still returns 200.
 
+**Assets: compressed here, cached by the browser (ADR 0038).** The process
+brotli/gzip-codes every textual response itself — at boot for the editor and age
+bundles, on first request for the files under `app/` — so no ingress middleware
+needs to, and one must not be added for SSE's sake anyway (above). Boot pays
+about 0.6s of brotli on top of the island's build; the port opens after both, so
+readiness still means ready.
+
+Caching is two policies, and which one a path gets follows from its URL.
+Content-addressed assets — `/vendor/editor/*`, `/vendor/age.<hash>.js` — carry
+`public, max-age=2592000, immutable`: **one month**, safely, because the hash IS
+the URL and a new image serves new URLs. Everything else — `index.html`,
+`/app.js`, `/tree.js`, `themes/*.css`, `manifest.json`, the icons — carries
+`no-cache` and an `ETag`, and that is deliberate: those paths keep their names
+across releases, so a month of freshness would mean a rollout that an
+already-warm browser does not see until it expires. They revalidate instead, and
+a revalidation is a few hundred bytes of `304`. **So a deploy needs no cache
+bust**, and nothing needs purging at the ingress; a browser picks up the new
+shell on its next load and follows it to the new hashed assets.
+
 ---
 
 ## What was verified, and what was not

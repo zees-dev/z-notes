@@ -10,7 +10,11 @@ One Bun process (`server/index.ts`). It serves `app/` as plain files, the JSON
 API under `/api/*`, the SSE bus at `/events`, and two in-memory `Bun.build`
 bundles: `age-encryption` at `/vendor/age.<hash>.js` (entry:
 `server/age-entry.js`) and the editor island at `/vendor/editor/*` (entry:
-`app/block-editor.tsx`, aliased as `/vendor/editor.js` + `.css`; ADR 0037). State lives in the vault directory (`$ZNOTES_VAULT`):
+`app/block-editor.tsx`, aliased as `/vendor/editor.js` + `.css`; ADR 0037). Every
+textual asset is brotli/gzip-compressed once — at boot for the bundles, on first
+request for `app/` — and negotiated by `Accept-Encoding` with a per-coding ETag;
+content-addressed URLs are cached for a month, everything else revalidates
+(ADR 0038). State lives in the vault directory (`$ZNOTES_VAULT`):
 visible, extension-bearing UTF-8 files (source of truth; ADR 0019),
 `.znotes/settings.toml` (committed),
 `.znotes/index.db` (sqlite cache + credentials, never committed),

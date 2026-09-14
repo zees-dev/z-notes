@@ -442,9 +442,29 @@ was *not* rotated and no block needs re-encrypting.
 The `age-encryption` (typage) browser bundle, built in memory at server start from
 `vendor/age-entry.js` and served to the crypto worker. `/vendor/age.js` is a `302` with
 `cache-control: no-cache` to `/vendor/age.<hash>.js`, which carries an `ETag` and
-`cache-control: public, max-age=31536000, immutable`; the hash covers the lockfile and the
+`cache-control: public, max-age=2592000, immutable`; the hash covers the lockfile and the
 entry source, so a dependency bump changes the URL. `503 {"error":"vendor-unavailable"}` if
 the bundle failed to build — the client then disables secrets features and says why.
+
+#### Asset caching and compression *(every non-API GET)*
+
+Two policies, and which one a path gets follows from whether its URL is content-addressed.
+
+- **Content-addressed** — `/vendor/age.<hash>.js` and `/vendor/editor/*` — carry
+  `cache-control: public, max-age=2592000, immutable`: one month, because the URL changes
+  whenever the bytes do and nothing stale can be reached.
+- **Everything else** — `index.html` (at `/`, `/d/*`, `/settings*`), `/app.js`, `/tree.js`,
+  `themes/*.css`, `manifest.json`, the icons — carries `cache-control: no-cache` and an
+  `ETag`, and answers `304` to a matching `If-None-Match`. These paths are *not*
+  content-addressed, so a month of freshness would mean a release an already-warm browser
+  would not see until it expired; a revalidation costs a few hundred bytes.
+
+Every textual response (`text/*`, JavaScript, JSON, XML, SVG) is content-coded by
+`Accept-Encoding`, brotli preferred over gzip, and says `vary: accept-encoding`. A coding is
+a distinct representation, so **each carries its own `ETag`** — the identity tag with a `-br`
+or `-gz` suffix inside the quotes — and `If-None-Match` matches the representation the client
+actually holds. `Accept-Encoding: identity`, or no header at all, gets the identity bytes.
+`content-length` is always the length of the coding that was sent, `HEAD` included.
 
 ---
 
@@ -1658,8 +1678,15 @@ no leading slash, each segment percent-encoded, `/` separators left alone —
 `@` arrives percent-encoded (`/d/%40work-notes/inbox.md`) and decodes before the vault
 prefix is read; the unencoded spelling works too.
 
-The response is `index.html` byte-for-byte, with the same `ETag` and `cache-control:
-no-cache` the shell gets at `/`; nothing about asset caching or the vendor bundle changes.
+The response is the same `index.html` the shell gets at `/`, with the same `ETag` and
+`cache-control: no-cache`. "The same" includes the server's one rewrite of it: the
+`<link id="editor-css">` tag is served pointing at the *hashed* editor stylesheet, carries
+`data-js="<hashed editor entry>"` for the client to import, and is followed by
+`<link rel="modulepreload" href="<hashed editor entry>">`, so neither editor asset pays the
+alias `302` and the entry starts downloading in `<head>`. The shell's `ETag` therefore
+carries the editor build's hash: a new bundle invalidates the HTML that names it. When the
+editor bundle failed to build the tag is served unrewritten, pointing at the alias, which
+answers `503`.
 The server does **not** check that the doc exists — the client already has the tree and can
 say "no such doc" without a round trip, and a 404 shell would be a broken page rather than
 an app that can say so. `GET` and `HEAD` only; anything else is `405`.

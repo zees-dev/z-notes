@@ -19,6 +19,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import * as zlib from "node:zlib";
 import { AI } from "./ai.ts";
 import { Index } from "./db.ts";
 import { GitSync, sanitizeRemote, validRemoteUrl } from "./git.ts";
@@ -328,6 +329,104 @@ settings.wire({
 });
 
 /* ============================================================
+   Assets: one representation, three content-codings, two cache policies.
+
+   The whole editor island is 1.3 MB of JavaScript and 368 KB of CSS, and the
+   box this runs on uploads at roughly 250 KB/s — uncompressed that was five
+   seconds of a cold load. Brotli takes the entry to ~370 KB and the stylesheet
+   to a tenth of its size, so every textual asset is compressed ONCE and held in
+   memory: at boot for the two `Bun.build` bundles, on first request for the
+   handful of files under app/. Compressing per request would hand that cost to
+   every load, which on this hardware is the thing being fixed.
+
+   A content-coding is a distinct representation of a resource, so each coding
+   carries its own ETag (RFC 9110 §8.8.1) and every response says
+   `vary: accept-encoding`. One tag shared across codings would let a
+   revalidation answer 304 to a client holding the *other* coding's bytes.
+   ============================================================ */
+
+/** Content-addressed assets: the URL changes whenever the bytes do, so the
+    browser may keep them for the month the user asked for. Everything that is
+    NOT content-addressed (`/app.js`, `/tree.js`, `themes/*.css`, `index.html`,
+    `manifest.json`, the icons) stays `no-cache` + ETag on purpose: a month on
+    those would hide a deploy from an already-warm browser until it expired,
+    and a revalidation that answers 304 costs a few hundred bytes. */
+const IMMUTABLE_CACHE = "public, max-age=2592000, immutable";
+const REVALIDATE_CACHE = "no-cache";
+/** Fonts, images and the woff2 the editor CSS pulls are already compressed;
+    a second pass costs boot time and gives bytes back. */
+const TEXTUAL = /^(?:text\/|application\/(?:javascript|json|xml)|image\/svg\+xml)/;
+/** Below this the framing costs more than the coding saves. */
+const COMPRESS_MIN = 1024;
+const BROTLI_OPTS = { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } };
+
+type Coding = "br" | "gzip";
+interface Representation {
+  type: string;
+  bytes: Uint8Array;
+  etag: string;
+  encoded: Map<Coding, { bytes: Uint8Array; etag: string }>;
+}
+
+/** Build the identity representation and whatever codings actually shrink it.
+    `etag` is the identity tag; a coding's tag is that tag with a suffix. */
+function represent(bytes: Uint8Array, type: string, etag: string): Representation {
+  const rep: Representation = { type, bytes, etag, encoded: new Map() };
+  if (!TEXTUAL.test(type) || bytes.byteLength < COMPRESS_MIN) return rep;
+  for (const [coding, suffix, out] of [
+    ["br", "br", zlib.brotliCompressSync(bytes, BROTLI_OPTS)],
+    ["gzip", "gz", zlib.gzipSync(bytes, { level: 9 })],
+  ] as const) {
+    // a coding that grew the body is not an optimisation; drop it and offer identity
+    if (out.byteLength < bytes.byteLength)
+      rep.encoded.set(coding, { bytes: new Uint8Array(out), etag: `${etag.slice(0, -1)}-${suffix}"` });
+  }
+  return rep;
+}
+
+/** The coding to send: brotli, then gzip, then identity. `;q=0` is a refusal. */
+function negotiate(req: Request, rep: Representation) {
+  const offered = new Set(
+    (req.headers.get("accept-encoding") || "")
+      .split(",")
+      .map((t) => t.trim().toLowerCase())
+      .filter((t) => t && !/;\s*q=0(?:\.0+)?$/.test(t))
+      .map((t) => t.split(";")[0])
+  );
+  for (const coding of ["br", "gzip"] as const) {
+    const enc = rep.encoded.get(coding);
+    if (enc && offered.has(coding)) return { coding, bytes: enc.bytes, etag: enc.etag };
+  }
+  return { coding: "", bytes: rep.bytes, etag: rep.etag };
+}
+
+/** One asset response for every in-memory representation: the negotiated
+    coding, its own ETag, and If-None-Match / HEAD answered from the same
+    headers. `extra` is for headers that belong to the document rather than to
+    the asset (the shell's WebMCP pair). */
+function assetResponse(
+  rep: Representation,
+  req: Request,
+  cacheControl: string,
+  extra: Record<string, string> = {}
+): Response {
+  const { coding, bytes, etag } = negotiate(req, rep);
+  const headers: Record<string, string> = {
+    ...extra,
+    "content-type": rep.type,
+    etag,
+    "cache-control": cacheControl,
+  };
+  if (rep.encoded.size) headers["vary"] = "accept-encoding";
+  if (coding) headers["content-encoding"] = coding;
+  const inm = req.headers.get("if-none-match");
+  if (inm && inm.split(",").some((t) => t.trim() === etag)) return new Response(null, { status: 304, headers });
+  if (req.method === "HEAD")
+    return new Response(null, { status: 200, headers: { ...headers, "content-length": String(bytes.byteLength) } });
+  return new Response(bytes, { status: 200, headers });
+}
+
+/* ============================================================
    /vendor/age.js — the age-encryption (typage) browser bundle.
 
    The frontend stays build-free, and client-side secrets need exactly one
@@ -337,16 +436,14 @@ settings.wire({
 
    Cache shape is the standard content-addressed pair: `/vendor/age.js` is a
    tiny no-cache redirect to `/vendor/age.<hash>.js`, which is immutable for a
-   year. The hash is over the lockfile + the entry source, so bumping the
+   month. The hash is over the lockfile + the entry source, so bumping the
    dependency changes the URL and no stale bundle can survive a restart —
    which matters more here than elsewhere, because this bundle is the crypto.
    ============================================================ */
 
 interface VendorBundle {
-  js: string;
-  hash: string;
-  etag: string;
   name: string;
+  rep: Representation;
 }
 
 let vendor: VendorBundle | null = null;
@@ -372,7 +469,8 @@ async function buildVendor(): Promise<void> {
     // key on the inputs (lockfile + entry) AND the output, so an identical
     // dependency tree always yields the same URL across restarts
     const hash = Bun.hash(lock + "\0" + entry + "\0" + js).toString(16);
-    vendor = { js, hash, etag: `"${hash}"`, name: `age.${hash}.js` };
+    const rep = represent(new TextEncoder().encode(js), "text/javascript; charset=utf-8", `"${hash}"`);
+    vendor = { name: `age.${hash}.js`, rep };
     vendorError = "";
   } catch (err) {
     vendor = null;
@@ -390,14 +488,22 @@ async function buildVendor(): Promise<void> {
    stylesheet, font assets), so `publicPath` pins every internal reference to
    `/vendor/editor/` and Bun's content hashes — which cover the dependency bytes
    and the cross-asset references — become the URLs. The unhashed pair is a
-   no-cache 302 into the hashed tree, which is immutable for a year.
+   no-cache 302 into the hashed tree, which is immutable for a month.
+
+   The shell no longer travels through that 302: `serveStatic` rewrites the
+   stylesheet link in index.html to the hashed pair (§ the shell below), so the
+   hot path is one direct, cacheable request per asset. The aliases stay for a
+   direct hit and as the fallback when the build failed.
 
    A failed browser build must never take the API, the shell or the age bundle
    with it: the editor paths answer 503 and the app degrades to Source editing.
    ============================================================ */
 
-const editorAssets = new Map<string, { bytes: Uint8Array; type: string; etag: string }>();
+const editorAssets = new Map<string, Representation>();
 const editorAliases = new Map<string, string>();
+/** The entry's content hash, or "" when the build failed: the shell's ETag
+    carries it so a new bundle invalidates the HTML that names it. */
+let editorBuildId = "";
 let editorError = "";
 
 async function buildEditor(): Promise<void> {
@@ -421,33 +527,23 @@ async function buildEditor(): Promise<void> {
       const name = basename(output.path);
       const path = `/vendor/editor/${name}`;
       const bytes = new Uint8Array(await output.arrayBuffer());
-      editorAssets.set(path, { bytes, type: output.type, etag: `"${Bun.hash(bytes).toString(16)}"` });
+      editorAssets.set(path, represent(bytes, output.type, `"${Bun.hash(bytes).toString(16)}"`));
       if (/^editor\.[^.]+\.(js|css)$/.test(name))
         editorAliases.set(`/vendor/editor.${name.endsWith(".css") ? "css" : "js"}`, path);
     }
-    if (!editorAliases.has("/vendor/editor.js") || !editorAliases.has("/vendor/editor.css")) {
+    const entry = editorAliases.get("/vendor/editor.js");
+    if (!entry || !editorAliases.has("/vendor/editor.css")) {
       throw new Error("the editor build produced no JavaScript/CSS pair");
     }
+    editorBuildId = basename(entry).split(".")[1];
     editorError = "";
   } catch (err) {
     editorAssets.clear();
     editorAliases.clear();
+    editorBuildId = "";
     editorError = String((err as Error)?.message || err);
     process.stderr.write(`[z-notes] editor bundle failed: ${editorError}\n`);
   }
-}
-
-/* One content-addressed bundle response, for both in-memory bundles: immutable
-   for a year, with If-None-Match and HEAD answered from the same headers. */
-function immutableAsset(body: string | Uint8Array, type: string, etag: string, req: Request): Response {
-  const headers: Record<string, string> = { "content-type": type, etag, "cache-control": "public, max-age=31536000, immutable" };
-  const inm = req.headers.get("if-none-match");
-  if (inm && inm.split(",").some((tag) => tag.trim() === etag)) return new Response(null, { status: 304, headers });
-  if (req.method === "HEAD") {
-    const length = typeof body === "string" ? Buffer.byteLength(body) : body.byteLength;
-    return new Response(null, { status: 200, headers: { ...headers, "content-length": String(length) } });
-  }
-  return new Response(body, { status: 200, headers });
 }
 
 /** GET /vendor/editor… — 302 for the unhashed alias, the asset for a hashed one. */
@@ -468,7 +564,7 @@ function serveEditor(pathname: string, req: Request): Response {
   const asset = editorAssets.get(pathname);
   // never substitute another asset for a stale hash: the importer is generated
   if (!asset) return fail(404, "not-found", { message: `No such editor asset: ${pathname}` });
-  return immutableAsset(asset.bytes, asset.type, asset.etag, req);
+  return assetResponse(asset, req, IMMUTABLE_CACHE);
 }
 
 /** GET /vendor/… — 302 for the unhashed alias, the bundle for the hashed one. */
@@ -494,12 +590,52 @@ function serveVendor(pathname: string, req: Request): Response {
       headers: { location: `/vendor/${vendor.name}`, "cache-control": "no-cache" },
     });
   }
-  return immutableAsset(vendor.js, "text/javascript; charset=utf-8", vendor.etag, req);
+  return assetResponse(vendor.rep, req, IMMUTABLE_CACHE);
 }
 
 /* ============================================================
-   Static frontend (Bun emits no ETag — we add one and honour If-None-Match)
+   Static frontend (Bun emits no ETag — we add one and honour If-None-Match).
+
+   Two things happen here that are not "read a file and send it":
+
+   1. The shell is rewritten. index.html ships the stylesheet link pointing at
+      `/vendor/editor.css`, the no-cache alias; the served copy points at the
+      hashed stylesheet instead, carries the hashed script path in `data-js` for
+      `renderVisual` to import, and gains a `modulepreload` for it. That removes
+      a 302 round trip per asset from every load AND starts the 1.3 MB entry
+      while the parser is still in <head>, instead of after the tree has
+      loaded. The rewritten bytes are memoised per build; the shell's ETag
+      carries `editorBuildId`, so a new bundle invalidates the HTML that names
+      it and no browser can keep a copy pointing at assets that are gone.
+   2. Textual files are compressed once and kept. There are a dozen of them and
+      none is large; recompressing per request is the cost this avoids.
+
+   Everything here stays `no-cache` + ETag: these paths are NOT
+   content-addressed, so a month of freshness would mean a release the browser
+   never sees until it expires. Revalidation costs one 304.
    ============================================================ */
+
+/** The `<link id="editor-css">` tag in app/index.html, whatever else it carries. */
+const EDITOR_LINK = /<link\b[^>]*\bid="editor-css"[^>]*>/;
+
+function withHashedEditor(html: string): string {
+  const css = editorAliases.get("/vendor/editor.css");
+  const js = editorAliases.get("/vendor/editor.js");
+  // the build failed: leave the aliases in place, they answer 503 and the app degrades to Source
+  if (!css || !js) return html;
+  return html.replace(
+    EDITOR_LINK,
+    (tag) =>
+      tag.replace('href="/vendor/editor.css"', `href="${css}" data-js="${js}"`) +
+      `\n<link rel="modulepreload" href="${js}">`
+  );
+}
+
+/** rel → the representation built for its current ETag. */
+const staticAssets = new Map<string, Representation>();
+/** Above this a file is streamed from disk rather than held compressed in
+    memory. Nothing shipped in app/ is close. */
+const STATIC_MAX = 4 * 1024 * 1024;
 
 async function serveStatic(pathname: string, req: Request): Promise<Response> {
   let rel = pathname === "/" ? "index.html" : pathname.slice(1);
@@ -526,22 +662,31 @@ async function serveStatic(pathname: string, req: Request): Promise<Response> {
   }
   if (!st.isFile()) return fail(404, "not-found", { message: `No such file: ${pathname}` });
 
-  const etag = `W/"${st.size.toString(16)}-${Math.round(st.mtimeMs).toString(16)}"`;
-  const headers: Record<string, string> = {
-    etag,
-    "cache-control": "no-cache",
-    "content-type": file.type || "application/octet-stream",
-  };
+  const shell = rel === "index.html";
+  const type = file.type || "application/octet-stream";
+  const etag = `W/"${st.size.toString(16)}-${Math.round(st.mtimeMs).toString(16)}${shell ? "-" + editorBuildId : ""}"`;
   /* app/webmcp.js registers the app's operations as WebMCP tools (ADR 0031),
      and Chrome refuses that registration unless the page's agent cluster is
      origin-keyed and the `tools` permission is delegated to the origin. Both
      are properties of the document, so they ride on the shell only. `rel` is
      `index.html` for `/`, `/d/*` and `/settings*` alike, and the 304 and HEAD
      branches below share this object, so a cached reload keeps them too. */
-  if (rel === "index.html") {
-    headers["origin-agent-cluster"] = "?1";
-    headers["permissions-policy"] = "tools=(self)";
+  const extra: Record<string, string> = shell
+    ? { "origin-agent-cluster": "?1", "permissions-policy": "tools=(self)" }
+    : {};
+
+  if (TEXTUAL.test(type) && st.size <= STATIC_MAX) {
+    let rep = staticAssets.get(rel);
+    if (!rep || rep.etag !== etag) {
+      const text = await file.text();
+      rep = represent(new TextEncoder().encode(shell ? withHashedEditor(text) : text), type, etag);
+      staticAssets.set(rel, rep);
+    }
+    return assetResponse(rep, req, REVALIDATE_CACHE, extra);
   }
+
+  // icons and anything else binary: already compressed, streamed straight off disk
+  const headers: Record<string, string> = { ...extra, etag, "cache-control": REVALIDATE_CACHE, "content-type": type };
   const inm = req.headers.get("if-none-match");
   if (inm && inm.split(",").some((t) => t.trim() === etag)) return new Response(null, { status: 304, headers });
   if (req.method === "HEAD") return new Response(null, { status: 200, headers: { ...headers, "content-length": String(st.size) } });

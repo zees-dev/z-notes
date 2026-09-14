@@ -54,7 +54,8 @@ is ordinary Markdown files and stays one; the server never sees plaintext.
   secrets and the clipboard reach it through callbacks; it never imports a
   shell module. The server bundles it at boot with `Bun.build`, the same
   way it bundles age, and serves it at `/vendor/editor.js` /
-  `/vendor/editor.css` (content-addressed behind no-cache aliases). There is
+  `/vendor/editor.css` (content-addressed behind no-cache aliases; the shell
+  names the hashed pair directly — ADR 0038). There is
   no separate build command and no CDN; a failed bundle answers 503 for the
   editor paths and nothing else.
 - **Source is the line editor.** ⌘E and the statusbar chip switch between

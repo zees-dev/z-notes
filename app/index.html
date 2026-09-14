@@ -60,7 +60,14 @@
 <!-- the visual editor's own stylesheet, bundled at boot beside its script and
      served from /vendor (ADR 0037). BEFORE base.css, so the app's rules win
      every collision; the two data flags are what renderVisual waits on, since a
-     <link> that has already finished loading fires no event for it. -->
+     <link> that has already finished loading fires no event for it.
+
+     THE SERVER REWRITES THIS TAG. `serveStatic` swaps the href for the hashed
+     stylesheet, adds `data-js="<hashed entry>"` (what editor.js imports) and a
+     `modulepreload` for that entry, so the editor's 1.7 MB starts downloading
+     here rather than after the tree loads, and neither asset pays the alias's
+     302. The alias below is what a browser gets when the bundle failed to
+     build. -->
 <link rel="stylesheet" id="editor-css" href="/vendor/editor.css" onload="this.dataset.loaded='true'" onerror="this.dataset.failed='true'">
 <link rel="stylesheet" href="./themes/base.css">
 <!-- swapped live by the Settings › Theme control; ?theme=<id> overrides at boot.

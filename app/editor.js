@@ -879,13 +879,18 @@ async function renderVisual(doc, host) {
   surface.textContent = "Loading editor…";
   host.appendChild(surface);
   try {
-    /* The bundle is fetched once per page and cached; a failed import must not
+    const css = $("#editor-css");
+    /* `data-js` is the CONTENT-ADDRESSED entry, written into the shell by the
+       server beside the hashed stylesheet href and its modulepreload — so this
+       import usually resolves against a request the parser already started, and
+       never pays the alias's no-cache 302. `/vendor/editor.js` is the fallback
+       for a shell served before the bundle built, and for a direct hit.
+       The bundle is fetched once per page and cached; a failed import must not
        be cached, or a recovered network would never get a second chance. */
-    editorBundle ||= import("/vendor/editor.js").catch((err) => {
+    editorBundle ||= import(css?.dataset.js || "/vendor/editor.js").catch((err) => {
       editorBundle = null;
       throw err;
     });
-    const css = $("#editor-css");
     /* The stylesheet is a plain <link> in the head, so the only honest signals
        are its own events and the flags its inline handlers leave behind (the
        load may have finished before this code ever ran). */

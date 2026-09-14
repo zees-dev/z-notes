@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { REPO_ROOT, startServer, type TestServer } from "./helpers.ts";
 
 describe("editor vendor assets", () => {
@@ -29,11 +30,14 @@ describe("editor vendor assets", () => {
       const asset = await fetch(srv.url(path));
       expect(asset.status).toBe(200);
       expect(asset.headers.get("content-type")).toContain(mime);
-      expect(asset.headers.get("cache-control")).toContain("immutable");
+      // a month, and the URL changes with the bytes — see server/index.ts IMMUTABLE_CACHE
+      expect(asset.headers.get("cache-control")).toBe("public, max-age=2592000, immutable");
       const bytes = await asset.arrayBuffer();
       expect(bytes.byteLength).toBeGreaterThan(1000);
 
-      const head = await fetch(srv.url(path), { method: "HEAD" });
+      /* identity, so the length compares against the decoded body above:
+         `content-length` is the NEGOTIATED coding's length, not the resource's */
+      const head = await fetch(srv.url(path), { method: "HEAD", headers: { "accept-encoding": "identity" } });
       expect(head.status).toBe(200);
       expect(head.headers.get("content-length")).toBe(String(bytes.byteLength));
       expect(await head.text()).toBe("");
@@ -68,6 +72,73 @@ describe("editor vendor assets", () => {
       }
     }, 30000);
   }
+
+  test("the shell names the hashed pair, preloads the entry, and its ETag carries the build", async () => {
+    const hashed: Record<string, string> = {};
+    for (const ext of ["js", "css"]) {
+      const alias = await fetch(srv.url(`/vendor/editor.${ext}`), { redirect: "manual" });
+      hashed[ext] = alias.headers.get("location")!;
+    }
+
+    const shell = await srv.get("/");
+    expect(shell.status).toBe(200);
+    /* The hot path must not go through the no-cache alias: the stylesheet link
+       names the hashed file, carries the hashed entry for editor.js to import,
+       and is followed by a modulepreload so the 1.3 MB starts in <head>. */
+    expect(shell.text).toContain(`id="editor-css" href="${hashed.css}" data-js="${hashed.js}"`);
+    expect(shell.text).toContain(`<link rel="modulepreload" href="${hashed.js}">`);
+    expect(shell.text).not.toContain('href="/vendor/editor.css" onload');
+    // the shell is revalidated, never held: a release has to reach a warm browser
+    expect(shell.headers.get("cache-control")).toBe("no-cache");
+    // and the ETag names the build, so a new bundle invalidates the HTML that points at it
+    expect(shell.headers.get("etag")).toContain(hashed.js.split(".")[1]);
+
+    // every routing space serves the same rewritten shell
+    for (const route of ["/d/inbox.md", "/settings"]) {
+      const page = await srv.get(route);
+      expect(page.text).toContain(`data-js="${hashed.js}"`);
+    }
+  });
+
+  test("content-codings are negotiated, each with its own ETag", async () => {
+    const path = (await fetch(srv.url("/vendor/editor.js"), { redirect: "manual" })).headers.get("location")!;
+    const identity = await fetch(srv.url(path), { headers: { "accept-encoding": "identity" } });
+    expect(identity.headers.get("content-encoding")).toBeNull();
+    const plain = new Uint8Array(await identity.arrayBuffer());
+
+    for (const [coding, inflate] of [
+      ["br", brotliDecompressSync],
+      ["gzip", gunzipSync],
+    ] as const) {
+      const res = await fetch(srv.url(path), { headers: { "accept-encoding": coding }, decompress: false } as RequestInit);
+      expect(res.headers.get("content-encoding")).toBe(coding);
+      expect(res.headers.get("vary")).toBe("accept-encoding");
+      const body = new Uint8Array(await res.arrayBuffer());
+      expect(body.byteLength).toBeLessThan(plain.byteLength);
+      expect(res.headers.get("content-length")).toBe(String(body.byteLength));
+      // the coding is a different representation, so it is a different ETag (RFC 9110 §8.8.1)
+      expect(res.headers.get("etag")).not.toBe(identity.headers.get("etag"));
+      expect(new Uint8Array(inflate(body))).toEqual(plain);
+      // and a conditional request matches that representation's tag
+      const again = await fetch(srv.url(path), {
+        headers: { "accept-encoding": coding, "if-none-match": res.headers.get("etag")! },
+      });
+      expect(again.status).toBe(304);
+    }
+  }, 30000);
+
+  test("the shell's own files revalidate instead of being held for a month", async () => {
+    const app = await srv.get("/app.js");
+    /* NOT content-addressed: a month here would mean a deploy the browser does
+       not see until it expires. The 304 below is what makes that cheap. */
+    expect(app.headers.get("cache-control")).toBe("no-cache");
+    const tree = await srv.get("/tree.js");
+    const revalidated = await fetch(srv.url("/tree.js"), {
+      headers: { "if-none-match": tree.headers.get("etag")! },
+    });
+    expect(revalidated.status).toBe(304);
+    expect(await revalidated.text()).toBe("");
+  });
 
   test("unknown assets fail without substituting another bundle; methods stay guarded", async () => {
     for (const path of ["/vendor/editor/missing.js", "/vendor/unrelated.js"]) {
@@ -112,12 +183,17 @@ test("dependency bytes change asset URLs; a failed build preserves the shell, AP
         expect(res.status).toBe(302);
         paths.push(res.headers.get("location")!);
       }
+      // the shell names the hashed pair, so its own validator has to move with them
+      const shell = await srv.get("/");
+      expect(shell.text).toContain(`href="${paths[1]}"`);
+      paths.push(shell.headers.get("etag")!);
       aliases.push(paths);
       await srv.stop();
       srv = undefined;
     }
     expect(aliases[0][0]).not.toBe(aliases[1][0]);
     expect(aliases[0][1]).not.toBe(aliases[1][1]);
+    expect(aliases[0][2]).not.toBe(aliases[1][2]);
 
     rmSync(join(root, "app/block-editor.tsx"));
     srv = await harness.startServer({ seed: { "inbox.md": "source survives" } });
@@ -128,7 +204,11 @@ test("dependency bytes change asset URLs; a failed build preserves the shell, AP
       expect(failed.body.message).toContain("Source");
       expect(typeof failed.body.detail).toBe("string");
     }
-    expect((await srv.get("/")).status).toBe(200);
+    const degraded = await srv.get("/");
+    expect(degraded.status).toBe(200);
+    // no bundle to name: the alias stays, and it is what answers 503
+    expect(degraded.text).toContain('id="editor-css" href="/vendor/editor.css"');
+    expect(degraded.text).not.toContain('<link rel="modulepreload"');
     expect((await srv.doc("inbox.md")).body.markdown).toBe("source survives");
     expect((await srv.get("/vendor/age.js")).status).toBe(200);
   } finally {
