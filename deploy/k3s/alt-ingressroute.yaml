@@ -30,7 +30,7 @@ spec:
   routes:
     # Add `|| Host(\`znotes.<tailnet>.ts.net\`)` for the MagicDNS name, and add
     # that name to 40-certificates.yaml's dnsNames as well.
-    - match: Host(`znotes.home.arpa`)
+    - match: Host(`znotes.k3s.lan`)
       kind: Rule
       services:
         - name: znotes
@@ -52,7 +52,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`znotes.home.arpa`)
+    - match: Host(`znotes.k3s.lan`)
       kind: Rule
       middlewares:
         - name: redirect-https

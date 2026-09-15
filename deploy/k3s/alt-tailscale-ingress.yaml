@@ -11,7 +11,7 @@
 # Trade-off vs. 50-ingress.yaml + 40-certificates.yaml: this is reachable ONLY
 # from the tailnet — there is no LAN hostname and no path in when Tailscale is
 # down. Running both is fine and is the belt-and-braces answer: cert-manager +
-# Traefik for znotes.home.arpa on the LAN, this for the phone.
+# Traefik for znotes.k3s.lan on the LAN, this for the phone.
 #
 # Requires: the Tailscale operator installed, MagicDNS and HTTPS certificates
 # enabled in the tailnet admin console (both are off by default), and the

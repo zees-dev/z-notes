@@ -2,7 +2,7 @@
 
 ```
 browser (laptop / phone, on the tailnet)
-   │  https://znotes.home.arpa   or   https://znotes.<tailnet>.ts.net
+   │  https://znotes.k3s.lan   or   https://znotes.<tailnet>.ts.net
    ▼
 Traefik (bundled with k3s) ── TLS from cert-manager's private CA
    ▼
@@ -129,19 +129,20 @@ applying `Certificate` objects before it is up fails with a webhook error.
 
 ## 4. Set your hostname
 
-Three files carry `znotes.home.arpa`, and all three must agree with what you
-type in the browser or you get a name-mismatch error that looks exactly like an
+Two files carry `znotes.k3s.lan`, and both must agree with what you type in
+the browser or you get a name-mismatch error that looks exactly like an
 untrusted-CA error:
 
 - `k3s/40-certificates.yaml` — `commonName` + `dnsNames`
 - `k3s/50-ingress.yaml` — `tls[].hosts` and both `rules[].host`
 
-`home.arpa` is the IETF-reserved name for local networks (RFC 8375); unlike
-`.local` (mDNS) or an invented TLD it can never collide with a real
-registration. Point it at the node:
+`k3s.lan` is the cluster's zone: the LAN resolver serves a `*.k3s.lan` wildcard
+pointing at the Traefik nodes, so every app is `<name>.k3s.lan` and no device
+needs a hosts entry. On a LAN without such a wildcard, point the name at the
+node yourself:
 
 ```sh
-echo "<node-ip>  znotes.home.arpa" | sudo tee -a /etc/hosts   # or a LAN DNS record
+echo "<node-ip>  znotes.k3s.lan" | sudo tee -a /etc/hosts   # or a LAN DNS record
 ```
 
 If you also want the MagicDNS name on this certificate, uncomment the
@@ -254,7 +255,7 @@ once, with the pod stopped. Skip it entirely on a fresh install — an empty PVC
 just grows `/vaults/vault` on first boot.
 
 **1 — Make it recoverable.** Sync the vault — the statusbar control, or
-`curl -X POST https://znotes.home.arpa/api/sync/now` — until sync status reads
+`curl -X POST https://znotes.k3s.lan/api/sync/now` — until sync status reads
 `synced` with `ahead: 0`. Every note is then on the remote, and the notes half
 of this is recoverable from a `git clone` even if the volume evaporates. Then be
 clear-eyed about the other half: `.znotes/` is
@@ -346,7 +347,7 @@ want the new image; move them together.
 **6 — Verify, before you trust it.** Ask the app where its vaults are:
 
 ```sh
-curl -s https://znotes.home.arpa/api/vaults | jq '.vaults[] | {id, root, remote, docCount}'
+curl -s https://znotes.k3s.lan/api/vaults | jq '.vaults[] | {id, root, remote, docCount}'
 # or, without DNS/TLS in the way:
 # kubectl -n znotes port-forward deploy/znotes 4700:4700 & curl -s localhost:4700/api/vaults | jq
 ```
@@ -379,7 +380,7 @@ kubectl -n znotes get secret znotes-ca -o jsonpath='{.data.tls\.crt}' \
 - **Firefox** (always its own store) — Settings › Privacy & Security › View
   Certificates › Authorities › Import, tick "identify websites".
 
-Then open `https://znotes.home.arpa`. Confirm the secure context actually took:
+Then open `https://znotes.k3s.lan`. Confirm the secure context actually took:
 the secrets UI should offer unlock rather than the degraded badge, and
 `window.isSecureContext` in the console should be `true`.
 

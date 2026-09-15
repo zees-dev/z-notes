@@ -14,9 +14,9 @@
 # device for no gain. This file assumes such a ClusterIssuer named
 # `selfsigned-ca-issuer`; point `issuerRef` at whatever yours is called.
 #
-# The hostname is `znotes.home.arpa` (RFC 8375's reserved name for home
-# networks — see deploy/README.md §4). If your LAN resolver serves a wildcard
-# for the cluster, use a name under that instead and skip the /etc/hosts entry.
+# The hostname is `znotes.k3s.lan`: the LAN resolver serves a `*.k3s.lan`
+# wildcard at the cluster, so every app is `<name>.k3s.lan` and no device needs
+# an /etc/hosts entry (deploy/README.md §4).
 # =============================================================================
 ---
 apiVersion: cert-manager.io/v1
@@ -40,9 +40,9 @@ spec:
     - server auth
     - digital signature
     - key encipherment
-  commonName: znotes.home.arpa
+  commonName: znotes.k3s.lan
   dnsNames:
-    - znotes.home.arpa
+    - znotes.k3s.lan
   issuerRef:
     name: selfsigned-ca-issuer
     kind: ClusterIssuer
