@@ -97,7 +97,12 @@ ES modules served as-is, plus one React island the server bundles at boot
   (`SourceSession`) owns format conversion: top-level MDAST groups with byte
   ranges, untouched groups verbatim, edited groups through the standard
   serialiser, protected blocks for what it cannot edit, ciphertext blocks for
-  age fences. Editing behaviour is BlockNote's; the shell never sees a block.
+  age fences. Extra whitespace between top-level groups imports as ordinary
+  empty paragraphs with zero-width source groups: three/four newlines map to
+  one, five/six to two. Retained separators preserve the original bytes;
+  newly inserted empty paragraphs add two newlines each. Same-family list
+  boundaries stay separators because edited markers can merge those lists.
+  Editing behaviour is BlockNote's; the shell never sees a block.
 - **Features** — `tree, editor, rawedit, secrets, chat, terminal,
   trash, settings, shell, webmcp, zoom, keybar`, composed by `app.js`
   (`start()`). These are mutually entangled (14 mutual import pairs, a legacy

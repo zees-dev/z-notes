@@ -186,8 +186,23 @@ export class SourceSession {
     this.body = markdown.slice(this.bom.length);
     const body = this.body;
     const nodes = parse(body).children || [];
-    this.groups = nodes.map((node, index) => {
+    this.groups = nodes.flatMap((node, index) => {
       const start = node.position!.start.offset, end = node.position!.end.offset;
+      const gaps: Group[] = [];
+      const previousNode = nodes[index - 1];
+      // Same-family lists may merge when edited markers normalize; whitespace
+      // between them cannot promise an independent paragraph.
+      if (previousNode && !(node.type === 'list' && previousNode.type === 'list' && node.ordered === previousNode.ordered)) {
+        // MDAST omits separators. Empty groups give extra space an editable
+        // identity without owning its bytes; deleting one breaks adjacency.
+        const previousEnd = previousNode.position!.end.offset;
+        const newlines = [...body.slice(previousEnd, start).matchAll(/\n/g)];
+        for (let i = 1; i < newlines.length - 1; i += 2) {
+          const offset = previousEnd + newlines[i].index! + 1;
+          const blocks = [block('paragraph', [])];
+          gaps.push({ start: offset, end: offset, blocks, snapshot: semantic(blocks) });
+        }
+      }
       const metadata = node.type === 'yaml' || node.type === 'toml';
       let blocks: SourceBlock[];
       try { blocks = importNode(node, body, this.listSpread); } catch { blocks = [block('source', undefined, { source: body.slice(start, end), label: metadata ? 'Metadata' : 'Source', metadata })]; }
@@ -200,7 +215,7 @@ export class SourceSession {
       }
       // A following MDAST sibling already proves this retained group can end.
       if (index < nodes.length - 1 && ['source', 'secret', 'codeBlock', 'diagram'].includes(blocks[0].type)) this.endRequired.set(body.slice(start, end), false);
-      return { start, end, blocks, snapshot: semantic(blocks) };
+      return [...gaps, { start, end, blocks, snapshot: semantic(blocks) }];
     });
     this.blocks = this.groups.flatMap(g => g.blocks);
     this.snapshot = semantic(this.blocks);
@@ -313,7 +328,10 @@ export class SourceSession {
       if (i === 0) append(this.groups.length && groupIndex === 0 ? this.body.slice(0, this.groups[0].start) : '');
       else {
         let separator = previous >= 0 && groupIndex === previous + 1 ? this.body.slice(this.groups[previous].end, this.groups[groupIndex].start) : '\n\n';
-        if (!(unchanged && previousUnchanged) && separator.split('\n').length < 3) separator = separator.includes('\r\n') ? '\r\n\r\n' : '\n\n';
+        // An odd gap's final separator can be short while its synthetic blank
+        // stays empty, but newly cleared prose needs its own paragraph's space.
+        const blankBoundary = unchanged && source === '' || source !== '' && previousUnchanged && previous >= 0 && this.groups[previous].start === this.groups[previous].end;
+        if (!(unchanged && previousUnchanged || blankBoundary) && separator.split('\n').length < 3) separator = (separator.includes('\r\n') ? '\r\n\r\n' : '\n\n') + separator.slice(separator.lastIndexOf('\n') + 1);
         append(separator);
       }
       const start = markdown.length;

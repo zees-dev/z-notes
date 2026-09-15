@@ -20,11 +20,8 @@
        own line box, and a line still WRAPS when it is wider than the column
        (the failure mode of a fix that reaches for `white-space: pre-wrap`).
      · BLANKS — the two exceptions still emit nothing: blank lines above the
-       first block and below the last. Blank-line MULTIPLICITY is no longer a
-       visual fact — the adapter parses 1, 2 and 3 blank lines into the same
-       separated blocks and gives the bytes back untouched (ADR 0037 retired
-       the hand-written renderer that painted `.bgap` separators), so what
-       holds the rule now is the byte round-trip below.
+       first block and below the last. Extra top-level space imports as
+       ordinary empty paragraphs (ADR 0037), with the bytes kept untouched.
      · SOURCE — none of the above is allowed to cost a byte on disk.
    ============================================================ */
 
@@ -203,14 +200,11 @@ describe("a newline in the source is a visual line break in Edit", () => {
 /* ============================================================
    2 · BLANKS — the two exceptions still emit nothing
 
-   MULTIPLICITY is deliberately absent here. In Edit a blank run is block
-   separation, not a rendered line: `GAPS_SRC`'s one, two and three blank lines
-   all parse to the same four separated paragraphs, and the adapter hands the
-   original bytes back untouched. The rule that remains enforceable is the byte
-   round-trip in §3, which `GAPS` is seeded for.
+   `GAPS_SRC`'s one blank line separates blocks; its two and three blank lines
+   each import one empty paragraph. All original bytes still round-trip.
    ============================================================ */
 
-describe("a blank line in the source costs no block in Edit", () => {
+describe("top-level blank paragraphs preserve source spacing in Edit", () => {
   test("blank lines above the first block and below the last render nothing", async () => {
     await open(LEAD);
     const lead = await readLines("paragraph");
@@ -227,8 +221,8 @@ describe("a blank line in the source costs no block in Edit", () => {
   test("the blank runs are still in the file, all three of them", async () => {
     await open(GAPS);
     const m = await readLines("paragraph");
-    /* four paragraphs, whatever the gaps between them were */
-    expect(`blocks: ${m.types.join("|")}`).toBe("blocks: paragraph|paragraph|paragraph|paragraph");
+    /* four prose paragraphs plus two imported blank paragraphs */
+    expect(`blocks: ${m.types.join("|")}`).toBe("blocks: paragraph|paragraph|paragraph|paragraph|paragraph|paragraph");
     /* …and the model the editor is holding is the file, byte for byte */
     const held = await page.evaluate(async () => {
       const { state } = await import("/state.js");

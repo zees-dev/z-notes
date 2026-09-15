@@ -108,6 +108,33 @@ test("heading conversion keeps the following paragraph separate after save and r
   expect(await page.$$eval('[data-content-type="paragraph"]', nodes => nodes.map(node => node.textContent))).toEqual(["Title", "Body"]);
 }, 35000);
 
+test("blank paragraphs inserted with Enter survive repeated save/reload and remain editable", async () => {
+  await boot("# First\n\nText\n\n# Second\n\nOther text\n");
+  await endOfFirst();
+  await page.keyboard.press("Enter");
+  await save();
+  const spaced = "# First\n\nText\n\n\n\n# Second\n\nOther text\n";
+  expect(readVaultText(srv.vault, path)).toBe(spaced);
+  for (let reload = 0; reload < 2; reload++) {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('.bn-editor[contenteditable="true"]');
+    const paragraphs = await blocks("paragraph");
+    expect(await Promise.all(paragraphs.map(p => p.evaluate(e => e.textContent)))).toEqual(["Text", "", "Other text"]);
+    expect(await source()).toBe(spaced);
+    await ensureMode(page, "preview", { via: "chip" });
+    await page.waitForSelector('.bn-editor[contenteditable="true"]');
+  }
+  await (await blocks("paragraph"))[1].click();
+  await settled();
+  await page.keyboard.type("Restored paragraph");
+  await save();
+  const edited = spaced.replace("Text\n\n\n\n", "Text\n\nRestored paragraph\n\n");
+  expect(readVaultText(srv.vault, path)).toBe(edited);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector('.bn-editor[contenteditable="true"]');
+  expect(await page.$$eval('[data-content-type="paragraph"]', nodes => nodes.map(node => node.textContent))).toEqual(["Text", "Restored paragraph", "Other text"]);
+}, 35000);
+
 test("unfinished protected HTML rejects following text and native moves without advancing the doc", async () => {
   const initialErrors = errors.length;
   await boot("Editable prose\n\n<!-- unfinished");

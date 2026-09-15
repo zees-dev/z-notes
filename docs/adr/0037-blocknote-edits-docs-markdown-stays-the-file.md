@@ -83,6 +83,21 @@ is ordinary Markdown files and stays one; the server never sees plaintext.
   "Edit source" door; a transaction the adapter cannot serialise (colours,
   alignment, merged cells, nesting a protected block, moving metadata) is
   rejected before it happens rather than silently dropped on save.
+- **Extra spacing is editable content.** Between top-level source groups,
+  three/four newlines import as one ordinary empty paragraph, five/six as two;
+  fewer than three are Markdown separation alone. Empty paragraphs have
+  zero-width source groups with stable ids and ranges; retained separators
+  own the original whitespace exactly once, even when neighboring prose changes.
+  Removing a paragraph breaks source adjacency so its gap cannot return;
+  typing into it uses safe paragraph separation, keeping following indentation.
+  New empty paragraphs contribute two newlines each,
+  making four newlines the saved form of one, six of two. This Edit mapping
+  replaces [ADR 0015](0015-a-newline-is-a-line-break.md)'s retired Preview
+  spacers: no stored marker or custom block. Leading/trailing whitespace,
+  empty docs, and whitespace inside lists, fences or protected groups keep
+  their existing behavior. Same-family list-to-list gaps stay separators:
+  edited markers can merge those lists, so retaining paragraphs there needs
+  a separate list serialization decision (amended 2026-09-16).
 - **Secrets stay outside the model.** An ` ```age ` fence is a ciphertext
   block; the existing `secrets.js` DOM is injected into a non-editable node
   view and owns every decrypted byte. Blocks have stable ids, so

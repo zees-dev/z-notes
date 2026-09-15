@@ -7,9 +7,47 @@ const prose = (block: SourceBlock, text: string) => { block.content = [{ type: '
 const corpus = ['', '\n\n', '\uFEFF# Heading\r\n\r\nHello  \r\nworld\n', '---\ntitle: Hi\n---\n\nText\n', '~~~age\nARMOR\n~~~\n', '- one\n  - two\n\n- [x] task\n', '| a | b |\n| - | - |\n| c | d |\n', '> quote\n> second\n', '[ref][id]\n\n[id]: https://example.com\n', '<div>raw</div>\n', '[[doc]] **bold** `[[code]]` [link](https://example.com)\n'];
 test('unchanged source retains exact bytes', () => { for (const text of corpus) { const s = new SourceSession(text); expect(s.serialize(s.blocks)).toBe(text); } });
 test('existing acceptance corpus retains exact bytes', () => { for (const { bytes } of CORPUS) { const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes); const s = new SourceSession(text); expect(s.serialize(s.blocks)).toBe(text); } });
+test('top-level blank paragraphs retain their gaps through reload, edits and removal', () => {
+  for (const [newlines, blanks] of [[1, 0], [2, 0], [3, 1], [4, 1], [5, 2], [6, 2]]) {
+    const raw = 'Text' + '\n'.repeat(newlines) + '# Second\n';
+    const session = new SourceSession(raw);
+    expect(session.blocks.slice(1, -1).map(b => [b.type, b.content])).toEqual(Array.from({ length: blanks }, () => ['paragraph', []]));
+    const reloaded = new SourceSession(session.serialize(session.blocks));
+    expect(reloaded.blocks).toHaveLength(blanks + 2);
+    expect(reloaded.serialize(reloaded.blocks)).toBe(raw);
+  }
+  const raw = '\uFEFF\r\nText\r\n \r\n\r\n\r\n\r\n  # Second\r\n';
+  const session = new SourceSession(raw);
+  const [first, blank, secondBlank, heading] = session.blocks;
+  expect(session.range(blank.id)).toEqual({ start: raw.indexOf('\r\n\r\n\r\n  #'), end: raw.indexOf('\r\n\r\n\r\n  #'), line: 4 });
+  expect(session.range(heading.id)?.start).toBe(raw.indexOf('# Second'));
+  const nearby = clone(session.blocks);
+  prose(nearby.at(-1)!, 'Changed');
+  expect(session.serialize(nearby)).toBe(raw.replace('Second', 'Changed'));
+  const edited = clone(session.blocks);
+  prose(edited[2], 'Inserted');
+  const output = session.serialize(edited);
+  expect(output).toBe(raw.replace('\r\n  #', 'Inserted\r\n\r\n  #'));
+  expect(new SourceSession(output).blocks.map(b => b.content)).toEqual(edited.map(b => b.content));
+  const removed = session.serialize([first, secondBlank, heading]);
+  expect(new SourceSession(removed).blocks).toHaveLength(3);
+  expect(session.serialize([first, heading])).toBe('\uFEFF\r\nText\n\n# Second\r\n');
+  expect(session.serialize(session.blocks)).toBe(raw);
+  const middle = new SourceSession('A\n\n\nB\n\n\nC');
+  const cleared = clone(middle.blocks);
+  cleared[2].content = [];
+  const reloaded = new SourceSession(middle.serialize(cleared));
+  expect(reloaded.blocks.slice(1, -1).map(b => [b.type, b.content])).toEqual(Array.from({ length: 3 }, () => ['paragraph', []]));
+  expect(middle.serialize(middle.blocks)).toBe(middle.markdown);
+  for (const lists of ['- one\n\n\n* [ ] two', '1. one\n\n\n2) two']) {
+    const session = new SourceSession(lists);
+    expect(session.blocks).toHaveLength(2);
+    expect(session.serialize(session.blocks)).toBe(lists);
+  }
+});
 test('an empty mermaid fence is a code block, not a diagram', () => { const s = new SourceSession('```mermaid\n```\n\n```mermaid\ngraph TD;\n```\n'); expect(s.blocks.map(b => b.type)).toEqual(['codeBlock', 'diagram']); expect(s.blocks[0].props.language).toBe('mermaid'); expect(s.serialize([{ ...clone(s.blocks)[0], id: 'fresh' }, s.blocks[1]])).toBe('```mermaid\n```\n\n```mermaid\ngraph TD;\n```\n'); });
 test('edits preserve unrelated metadata, secrets and unsupported source', () => { const raw = '---\nx: y\n---\n\nFirst\n\n```age\nARMOR\n```\n\n<div>x</div>\n'; const s = new SourceSession(raw); const b = clone(s.blocks); prose(b[1], 'Changed'); expect(s.serialize(b)).toBe(raw.replace('First', 'Changed')); });
-test('deleting and reordering never resurrects groups; undo preserves original', () => { const s = new SourceSession('one\n\n\ntwo\n\nthree'); expect(s.serialize([s.blocks[2], s.blocks[0]])).toBe('three\n\none'); expect(s.serialize(s.blocks)).toBe(s.markdown); });
+test('deleting and reordering never resurrects groups; undo preserves original', () => { const s = new SourceSession('one\n\n\ntwo\n\nthree'); expect(s.serialize([s.blocks[3], s.blocks[0]])).toBe('three\n\none'); expect(s.serialize(s.blocks)).toBe(s.markdown); });
 test('literal Markdown punctuation is escaped by standard serializer', () => { const s = new SourceSession('before\n'); const b = clone(s.blocks); prose(b[0], '# title *literal* [no](link)'); const result = new SourceSession(s.serialize(b)); expect(result.blocks[0].type).toBe('paragraph'); expect(result.blocks[0].content).toEqual(b[0].content); });
 test('edited nested task list keeps hierarchy and contiguous siblings', () => { const s = new SourceSession('- [ ] first\n  - nested\n- [x] second\n\nAfter\n'); const b = clone(s.blocks); b[0].props.checked = true; const out = s.serialize(b); expect(out).toContain('- [x] first'); expect(out).toContain('  - nested'); expect(out).toEndWith('\n\nAfter\n'); });
 test('wiki atoms are excluded from code and links', () => { const s = new SourceSession('[[a]] `[[b]]` [x [[c]]](https://example.com)'); const content = s.blocks[0].content as Array<{type: string}>; expect(content.filter(x => x.type === 'wikiLink')).toHaveLength(1); });
