@@ -123,8 +123,8 @@ ES modules served as-is, plus one React island the server bundles at boot
   the CONDITION `raw-focus` on `#app`, which with `wireVisualViewport`'s
   `kb-up` is what base.css §8a draws the bar on, and `--keybar`, the bar's
   measured height, which `revealRawCaret` subtracts alongside `--kb`. Edit has
-  its own phone toolbar inside the island (Bullet, Numbered, Checklist,
-  Outdent, Indent, and a ⋯ position calibration), docked on
+  its own phone toolbar inside the island (Undo, Redo, Bullet, Numbered,
+  Checklist, Outdent, Indent, and a ⋯ position calibration), docked on
   `--visual-bottom`, the visible viewport's bottom edge that
   `wireVisualViewport` publishes beside `--kb`.
 - **Static, not modules** — `index.html`, `themes/*.css`, `manifest.json`

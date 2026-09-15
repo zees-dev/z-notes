@@ -7,7 +7,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { BlockNoteEditor, BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, defaultStyleSpecs, filterSuggestionItems, HistoryExtension, plainContentToString } from '@blocknote/core';
 import { en } from '@blocknote/core/locales';
-import { createReactBlockSpec, createReactInlineContentSpec, getDefaultReactSlashMenuItems, SideMenuController, SuggestionMenuController } from '@blocknote/react';
+import { createReactBlockSpec, createReactInlineContentSpec, getDefaultReactSlashMenuItems, SideMenuController, SuggestionMenuController, useEditorState } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/mantine';
 import { createReactDiagramBlockSpec, defaultMermaidOptions, getDiagramSlashMenuItems, initializeMermaid } from '@blocknote/diagram-block';
 import { Extension } from '@tiptap/core';
@@ -123,7 +123,7 @@ function Toolbar({ children }: { children: ReactNode }) {
       island.removeEventListener('keydown', escape);
     };
   }, [open]);
-  return <div ref={host} className="z-block-toolbar" role="toolbar" aria-label="List formatting"
+  return <div ref={host} className="z-block-toolbar" role="toolbar" aria-label="Editing actions"
     style={{ '--toolbar-offset': `${offset}px` } as CSSProperties} onPointerDownCapture={event => event.preventDefault()}>
     <div className="z-toolbar-actions">{children}</div>
     <button className="z-toolbar-more" type="button" aria-label="Toolbar options" aria-expanded={open}
@@ -367,6 +367,15 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
     });
     editor.focus();
   }
+  function canUndo() { const history = editor.getExtension(HistoryExtension); return !!history && editor.canExec(history.undoCommand); }
+  function canRedo() { const history = editor.getExtension(HistoryExtension); return !!history && editor.canExec(history.redoCommand); }
+  function HistoryButtons() {
+    const { undo, redo } = useEditorState({ editor, selector: () => ({ undo: canUndo(), redo: canRedo() }) });
+    return <>
+      <button type="button" aria-label="Undo" disabled={!undo} onClick={() => { editor.undo(); editor.focus(); }}>Undo</button>
+      <button type="button" aria-label="Redo" disabled={!redo} onClick={() => { editor.redo(); editor.focus(); }}>Redo</button>
+    </>;
+  }
   const root = createRoot(host);
   flushSync(() => root.render(<>
     <BlockNoteView editor={editor} theme="light" slashMenu={false} sideMenu={false}>
@@ -377,6 +386,8 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       ], query)} />
     </BlockNoteView>
     <Toolbar>
+      {/* History leads the scrollable row so both recovery actions are visible at 320px. */}
+      <HistoryButtons />
       <button type="button" aria-label="Bullet list" onClick={() => list('bulletListItem')}>• List</button>
       <button type="button" aria-label="Numbered list" onClick={() => list('numberedListItem')}>1. List</button>
       <button type="button" aria-label="Checklist" onClick={() => list('checkListItem')}>☑ Tasks</button>
@@ -429,8 +440,8 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       }
       return null;
     },
-    canUndo() { const history = editor.getExtension(HistoryExtension); return !!history && editor.canExec(history.undoCommand); },
-    canRedo() { const history = editor.getExtension(HistoryExtension); return !!history && editor.canExec(history.redoCommand); },
+    canUndo,
+    canRedo,
     getSecrets() { return session.secrets(blocks()); },
     replaceSecret(id, ciphertext) {
       const next = structuredClone(blocks());

@@ -1,6 +1,6 @@
 /* ============================================================
    mobile-keyboard-e2e.test.ts — the Edit toolbar docks on the soft keyboard
-   (spec 0020, ADR 0037).
+   and exposes the editor's history (ADR 0037).
 
    The visual viewport can shrink without resizing layout, so this is pure
    browser geometry: the bar meets the visible bottom edge at every layout /
@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, test, expect } from "bun:test";
 import type { Browser, Page } from "puppeteer-core";
 import { startServer, sleep, type TestServer } from "./helpers";
-import { launchTestBrowser, newAppPage, appDriver, ensureMode } from "./browser";
+import { launchTestBrowser, newAppPage, appDriver, ensureMode, pressChord } from "./browser";
 
 async function tapToolbar(page: Page, label: string) {
   await page.tap(`[aria-label="${label}"]`);
@@ -34,12 +34,20 @@ const hittable = (page: Page, selector: string) => page.$eval(selector, e => {
   return e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
 });
 
+async function historyAvailable(page: Page, undo: boolean, redo: boolean) {
+  for (const [label, enabled] of [['Undo', undo], ['Redo', redo]] as const) {
+    await page.waitForSelector(`.z-block-toolbar button[aria-label="${label}"]:${enabled ? 'enabled' : 'disabled'}`, { timeout: 5000 });
+  }
+}
+
 let srv: TestServer;
 let browser: Browser;
 beforeAll(async () => {
   srv = await startServer({ seed: {
     "short.md": "- Parent\n- Child\n",
     "position.md": "Toolbar position\n",
+    "history-canceled.md": "Canceled typing\n",
+    "history-delete.md": "# Keep\n\nParagraph to recover\n\nLast paragraph\n",
     "long.md": "- Parent\n- Child\n\n" + "A paragraph with room to scroll.\n\n".repeat(70),
   } });
   browser = await launchTestBrowser();
@@ -81,6 +89,74 @@ async function viewport(page: Page, height: number, offsetTop = 0) {
   }, height, offsetTop);
   await sleep(380);
 }
+
+test('canceled typing refreshes history availability for toolbar and keyboard steps without changing text', async () => {
+  const page = await phone('history-canceled.md');
+  try {
+    await viewport(page, 500);
+    await page.tap('.bn-inline-content');
+    const mod = await page.evaluate(() => /Mac/.test(navigator.platform) ? 'Meta' : 'Control');
+    const text = () => page.$eval('.bn-editor', e => e.textContent);
+    await historyAvailable(page, false, false);
+    // One history group can cancel its text edits while still holding a step.
+    await page.keyboard.type('x');
+    await page.keyboard.press('Backspace');
+    expect(await text()).toBe('Canceled typing');
+    await historyAvailable(page, true, false);
+    for (const via of ['toolbar', 'keyboard']) {
+      for (const redo of [false, true]) {
+        if (via === 'toolbar') await page.tap(`.z-block-toolbar [aria-label="${redo ? 'Redo' : 'Undo'}"]`);
+        else await pressChord(page, 'KeyZ', mod, ...(redo ? ['Shift'] : []));
+        await historyAvailable(page, redo, !redo);
+        expect(await text()).toBe('Canceled typing');
+      }
+    }
+  } finally { await page.close(); }
+}, 90000);
+
+test('phone history controls recover deletions, retain focus and clear redo on a new edit', async () => {
+  const page = await phone('history-delete.md', 320);
+  try {
+    await viewport(page, 500);
+    await page.tap('.bn-inline-content');
+    const mod = await page.evaluate(() => /Mac/.test(navigator.platform) ? 'Meta' : 'Control');
+    const content = () => page.$$eval('.bn-editor [data-content-type]', nodes =>
+      nodes.map(node => [node.getAttribute('data-content-type'), node.textContent]));
+    const focused = () => page.$eval('.bn-editor', e => e.contains(document.activeElement));
+    const original = [['heading', 'Keep'], ['paragraph', 'Paragraph to recover'], ['paragraph', 'Last paragraph']];
+    await historyAvailable(page, false, false);
+    for (const label of ['Undo', 'Redo']) await page.tap(`.z-block-toolbar [aria-label="${label}"]`);
+    expect(await content()).toEqual(original);
+    expect(await focused()).toBe(true);
+    // ProseMirror ignores native selection changes for 50 ms after a view update.
+    await sleep(80);
+    await page.evaluate(() => {
+      const rows = document.querySelectorAll('.bn-editor .bn-inline-content');
+      const first = rows[0].firstChild!, last = rows[rows.length - 1].firstChild!;
+      getSelection()!.setBaseAndExtent(first, first.textContent!.length, last, last.textContent!.length);
+    });
+    await sleep(80);
+    await page.keyboard.press('Backspace');
+    expect(await content()).toEqual([['heading', 'Keep']]);
+    await historyAvailable(page, true, false);
+    await page.tap('.z-block-toolbar [aria-label="Undo"]');
+    expect(await content()).toEqual(original);
+    expect(await focused()).toBe(true);
+    await historyAvailable(page, false, true);
+    await page.tap('.z-block-toolbar [aria-label="Redo"]');
+    expect(await content()).toEqual([['heading', 'Keep']]);
+    await historyAvailable(page, true, false);
+    expect(await focused()).toBe(true);
+    await pressChord(page, 'KeyZ', mod);
+    expect(await content()).toEqual(original);
+    await historyAvailable(page, false, true);
+    await page.keyboard.type(' replacement');
+    await historyAvailable(page, true, false);
+    await page.tap('.z-block-toolbar [aria-label="Redo"]');
+    expect(await content()).toEqual([['heading', 'Keep replacement']]);
+    expect(await focused()).toBe(true);
+  } finally { await page.close(); }
+}, 90000);
 
 for (const path of ["short.md", "long.md"]) test(`${path}: editing toolbar meets the visual viewport and dismissed chat cannot paint or focus`, async () => {
   const page = await phone(path);
@@ -204,6 +280,10 @@ test('toolbar calibration preserves the caret, animates, persists and keeps the 
     for (const width of [320, 360, 390]) {
       await touchViewport(page, width);
       await viewport(page, 500);
+      await page.$eval('.z-toolbar-actions', e => { e.scrollLeft = 0; });
+      for (const label of ['Undo', 'Redo']) {
+        expect(await hittable(page, `.z-block-toolbar [aria-label="${label}"]`)).toBe(true);
+      }
       expect(await page.$eval('[aria-label="Toolbar options"]', e => {
         const r = e.getBoundingClientRect();
         return r.right <= innerWidth && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
