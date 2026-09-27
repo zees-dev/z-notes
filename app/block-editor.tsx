@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { BlockNoteEditor, BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, defaultStyleSpecs, filterSuggestionItems, HistoryExtension, plainContentToString } from '@blocknote/core';
+import { SideMenuExtension } from '@blocknote/core/extensions';
 import { en } from '@blocknote/core/locales';
 import { createReactBlockSpec, createReactInlineContentSpec, getDefaultReactSlashMenuItems, SideMenuController, SuggestionMenuController, useEditorState } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/mantine';
@@ -291,13 +292,40 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       props: { decorations: state => linkCopyKey.getState(state) },
     })],
   });
+  /* BlockNote's Backspace at the start of a list item makes it a paragraph,
+     which the guard below refuses when the item is nested or has children
+     (only list items nest), so the key did nothing. A nested item outdents one
+     level per press instead; a top-level parent becomes the paragraph and its
+     children stay a list below it. Default priority runs ahead of BlockNote's
+     own shortcuts. */
+  const listBackspace = Extension.create({
+    name: 'zListBackspace',
+    addKeyboardShortcuts: () => ({
+      Backspace: ({ editor: tiptap }) => {
+        const { selection } = tiptap.state;
+        if (!selection.empty || selection.$from.parentOffset !== 0) return false;
+        const block = editor.getTextCursorPosition().block;
+        const nested = !!editor.getParentBlock(block.id);
+        if (!listItemTypes.includes(block.type) || !nested && !block.children.length) return false;
+        if (tiptap.commands.undoInputRule()) return true;
+        if (nested) editor.unnestBlock();
+        // `updateBlock` reads `children: []` as "keep them", so they move first.
+        else editor.transact(() => {
+          editor.removeBlocks(block.children);
+          editor.insertBlocks(block.children, block, 'after');
+          editor.updateBlock(block, { type: 'paragraph', props: {} });
+        });
+        return true;
+      },
+    }),
+  });
   const editor = BlockNoteEditor.create({
     schema, dictionary: en,
     initialContent: (session.blocks.length ? session.blocks : [{ type: 'paragraph' }]) as EditorBlock[],
     domAttributes: { editor: { 'aria-label': 'Doc editor' } },
     // `_tiptapOptions.extensions` is BlockNote's own undocumented door; it
     // APPENDS to the editor's extension list rather than replacing it.
-    _tiptapOptions: { extensions: [linkCopy] },
+    _tiptapOptions: { extensions: [linkCopy, listBackspace] },
   });
   let snapshot = JSON.stringify(editor.document);
   let sourceValues = new Map(session.blocks.filter(block => block.type === 'source').map(block => [block.id, new Set([block.props.source])]));
@@ -367,6 +395,20 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
     });
     editor.focus();
   }
+  /* Floating-ui middleware that centres the side menu on its block's first
+     line of text. The menu's reference is a bare rect, so the block comes from
+     the menu's own state. A block without inline text keeps the top. */
+  const centreOnFirstLine = {
+    name: 'centreOnFirstLine',
+    fn({ y, rects }: { y: number; rects: { floating: { height: number } } }) {
+      const id = editor.getExtension(SideMenuExtension)?.store.state?.block.id;
+      const block = id ? nodeFor(id) : null;
+      const text = block?.querySelector('.bn-inline-content');
+      if (!block || !text) return {};
+      const top = text.getBoundingClientRect().top - block.getBoundingClientRect().top;
+      return { y: y + top + (parseFloat(getComputedStyle(text).lineHeight) - rects.floating.height) / 2 };
+    },
+  };
   function canUndo() { const history = editor.getExtension(HistoryExtension); return !!history && editor.canExec(history.undoCommand); }
   function canRedo() { const history = editor.getExtension(HistoryExtension); return !!history && editor.canExec(history.redoCommand); }
   function HistoryButtons() {
@@ -376,11 +418,19 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       <button type="button" aria-label="Redo" disabled={!redo} onClick={() => { editor.redo(); editor.focus(); }}>Redo</button>
     </>;
   }
+  /* A handle drag selects its block, and the formatting toolbar that selection
+     shows covers the rows below it, which are the drop targets. BlockNote's own
+     hide loses that race, so the toolbar is hidden for the drag here. The
+     source handle may be gone by `dragend`, so the listener is on document. */
+  const dragEvents = ['dragstart', 'dragend', 'drop'];
+  const dragging = (event: Event) => host.classList.toggle('z-dragging', event.type === 'dragstart' && host.contains(event.target as Node));
+  for (const type of dragEvents) document.addEventListener(type, dragging, true);
   const root = createRoot(host);
   flushSync(() => root.render(<>
     <BlockNoteView editor={editor} theme="light" slashMenu={false} sideMenu={false}>
-      {/* Native heading offsets assume larger fonts than the app themes. */}
-      <SideMenuController floatingUIOptions={{ useFloatingOptions: { middleware: [] } }} />
+      {/* BlockNote's offsets are constants for its own type scale; the themes
+          have theirs, so the handle is centred on the line it measures. */}
+      <SideMenuController floatingUIOptions={{ useFloatingOptions: { middleware: [centreOnFirstLine] } }} />
       <SuggestionMenuController triggerCharacter="/" getItems={async query => filterSuggestionItems([
         ...getDefaultReactSlashMenuItems(editor), ...getDiagramSlashMenuItems(editor),
       ], query)} />
@@ -396,7 +446,10 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
     </Toolbar>
   </>));
   return {
-    destroy() { destroyed = true; unsubscribe(); unguard(); root.unmount(); },
+    destroy() {
+      destroyed = true; unsubscribe(); unguard(); root.unmount();
+      for (const type of dragEvents) document.removeEventListener(type, dragging, true);
+    },
     getMarkdown() { return markdown; },
     setMarkdown(next) {
       // While stale the screen is NOT `markdown`, so even the same text replaces it.

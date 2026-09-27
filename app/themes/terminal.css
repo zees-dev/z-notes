@@ -309,7 +309,7 @@
   --d-font: 11.6px;
   --d-lh: 1.32;
   --d-blk-gap: 2px;
-  --d-list-gap: 1px;
+  --d-list-gap: 4px;
   --d-sec-gap: 7px;
   --d-row-h: 18px;
   --d-row-gap: 0px;
@@ -330,7 +330,7 @@
   --d-font: 10.9px;
   --d-lh: 1.26;
   --d-blk-gap: 1px;
-  --d-list-gap: 0px;
+  --d-list-gap: 3px;
   --d-sec-gap: 5px;
   --d-row-h: 17px;
   --d-row-gap: 0px;

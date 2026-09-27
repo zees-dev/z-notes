@@ -239,6 +239,55 @@ test("list shortcuts and Tab/Shift-Tab preserve selection and produce nested Mar
   await page.waitForSelector('[data-content-type="checkListItem"]');
 }, 45000);
 
+/* BlockNote's Backspace turns an item into a paragraph, which the adapter's
+   guard refuses under a list item or over children — the key did nothing. */
+test("Backspace at the start of a nested item outdents it level by level, then unlists and joins", async () => {
+  await boot("- Parent\n  - Child\n    - Grandchild\n");
+  const backspaceAtStart = async (text: string, after: string[]) => {
+    const item = await page.waitForSelector(`xpath///*[contains(@class,"bn-inline-content")][.="${text}"]`);
+    const box = (await item!.boundingBox())!;
+    await page.mouse.click(box.x + 2, box.y + box.height / 2);
+    await settled();
+    await page.keyboard.press("Home");
+    for (const markdown of after) {
+      await page.keyboard.press("Backspace");
+      await waitUntil(async () => await currentMarkdown() === markdown, { label: JSON.stringify(markdown) });
+      await settled();
+    }
+  };
+  await backspaceAtStart("Grandchild", [
+    "- Parent\n  - Child\n  - Grandchild\n",
+    "- Parent\n  - Child\n- Grandchild\n",
+    "- Parent\n  - Child\n\nGrandchild\n",
+    "- Parent\n  - ChildGrandchild\n",
+  ]);
+  // A top-level parent unlists, and its children stay a list below it.
+  await backspaceAtStart("Parent", ["Parent\n\n- ChildGrandchild\n"]);
+}, 35000);
+
+/* A row is its text's height: a floor once pushed a one-line item's text to
+   the top of a taller box, off its checkbox and drag handle, and spaced it
+   wider than an item that wrapped. */
+test("list rows share one gap however they wrap, centred on the text's first line", async () => {
+  await boot(`- [ ] one\n- [ ] ${"wraps onto a second line ".repeat(12)}\n- [ ] three\n`);
+  // grabHandle settles the entrance animation, which offsets every row until it ends.
+  const { handle } = await grabHandle('[data-content-type="checkListItem"]');
+  const rows = await page.$$eval('[data-content-type="checkListItem"]', items => items.map(item => {
+    const text = item.querySelector(".bn-inline-content")!;
+    const line = parseFloat(getComputedStyle(text).lineHeight);
+    const box = text.getBoundingClientRect(), check = item.querySelector("input")!.getBoundingClientRect();
+    return { lines: Math.round(box.height / line), gap: item.getBoundingClientRect().height - box.height,
+      textMid: box.top + line / 2, checkMid: (check.top + check.bottom) / 2 };
+  }));
+  expect(rows.map(row => row.lines > 1)).toEqual([false, true, false]);
+  expect(rows[1].gap).toBeCloseTo(rows[0].gap, 1);
+  expect(rows[0].gap).toBeGreaterThan(0);
+  // 1.5px: font metrics and pixel snapping differ by machine; the bug was 3–6px.
+  for (const row of rows) expect(Math.abs(row.checkMid - row.textMid)).toBeLessThan(1.5);
+  const handleBox = (await handle.boundingBox())!;
+  expect(Math.abs(handleBox.y + handleBox.height / 2 - rows[0].textMid)).toBeLessThan(1.5);
+}, 25000);
+
 test("prose edits preserve neighboring metadata, ciphertext and unsupported source", async () => {
   const before = "---\ntitle: Preserve\n---\n\n";
   const after = "\n\n```age\nopaque-ciphertext\n```\n\n<div data-custom='yes'>opaque html</div>\n";
