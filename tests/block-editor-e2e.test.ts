@@ -265,6 +265,20 @@ test("Backspace at the start of a nested item outdents it level by level, then u
   await backspaceAtStart("Parent", ["Parent\n\n- ChildGrandchild\n"]);
 }, 35000);
 
+/* `Input.insertText` is a keyboard commit outside a composition: one
+   cancelable `beforeinput`, which Chrome plays as insert/split/insert. Only
+   the first line used to survive. */
+test("multi-line text a keyboard commits keeps every line, in a paragraph and a list item", async () => {
+  await boot("Para\n\n- item\n");
+  const session = await page.createCDPSession();
+  for (const type of ["paragraph", "bulletListItem"]) {
+    await endOfFirst(type);
+    await session.send("Input.insertText", { text: "A\r\nB" });
+    await settled();
+  }
+  expect(await currentMarkdown()).toBe("ParaA\nB\n\n- itemA\n  B\n");
+}, 25000);
+
 /* A row is its text's height: a floor once pushed a one-line item's text to
    the top of a taller box, off its checkbox and drag handle, and spaced it
    wider than an item that wrapped. */

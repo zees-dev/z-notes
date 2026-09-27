@@ -319,13 +319,37 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       },
     }),
   });
+  /* Multi-line text committed as input rather than pasted (a keyboard's
+     clipboard strip, dictation) is one `beforeinput` the browser plays as
+     insert/split/insert, and ProseMirror undoes the split along with every
+     line after it. A cancelable one is replayed as the paste it is, through
+     BlockNote's paste handling. Composition input (`insertCompositionText`)
+     cannot be cancelled and still keeps only its first line. */
+  const multiLineInput = Extension.create({
+    name: 'zMultiLineInput',
+    addProseMirrorPlugins: () => [new Plugin({
+      props: {
+        handleDOMEvents: {
+          beforeinput(view, event) {
+            // A bare "\n" stays the browser's, as it was before this handler.
+            if (event.inputType !== 'insertText' || !event.data?.includes('\n') || !event.data.trim() || !event.cancelable) return false;
+            event.preventDefault();
+            const clipboardData = new DataTransfer();
+            clipboardData.setData('text/plain', event.data.replace(/\r\n?/g, '\n'));
+            view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+            return true;
+          },
+        },
+      },
+    })],
+  });
   const editor = BlockNoteEditor.create({
     schema, dictionary: en,
     initialContent: (session.blocks.length ? session.blocks : [{ type: 'paragraph' }]) as EditorBlock[],
     domAttributes: { editor: { 'aria-label': 'Doc editor' } },
     // `_tiptapOptions.extensions` is BlockNote's own undocumented door; it
     // APPENDS to the editor's extension list rather than replacing it.
-    _tiptapOptions: { extensions: [linkCopy, listBackspace] },
+    _tiptapOptions: { extensions: [linkCopy, listBackspace, multiLineInput] },
   });
   let snapshot = JSON.stringify(editor.document);
   let sourceValues = new Map(session.blocks.filter(block => block.type === 'source').map(block => [block.id, new Set([block.props.source])]));
