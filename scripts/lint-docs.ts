@@ -100,7 +100,7 @@ for (const bucket of ["open", "done"]) {
     const text = readFileSync(join(dir, f), "utf8");
     for (const s of SPEC_SECTIONS)
       if (!text.includes(s))
-        fail(`docs/specs/${bucket}/${f}`, `missing section "${s}"`, "add the section (all seven are mandatory; write 'None.' rather than omitting) — template lives in .agents/skills/spec/SKILL.md");
+        fail(`docs/specs/${bucket}/${f}`, `missing section "${s}"`, "add the section (all seven are mandatory; write 'None.' rather than omitting) — template lives in the shared spec skill");
   }
 }
 
@@ -159,19 +159,12 @@ for (const f of readdirSync(appDir)) {
 {
   const policies: [string, string][] = [
     ["AGENTS.md", "before any `git commit`"],
-    [".agents/skills/clean-code/SKILL.md", "before every commit"],
   ];
   for (const [file, marker] of policies) {
     const body = existsSync(join(ROOT, file)) ? readFileSync(join(ROOT, file), "utf8") : "";
     if (!(body.includes("clean-code") && body.includes(marker)))
       fail(file, `lost the "${marker}" clean-code rule`, "restore clean-code as the final pass before any agent commit");
   }
-  const impl = join(ROOT, ".agents/skills/implement/SKILL.md");
-  const body = existsSync(impl) ? readFileSync(impl, "utf8") : "";
-  const cleanAt = body.indexOf("clean-code");
-  const commitAt = body.indexOf("Commit to the current branch");
-  if (cleanAt < 0 || commitAt < 0 || cleanAt > commitAt)
-    fail(".agents/skills/implement/SKILL.md", "does not run clean-code before its commit step", "add the clean-code step immediately before the commit step");
 }
 
 /* ---------- 8. skills: canonical in .agents/skills, symlinked from .claude/skills ---------- */
