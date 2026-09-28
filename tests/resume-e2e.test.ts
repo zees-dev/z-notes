@@ -2,9 +2,6 @@
    resume-e2e.test.ts — `/` resumes the last doc (ADR 0035), and Enter belongs
    to whatever has the focus.
 
-   ADR 0037 deleted the Enter-resumes-Source door: in Edit, Enter is typing.
-   What survives here is the pair of claims that never depended on it.
-
      · THE ROOT URL renders whatever this browser last opened — so a document
        the editor cannot parse throws on the BOOT SCREEN, where there is no
        pane to fall back to. The fixture is a FILE FROM WINDOWS, kept byte for
@@ -12,17 +9,16 @@
        quote lines are the ones the old Preview quote reader could not read,
        and the island has to mount, show them and give the bytes back
        untouched.
-     · ENTER still means what it meant everywhere else: a rename on a focused
-       tree row, the primary action on the exit guard.
+     · ENTER on the exit guard is its primary action. (⏎ on a focused tree
+       row is measured in tests/fileops-e2e.test.ts.)
 
-   Prior art: tests/ux-e2e.test.ts (the mode-switch shape) and
-   tests/edit-exit-e2e.test.ts (Esc leaving Source, the exit guard).
+   Prior art: tests/edit-exit-e2e.test.ts (the exit guard).
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { type Browser, type Page } from "puppeteer-core";
 import { startServer, type TestServer } from "./helpers";
-import { launchTestBrowser, newAppPage, appDriver, docMode, ensureMode, type AppDriver } from "./browser";
+import { launchTestBrowser, newAppPage, appDriver, type AppDriver } from "./browser";
 
 const ALPHA = "resume/alpha.md";
 const BETA = "resume/beta.md";
@@ -104,41 +100,18 @@ describe("a doc with CR line endings renders — and boots", () => {
   }, 60000);
 });
 
-describe("Enter keeps every meaning it already had", () => {
-  test("on a focused tree row it is still the tree's — the rename, not the resume", async () => {
+describe("Enter belongs to whatever has the focus", () => {
+  test("with the exit guard up, Enter presses its primary", async () => {
     await app.boot("/d/" + ALPHA);
-    const row = `#tree .row.file[data-doc="${BETA}"]`;
-    await page.waitForSelector(row, { timeout: 8000 });
-    await page.evaluate((sel) => (document.querySelector(sel as string) as HTMLElement).focus(), row);
-    await page.waitForFunction((sel) => document.activeElement === document.querySelector(sel as string), {
-      timeout: 5000,
-    }, row);
-
-    await page.keyboard.press("Enter");
-    /* tree.js `rowKeys`: ⏎ renames a row, Space opens it. The mode stays Edit
-       and the pane stays on the doc it was on. */
-    await page.waitForSelector("#tree .newrow input", { timeout: 8000 });
-    expect(await docMode(page)).toBe("preview");
-    expect(await app.shown()).toBe(ALPHA);
-  }, 60000);
-
-  test("with the exit guard up, Enter presses its primary and the mode does not flip", async () => {
-    await app.boot("/d/" + ALPHA);
-    await ensureMode(page, "raw");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 8000 });
-    await page.evaluate(() => {
-      const ta = document.getElementById("rawArea") as any;
-      ta.focus();
-      ta.value = "edited alpha\n";
-      ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: null }));
-    });
+    await (await page.waitForSelector('#doc .bn-editor [data-content-type="paragraph"]', { timeout: 20000 }))!.click();
+    await page.keyboard.type("EDITED-ALPHA");
     await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Unsaved changes", {
       timeout: 8000,
     });
 
     await page.click(`#tree .row.file[data-doc="${BETA}"]`);
     await app.waitVeil("xgVeil", true);
-    /* the dialog takes the focus itself, a beat after it mounts (guardRawExit
+    /* the dialog takes the focus itself, a beat after it mounts (guardExit
        focuses the modal rather than a button) — Enter before that is still the
        caret's, in the editor underneath */
     await page.waitForFunction(() => !!(document.activeElement && document.activeElement.closest("#xgVeil")), {
@@ -148,9 +121,7 @@ describe("Enter keeps every meaning it already had", () => {
     await page.keyboard.press("Enter");
     await app.waitVeil("xgVeil", false);
     await app.settled(BETA);
-    /* "Save & exit" is the primary: the edit reached disk, and nothing about
-       Enter silently changed which view of the document is up */
-    expect(await docMode(page)).toBe("raw");
-    expect((await srv.get("/api/docs/" + ALPHA)).body.markdown).toBe("edited alpha\n");
+    /* "Save & exit" is the primary: the edit reached disk */
+    expect((await srv.get("/api/docs/" + ALPHA)).body.markdown).toContain("EDITED-ALPHA");
   }, 60000);
 });

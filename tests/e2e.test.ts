@@ -1,9 +1,8 @@
 /* ============================================================
    E2E GATE — a real browser against the real backend serving the real app.
 
-   Parity: computed-style/rect equality between Edit and Source across
-   densities, plus the phase-1 acceptance checklist: boot, tree, navigation,
-   ⌘E, ⌘S → disk, external edit → SSE → UI, ⌘K palette, connection dot.
+   The phase-1 acceptance checklist: boot, tree, navigation, the document's
+   measure, ⌘S → disk, external edit → SSE → UI, ⌘K palette, connection dot.
 
    Driver: puppeteer-core over the Chromium headless shell that Playwright
    already cached (~/Library/Caches/ms-playwright/chromium_headless_shell-*).
@@ -24,18 +23,7 @@ import {
   SEED_DOC_PATHS,
   type TestServer,
 } from "./helpers";
-import {
-  clickWhenHittable,
-  docMode,
-  ensureMode as setMode,
-  forgetBrowserState,
-  launchTestBrowser,
-  newAppPage,
-  pressChord,
-  saveSettings,
-  waitForApp,
-  waitSettings,
-} from "./browser";
+import { forgetBrowserState, launchTestBrowser, newAppPage, pressChord, waitForApp } from "./browser";
 
 const NAV_DOC = "architecture/event-pipeline.md";
 const HOMELAB = "projects/homelab.md";
@@ -66,123 +54,12 @@ afterAll(async () => {
 /* the shared app vocabulary — see tests/browser.ts. These thunks read `page`
    at call time, which is what the local copies existed to do. */
 const chord = (code: string) => pressChord(page, code);
-const mode = () => docMode(page);
-/* Edit mounts ASYNCHRONOUSLY (lazy `import("/vendor/editor.js")` + its
-   stylesheet), so `raw-mode` leaving the class list is not yet a document that
-   can be measured. Every "now read the doc" below goes through here. */
-const ensureMode = async (want: "raw" | "preview") => {
-  await setMode(page, want);
-  if (want === "preview") await page.waitForSelector(EDIT_BLOCK, { timeout: 20000 });
-};
-/** the first painted block of the visual editor — the island's own text box */
-const EDIT_BLOCK = "#doc .bn-editor .bn-block-content";
-const clickSettings = (sel: string) => clickWhenHittable(page, sel);
-
-const PARITY_PROPS = [
-  "paddingTop",
-  "paddingRight",
-  "paddingBottom",
-  "paddingLeft",
-  "marginTop",
-  "marginLeft",
-  "marginRight",
-  "maxWidth",
-  "borderTopWidth",
-  "borderRightWidth",
-  "borderBottomWidth",
-  "borderLeftWidth",
-  "borderTopStyle",
-  "borderTopColor",
-  "borderTopLeftRadius",
-  "borderTopRightRadius",
-  "borderBottomLeftRadius",
-  "borderBottomRightRadius",
-  "backgroundColor",
-  "boxShadow",
-  "boxSizing",
-  "position",
-] as const;
-
-/**
- * The container AND where the text inside it starts.
- *
- * The claim under test is two clauses — both modes share the identical
- * container, and ONLY THE TEXT CHANGES — and measuring `#doc` alone proves the
- * first while being blind to the second. Mutation-tested: `.doc.raw-mode .raw { padding-left:
- * 24px; margin-top: 18px }` moved the first line of the document 24px right and
- * 4px down on every ⌘E, in every breakpoint and both densities, and the gate
- * stayed green because `#doc` itself had not moved. So the text origin is
- * measured too: the first painted block in Edit, and the editor's own text
- * box (its rect plus its padding, which is what a theme would add) in Source.
- */
-async function measureDocContainer() {
-  return page.evaluate((props: readonly string[]) => {
-    const sc = document.getElementById("scroll") as HTMLElement;
-    sc.scrollTop = 0;
-    const d = document.getElementById("doc") as HTMLElement;
-    const cs = getComputedStyle(d);
-    const style: Record<string, string> = {};
-    for (const p of props) style[p] = (cs as any)[p];
-    const r = d.getBoundingClientRect();
-    const sr = sc.getBoundingClientRect();
-    const round = (n: number) => Math.round(n * 100) / 100;
-
-    const raw = d.querySelector("#rawArea") as HTMLElement | null;
-    /* Edit: the first block the island painted. NOT `firstElementChild`
-       descended — BlockNote injects a `<style>` element as the host's first
-       child, and its rect is 0x0 at the container's origin, which would make
-       every parity reading below a measurement of the container again. */
-    const previewFirst = raw ? null : d.querySelector(".bn-editor .bn-block-content");
-    const target = (raw as Element | null) ?? previewFirst;
-    let text: { x: number; y: number } | null = null;
-    if (target) {
-      const tr = target.getBoundingClientRect();
-      const ts = getComputedStyle(target);
-      text = { x: round(tr.x + parseFloat(ts.paddingLeft || "0")), y: round(tr.y + parseFloat(ts.paddingTop || "0")) };
-    }
-
-    return {
-      style,
-      rect: { x: round(r.x), width: round(r.width), top: round(r.top) },
-      text,
-      scroll: {
-        overflowY: getComputedStyle(sc).overflowY,
-        x: round(sr.x),
-        width: round(sr.width),
-      },
-      density: document.documentElement.getAttribute("data-density"),
-      rawMode: d.classList.contains("raw-mode"),
-    };
-  }, PARITY_PROPS as unknown as string[]);
-}
-
-async function setDensity(id: "comfy" | "compact") {
-  await chord("Comma");
-  /* Settings is a routed page now: the app carries `route-settings`, there is
-     no veil to wait on, and Esc does NOT leave it — Back does. */
-  await waitSettings(page, true);
-  await clickSettings(`#densitySeg button[data-v="${id}"]`);
-  await page.waitForFunction(
-    (want) => document.documentElement.getAttribute("data-density") === want,
-    { timeout: 5000 },
-    id
-  );
-  /* …and SAVE it. Appearance is a DRAFT until Save now, and `exitSettings`
-     deliberately reverts an unsaved preview on the way out — a picked density
-     that was never saved must not become the look of a page you are not on.
-     Clicking and leaving therefore lands back on comfy, which made every
-     "compact" measurement below a comfy one wearing a compact label. */
-  /* Save is inert when the pick matches what is already stored — re-picking
-     the current density is not a change, and a helper that insisted on a live
-     Save button would hang on the very first (comfy → comfy) call. */
-  await saveSettings(page);
-  await page.evaluate(() => history.back());
-  await waitSettings(page, false);
-  await sleep(500); // .doc transitions its padding on density change
-  /* the setting SURVIVED the exit — the assertion the old helper was missing */
-  const got = await page.evaluate(() => document.documentElement.getAttribute("data-density"));
-  expect(`density after leaving Settings: ${got}`).toBe(`density after leaving Settings: ${id}`);
-}
+/** the open doc's buffer — what ⌘S writes and SSE refreshes */
+const buffer = () =>
+  page.evaluate(async () => {
+    const { state } = await import("/state.js");
+    return state.docs.get(state.active).markdown as string;
+  });
 
 /* ---------------- tests ---------------- */
 
@@ -247,162 +124,15 @@ describe("e2e — navigation", () => {
   }, 20000);
 });
 
-describe("e2e — ⌘E and container parity", () => {
-  test("⌘E toggles Edit ↔ Source and Source shows the exact on-disk source", async () => {
-    expect(await mode()).toBe("preview");
-
-    await chord("KeyE");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
-    const raw = await page.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value);
-    expect(raw).toBe(readVaultText(srv.vault, NAV_DOC));
-    /* the mode control is the STATUSBAR chip now (it left the topbar); what it
-       must still say is which mode you are in, in `data-mode` and in words */
-    expect(await page.$eval("#stMode", (b) => b.getAttribute("data-mode"))).toBe("raw");
-    expect(await page.$eval("#stModeTxt", (b) => b.textContent)).toBe("Source");
-
-    await chord("KeyE");
-    await page.waitForFunction(() => !document.getElementById("doc")!.classList.contains("raw-mode"), {
-      timeout: 5000,
-    });
-    await page.waitForSelector(EDIT_BLOCK, { timeout: 20000 });
-    expect(await page.$("#rawArea")).toBe(null);
-    expect(await page.$eval("#stMode", (b) => b.getAttribute("data-mode"))).toBe("preview");
-    expect(await page.$eval("#stModeTxt", (b) => b.textContent)).toBe("Edit");
-    expect(await page.$eval("#doc h1", (h) => h.textContent)).toBe("Event pipeline");
-  }, 25000);
-
-  /* parity is owed across densities AND breakpoints. base.css overrides
-     .doc padding at <=1150px and again at <=767px, so a rule that
-     forgets one mode (or a mobile-only inset on the Raw editor) breaks parity
-     on every phone while a desktop-only measurement stays green.
-
-     One fixture per SHELL BAND (base.css §11), not per padding rule: the shell
-     now has four layouts, and `.doc` is a child of the middle one in all of
-     them, so a rule that reaches the document through `.app.chat-open` or
-     through a fixed-overlay sibling is only visible if each band is sampled.
-     900 was added with the band it belongs to — the 768–1023 drawer band is
-     the width the old layout got most wrong (a 172px document column at 768),
-     so it is the width a regression would most plausibly reappear at. */
-  const BREAKPOINTS: Array<[number, number]> = [
-    [1440, 900], // >=1280 — three panes, chat is a COLUMN
-    [1100, 900], // 1024–1279 — sidebar column, chat overlay; also the <=1150 padding rule
-    [900, 900], // 768–1023 — sidebar drawer, chat overlay
-    [720, 900], // <=767 — phone: drawer + bottom sheet
-    [420, 800], // narrow phone
-  ];
-
-  test("the doc container is style- and rect-identical across modes, in BOTH densities, at EVERY breakpoint", async () => {
-    const snap: Record<string, { preview: any; raw: any }> = {};
-
-    try {
-      for (const [width, height] of BREAKPOINTS) {
-        await page.setViewport({ width, height });
-        await sleep(220); // let the media query and any transition settle
-
-        for (const density of ["comfy", "compact"] as const) {
-          const at = `${width}x${height}/${density}`;
-          await setDensity(density);
-          await ensureMode("preview");
-          await sleep(120);
-          const preview = await measureDocContainer();
-          await ensureMode("raw");
-          await sleep(120);
-          const raw = await measureDocContainer();
-
-          expect(`${at} preview → ${preview.density}`).toBe(`${at} preview → ${density}`);
-          expect(`${at} raw → ${raw.density}`).toBe(`${at} raw → ${density}`);
-          expect(preview.rawMode).toBe(false);
-          expect(raw.rawMode).toBe(true);
-
-          /* the gate: only the text inside the container may change */
-          expect({ at, ...raw.style }).toEqual({ at, ...preview.style });
-          expect(raw.rect.x).toBeCloseTo(preview.rect.x, 1);
-          expect(raw.rect.width).toBeCloseTo(preview.rect.width, 1);
-          expect(raw.rect.top).toBeCloseTo(preview.rect.top, 1);
-          /* …and the text does not JUMP inside it: switching mode must not
-             move the first line of the document — "only the text changes",
-             the second clause */
-          expect(`${at} preview text origin: ${JSON.stringify(preview.text)}`).not.toBe(
-            `${at} preview text origin: null`
-          );
-          expect(`${at} raw text origin: ${JSON.stringify(raw.text)}`).not.toBe(`${at} raw text origin: null`);
-          expect(
-            `${at} ⌘E moves the text by dx=${(raw.text!.x - preview.text!.x).toFixed(2)} dy=${(
-              raw.text!.y - preview.text!.y
-            ).toFixed(2)}`
-          ).toBe(`${at} ⌘E moves the text by dx=0.00 dy=0.00`);
-          expect(raw.scroll).toEqual(preview.scroll);
-          expect(preview.scroll.overflowY).toBe("auto");
-
-          snap[at] = { preview, raw };
-          await ensureMode("preview");
-        }
-
-        /* per breakpoint above the mobile rule: the two densities really differ
-           here, so the equalities above are not comparing two constants.
-           (<=767px sets .doc padding outright, identically for both densities —
-           the breakpoint sensitivity below is what covers those widths.) */
-        if (width > 767) {
-          expect(`${width}px density-sensitive`).toBe(
-            `${width}px ${
-              snap[`${width}x${height}/compact`].preview.style.paddingTop !==
-              snap[`${width}x${height}/comfy`].preview.style.paddingTop
-                ? "density-sensitive"
-                : "density-BLIND"
-            }`
-          );
-        }
-      }
-
-      /* …and the breakpoints themselves really change the container, so looping
-         over them is not measuring the same layout five times.
-
-         THE CHAIN HAS TO REACH EVERY FIXTURE IT CLAIMS TO COVER. It used to
-         stop at 1440 ≠ 1100 ≠ 720, which says nothing about the 900 fixture —
-         and 900 is the one this file's own comment calls the width a
-         regression would most plausibly reappear at. Mutation-tested: rewriting
-         the 768–1023 band's condition to `min-width: 99999px` (deleting the
-         band outright, collapsing 900 onto the 1024–1279 layout) left this test
-         at 1 pass / 0 fail with an IDENTICAL expect() count. It now fails.
-
-         Two different measurements, because `.doc` padding is not a function of
-         the shell band: it steps at 1150 and 767 (base.css), which do not line
-         up with 1280/1024/768. So the SHELL is asserted where the shell moves
-         (`#scroll.x` — the sidebar is a column at 1100 and a fixed drawer at
-         900, and the column's width is a token, so under the mutation the two
-         read the same number), and the DOCUMENT where the document moves
-         (padding, which steps at 767 between 900 and 720).
-
-         420 is deliberately given no claim of its own: it is a SECOND SAMPLE of
-         the phone band, not a fifth band, and asserting it differs from 720
-         would be asserting a rule that does not and should not exist. */
-      const padAt = (w: number, h: number) => snap[`${w}x${h}/comfy`].preview.style.paddingLeft;
-      const shellAt = (w: number, h: number) => snap[`${w}x${h}/comfy`].preview.scroll.x;
-      expect(padAt(1440, 900)).not.toBe(padAt(1100, 900));
-      expect(padAt(1100, 900)).not.toBe(padAt(720, 900));
-      expect(`shell at 1100 vs 900: ${shellAt(1100, 900)} / ${shellAt(900, 900)}`).not.toBe(
-        `shell at 1100 vs 900: ${shellAt(1100, 900)} / ${shellAt(1100, 900)}`
-      );
-      expect(`doc padding at 900 vs 720: ${padAt(900, 900)} / ${padAt(720, 900)}`).not.toBe(
-        `doc padding at 900 vs 720: ${padAt(900, 900)} / ${padAt(900, 900)}`
-      );
-    } finally {
-      /* every later test drives the desktop layout — restore it even on failure */
-      await page.setViewport({ width: 1440, height: 900 });
-      await sleep(220);
-      await setDensity("comfy");
-    }
-  }, 180000);
-
+describe("e2e — layout", () => {
   /**
    * THE MEASURE FLOOR.
    *
-   * Parity above proves the two modes agree; it says nothing about whether what
-   * they agree on is READABLE. It was not: measured, the old shell put every
-   * width from 768px up into the three-pane grid with the assistant open, which
-   * gave a 768px window a 172px document column and ~120px of text — and since
-   * nothing remembered that you had closed the panel, every reload landed there
-   * again. 820px gave 224px, 1024px gave 428px.
+   * The document must stay READABLE at every width. It was not: measured, the
+   * old shell put every width from 768px up into the three-pane grid with the
+   * assistant open, which gave a 768px window a 172px document column and
+   * ~120px of text — and since nothing remembered that you had closed the
+   * panel, every reload landed there again. 820px gave 224px, 1024px gave 428px.
    *
    * The rule, stated in base.css §11 and asserted here: no PERSISTENT column may
    * take the document's measure below 520px (~45 characters), and where the
@@ -535,13 +265,11 @@ describe("e2e — ⌘E and container parity", () => {
   test("no focusable text field computes under 16px at 390px (iOS zoom-on-focus)", async () => {
     await page.setViewport({ width: 390, height: 844 });
     await sleep(320);
-    /* Raw mode so the editor exists, and the create-row so .newrow input does
-       — both are built by app.js and are absent from the shell. */
-    await setMode(page, "raw");
-    /* the sidebar is a drawer at this width, so the control is off-canvas —
-       .click() in-page is deliberate: the row only has to be MOUNTED for its
-       computed style to be readable, and hit-testing it is the drawer's gate,
-       not this one's */
+    /* the create-row, so .newrow input exists: app.js builds it, the shell
+       does not ship it. The sidebar is a drawer at this width, so the control
+       is off-canvas — .click() in-page is deliberate: the row only has to be
+       MOUNTED for its computed style to be readable, and hit-testing it is the
+       drawer's gate, not this one's */
     await page.evaluate(() => (document.querySelector('[data-act="new-doc"]') as HTMLElement | null)?.click());
     await sleep(240);
 
@@ -564,24 +292,11 @@ describe("e2e — ⌘E and container parity", () => {
         const n = document.querySelector(s) as HTMLElement | null;
         named[k] = n ? parseFloat(getComputedStyle(n).fontSize) : null;
       }
-      /* THE RAW EDITOR IS NOT A FIELD (ADR 0032). It is a contenteditable at
-         the document size, which is the whole point — a 16px floor on it was
-         the biggest Edit→Source size jump on a phone. So it is not swept and
-         not floored; what is asserted is that it is still editable. */
-      const raw = document.getElementById("rawArea");
-      return {
-        under,
-        named,
-        total: document.querySelectorAll(sel).length,
-        rawEditable: !!raw && raw.isContentEditable,
-        rawIsField: !!raw && raw.matches(sel),
-      };
+      return { under, named, total: document.querySelectorAll(sel).length };
     });
 
     console.log(`    iOS zoom floor: ${probe.total} fields swept · named ${JSON.stringify(probe.named)}`);
     expect(`fields under 16px: ${probe.under.join(", ") || "none"}`).toBe("fields under 16px: none");
-    expect(`the Raw editor is editable: ${probe.rawEditable}`).toBe("the Raw editor is editable: true");
-    expect(`…and is not a form field: ${!probe.rawIsField}`).toBe("…and is not a form field: true");
     /* and the three the checklist names were really present to be measured */
     for (const k of [".composer", ".inp", ".term-in"]) {
       expect(`${k} computed: ${probe.named[k] === null ? "NOT MOUNTED" : probe.named[k] + "px"}`).toBe(
@@ -603,21 +318,20 @@ describe("e2e — ⌘E and container parity", () => {
     );
 
     await page.keyboard.press("Escape");
-    await setMode(page, "preview");
     await sleep(200);
   }, 90000);
 });
 
 describe("e2e — editing", () => {
-  test("typing in Raw then ⌘S persists the exact bytes to disk", async () => {
+  test("typing in Edit then ⌘S persists the buffer's exact bytes to disk", async () => {
     await page.click(`#tree .row.file[data-doc="${NAV_DOC}"]`);
     await page.waitForFunction(
       (p) => document.getElementById("stPath")!.textContent === p,
       { timeout: 5000 },
       NAV_DOC
     );
-    await ensureMode("raw");
-    await page.waitForSelector("#rawArea", { timeout: 5000 });
+    const paragraph = '#doc .bn-editor [data-content-type="paragraph"]';
+    await page.waitForSelector(paragraph, { timeout: 20000 });
 
     /* THE TOPBAR MARK (ADR 0012) is up only while it has news, so its whole
        contract is readable at the three moments this test already passes
@@ -639,12 +353,9 @@ describe("e2e — editing", () => {
     );
 
     const marker = "TYPED-BY-E2E-" + Date.now();
-    await page.evaluate(() => {
-      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-      ta.focus();
-      ta.setSelectionRange(ta.value.length, ta.value.length);
-    });
-    await page.keyboard.type(`\n${marker}\n`);
+    await page.click(paragraph);
+    await page.keyboard.press("End");
+    await page.keyboard.type(` ${marker}`);
 
     await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Unsaved changes", {
       timeout: 5000,
@@ -673,9 +384,7 @@ describe("e2e — editing", () => {
       { timeout: 8000, label: "⌘S to reach disk" }
     );
 
-    const inBuffer = await page.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value);
-    expect(onDisk).toBe(inBuffer);
-    expect(onDisk).toContain(`\n${marker}\n`);
+    expect(onDisk).toBe(await buffer());
 
     /* the server agrees with disk */
     const api = await srv.doc(NAV_DOC);
@@ -690,13 +399,12 @@ describe("e2e — editing", () => {
   }, 40000);
 
   test("an external file edit reaches the UI over SSE while the buffer is clean", async () => {
-    /* clean FIRST, then the mode: ⌘E on a dirty buffer is a guarded exit, not
-       a mode switch */
+    /* the save above must have landed: over a dirty buffer an external edit is
+       a conflict, not a refresh */
     await page.waitForFunction(
       () => document.getElementById("saveTxt")!.textContent !== "Unsaved changes",
       { timeout: 8000 }
     );
-    await ensureMode("preview");
 
     const marker = "EXTERNAL-EDIT-" + Date.now();
     const next = `# Event pipeline\n\nRewritten by vim.\n\n${marker}\n`;
@@ -713,11 +421,8 @@ describe("e2e — editing", () => {
     expect(shown).toContain("Rewritten by vim.");
     expect(shown).not.toContain("TYPED-BY-E2E-");
 
-    /* and switching to Raw shows the new source verbatim */
-    await ensureMode("raw");
-    const raw = await page.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value);
-    expect(raw).toBe(next);
-    await ensureMode("preview");
+    /* and the buffer holds the new source verbatim */
+    expect(await buffer()).toBe(next);
   }, 30000);
 });
 

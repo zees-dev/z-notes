@@ -12,7 +12,7 @@ import { state } from "./state.js";
 import { $, $$, apiFail, cap, el, esc, toast } from "./ui.js";
 import { confirmDialog } from "./dialogs.js";
 import { refreshTrash } from "./trash.js";
-import { autoGrow, guardRawExit, openDoc, syncRaw } from "./editor.js";
+import { guardExit, openDoc } from "./editor.js";
 import { applyLockPolicy, clearKeyFields, clearTerminalSecretFields, initSecrets, paintVaultKey } from "./secrets.js";
 import { updateSessionUI } from "./chat.js";
 import { SETTINGS_SECTIONS, app, canPopBack, closeNav, homeTarget, isDrawer, isTriPane, paintHome, paintSync, routeSettings, syncNow, toggleChat } from "./shell.js";
@@ -67,8 +67,6 @@ export function applyDensity(id, { cache = true } = {}) {
   /* cache:false while PREVIEWING an unsaved pick — see applyLook() */
   if (cache) cacheLook("density", id);
   markSeg($("#densitySeg"), id);
-  const ta = $("#rawArea");
-  if (ta) autoGrow(ta);
 }
 
 /* ---------- colour scheme ----------
@@ -908,11 +906,11 @@ export async function checkAiEndpoint() {
  */
 export function openSettings(section) {
   /* Settings is a NAVIGATION, so it leaves the document behind exactly as a
-     tree click does — and an unsaved Raw buffer gets the same question.
+     tree click does — and an unsaved buffer gets the same question.
      `showSettings` is deliberately NOT guarded: boot and popstate paint the
      page from an entry that already exists, and a dialog in front of either
      would be arguing with the address bar. */
-  if (!guardRawExit(() => showSettings(section, {}))) return;
+  if (!guardExit(() => showSettings(section, {}))) return;
   showSettings(section, {});
 }
 
@@ -927,9 +925,6 @@ export function openSettings(section) {
 export function showSettings(section, opts) {
   const o = opts || {};
   const sec = SETTINGS_SECTIONS.includes(String(section || "")) ? String(section) : "";
-  /* the doc keeps its unsaved text either way, but the buffer must reach
-     `state.docs` before the textarea leaves the DOM */
-  if (state.view !== "settings") syncRaw();
   state.view = "settings";
   state.settingsSection = sec;
   app.classList.add("route-settings");
@@ -1012,7 +1007,7 @@ function paintSettingsRoute() {
 
 /**
  * THE GATE ON LEAVING WITH AN UNSAVED DRAFT — the settings twin of
- * `guardRawExit`, and read the same way: `true` ⇒ the caller may leave now;
+ * `guardExit`, and read the same way: `true` ⇒ the caller may leave now;
  * `false` ⇒ this dialog took over and will run `proceed` itself if the user
  * says so.
  *
@@ -1037,7 +1032,7 @@ function paintSettingsRoute() {
 export function guardSettingsExit(proceed) {
   if (state.view !== "settings") return true;
   /* already asking — a second trigger must not stack a second copy or replace
-     the pending destination (the rule `guardRawExit` keeps with `exitGuard`) */
+     the pending destination (the rule `guardExit` keeps with `exitGuard`) */
   if (state.settingsGuard) return false;
   /* BEFORE the dirty test, not after: a number the caret is still sitting in
      has not fired `change` yet, so it is not in the draft yet, so an early
@@ -1111,10 +1106,6 @@ export function exitSettings() {
   state.settingsSection = "";
   app.classList.remove("route-settings");
   paintSettingsRoute();
-  /* the pane is showing the doc again; a raw buffer that was mid-edit when
-     Settings took over must be re-measured for the textarea's height */
-  const ta = $("#rawArea");
-  if (ta) autoGrow(ta);
 }
 
 /**
@@ -1467,15 +1458,8 @@ function applySavedSettings(paths) {
   applyLook(paths.filter((p) => LOOK_PATHS.indexOf(p) >= 0), { preview: false });
   applyLockPolicy(); // the crypto worker's idle / hidden / session clocks
   paintHome(); // editor.homeDoc — the vault button's target and title
-  if (paths.indexOf("editor.tabSize") >= 0) {
-    const width = String(settingAt("editor.tabSize"));
-    const ta = $("#rawArea");
-    /* BOTH modes: the container is what Edit's `pre-wrap` blocks inherit
-       their tab width from (renderDoc), the editor element what Source
-       uses (renderRaw). */
-    for (const el of [$("#doc"), ta]) if (el) el.style.tabSize = width;
-    if (ta) autoGrow(ta);
-  }
+  // the container Edit's code blocks inherit their tab width from (renderDoc)
+  if (paths.indexOf("editor.tabSize") >= 0) $("#doc").style.tabSize = String(settingAt("editor.tabSize"));
   if (state.session) {
     state.session.effort = s.ai.effort;
     state.session.model = s.ai.model;

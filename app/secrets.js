@@ -14,7 +14,8 @@ import * as api from "./api.js";
 import { dedentArmor, indentArmor, isArmorShape } from "./armor.js";
 import { state } from "./state.js";
 import { $, $$, I, activeDoc, el, esc, toast } from "./ui.js";
-import { autoGrow, markDirty, replaceVisualSecret, saveDoc, syncModeUI, syncRawFromModel, updateMeta, viewedPath } from "./editor.js";
+import { confirmDialog } from "./dialogs.js";
+import { autoGrow, insertVisualSecret, markDirty, replaceVisualSecret, saveDoc, updateMeta, viewedPath } from "./editor.js";
 import { settingAt } from "./settings.js";
 
 /* ============================================================
@@ -79,10 +80,10 @@ function disableSecrets(reason) {
     vault.worker = null;
   }
   console.warn("[z-notes] secrets disabled:", reason);
-  /* the toolbar's encrypt affordance is part of "disabled" too — a live button
+  /* the toolbar's New secret button is part of "disabled" too — a live button
      that can only produce an error toast is the dead-button failure mode the
      block rendering was carefully built to avoid */
-  syncModeUI();
+  $("#encBtn").hidden = true;
   return vault;
 }
 
@@ -277,7 +278,6 @@ async function onVaultLocked(reason) {
 }
 
 export function repaintSecretsUI() {
-  if (state.mode !== "preview") return;
   $$("#doc .secret").forEach((w) => {
     if (w.zSecret) repaintSecret(w);
   });
@@ -366,7 +366,7 @@ export function paintVaultKey() {
     st === "disabled"
       ? "Secrets are unavailable here — " + (vault.reason || "no secure context.")
       : st === "none"
-      ? "No vault key yet. Encrypt a selection (⌃⇧E) to create one."
+      ? "No vault key yet. Add a new secret (⌘⇧E) to create one."
       : st === "repair"
       ? ".znotes/identity.age is present but .znotes/vault.pub is missing — unlock once to rebuild it."
       : st === "orphan"
@@ -761,9 +761,9 @@ function rekeyReveals(path) {
   for (const e of ents) state.reveal.set(revealKey(path, e.armor, e.ord), e);
 }
 
-/* ---------- block identity across the two surfaces ----------
+/* ---------- block identity across mounts ----------
 
-   A reveal is keyed by (path, armor, ord). In Source the ord is the SOURCE
+   A reveal is keyed by (path, armor, ord). Unmounted, the ord is the SOURCE
    OCCURRENCE NUMBER of that ciphertext; while the island is mounted it is the
    block's stable island ID (a string), which is the only identifier that follows
    a dragged block and tells two identical ciphertexts apart. `bindSecretIds`
@@ -889,8 +889,8 @@ export async function flushSecretEdits(doc, entries) {
       }
       const at = replaceArmorInDoc(doc, prev, next, prevOrd);
       if (at < 0) {
-        /* The block is simply GONE from the document — deleted in Source, replaced
-           by a proposal, overwritten from disk. That is an ordinary thing to do,
+        /* The block is simply GONE from the document — deleted, replaced by a
+           proposal, overwritten from disk. That is an ordinary thing to do,
            and the old behaviour (throw, and let saveDoc swallow it) wedged every
            subsequent save of this doc for the rest of the session and then lost
            the buffer on the next navigation. Drop the orphan and keep going. */
@@ -933,12 +933,9 @@ export async function flushSecretEdits(doc, entries) {
     for (const e of dirty) flushingSecrets.delete(e);
   }
   updateMeta();
-  /* the model moved under the Source textarea — push it back, or the next
-     syncRaw() writes the pre-flush armor over what was just saved */
-  syncRawFromModel(doc);
 }
 
-/* ---------- encrypt a selection (works while LOCKED) ---------- */
+/* ---------- a new secret (works while LOCKED) ---------- */
 
 /**
  * Re-read `.znotes/vault.pub` and refuse to encrypt to a recipient that has
@@ -977,7 +974,13 @@ async function recipientDrifted() {
   return true;
 }
 
-export async function encryptSelection() {
+/**
+ * Ask for the plaintext, encrypt it to the vault recipient and insert it as a
+ * secret block at the island's cursor. The text exists only in the dialog's
+ * field, which dialogs.js empties however the dialog closes; the island's
+ * `onChange` takes the new block into the buffer.
+ */
+export async function newSecret() {
   await initSecrets();
   if (vault.state === "disabled") return toast(vault.reason);
   if (vault.state === "none") return askCreate();
@@ -990,36 +993,29 @@ export async function encryptSelection() {
        the keyring, which is also what makes encryption possible again */
     if (!(await ensureUnlocked())) return;
   }
-  if (state.mode !== "raw") return toast("Switch to Source (⌘E) to encrypt a selection");
-  const ta = $("#rawArea");
-  const doc = activeDoc();
-  if (!ta || !doc) return;
-  let from = ta.selectionStart;
-  let to = ta.selectionEnd;
-  if (from === to) return toast("Select the text to encrypt first");
-  /* expand to whole lines: the fence must start at column 0 (research §4.1) */
-  const v = ta.value;
-  while (from > 0 && v[from - 1] !== "\n") from--;
-  while (to < v.length && v[to] !== "\n") to++;
-  const plain = v.slice(from, to);
-  if (!plain.trim()) return toast("Select the text to encrypt first");
   if (await recipientDrifted()) return;
-  try {
-    const r = await secretsCall("encrypt", { plaintext: plain });
-    const fence = "```age\n" + indentArmor(r.armor, "") + "\n```";
-    ta.value = v.slice(0, from) + fence + v.slice(to);
-    doc.markdown = ta.value;
-    ta.selectionStart = ta.selectionEnd = from + fence.length;
-    autoGrow(ta);
-    markDirty();
-    updateMeta();
-    /* the WHOLE recipient, never a prefix: a substituted key differs somewhere,
-       and a 16-character prefix is exactly where a swap hides */
-    const to_ = r.recipient || vault.recipient || "the vault key";
-    toast(r.verified ? "Encrypted to verified key " + to_ : "Encrypted to " + to_ + " (unverified — unlock the vault to confirm it)");
-  } catch (err) {
-    toast(err.message || "Encryption failed");
-  }
+  const doc = activeDoc();
+  if (!doc || state.view !== "doc" || !$("#doc .bn-container")) return;
+  confirmDialog({
+    title: "New secret",
+    path: doc.path,
+    field: "Text to encrypt",
+    ok: "Encrypt",
+    danger: false,
+    async onOk(plaintext) {
+      if (!plaintext.trim()) return;
+      try {
+        const r = await secretsCall("encrypt", { plaintext });
+        if (!insertVisualSecret(doc.path, indentArmor(r.armor, ""))) return toast("A secret cannot go here — move the caret and try again");
+        /* the WHOLE recipient, never a prefix: a substituted key differs somewhere,
+           and a 16-character prefix is exactly where a swap hides */
+        const to = r.recipient || vault.recipient || "the vault key";
+        toast(r.verified ? "Encrypted to verified key " + to : "Encrypted to " + to + " (unverified — unlock the vault to confirm it)");
+      } catch (err) {
+        toast(err.message || "Encryption failed");
+      }
+    },
+  });
 }
 
 /* ---------- secret block ----------
@@ -1058,9 +1054,9 @@ const revealKey = (path, armor, ord) => path + "\0" + (ord || 0) + "\0" + armor;
 const secretFailures = new Map();
 
 /* Decrypts IN FLIGHT, keyed exactly the way `state.reveal` is. Every render
-   path asks for a reveal (renderDoc, repaintSecret, an SSE reconcile, ⌘E back
-   into Edit), so the ask has to be idempotent: one worker round trip per
-   block, no matter how many times the block is painted while it is running. */
+   path asks for a reveal (renderDoc, repaintSecret, an SSE reconcile), so the
+   ask has to be idempotent: one worker round trip per block, no matter how
+   many times the block is painted while it is running. */
 const revealing = new Set();
 
 /* Bumped by every lock. A decrypt started before the lock cannot be recalled —
@@ -1095,8 +1091,7 @@ const MASK_CELLS = 14;
  * base64 in the middle of a document READ as an exposed secret, whatever the
  * badge above them said, and a disclosure spanning the doc width is one stray
  * click from the same wall. So the block shows nothing of itself at all — no
- * armor, no header line, no byte or line count. Source mode (⌘E) is the honest
- * way to see the source, and it is the only one.
+ * armor, no header line, no byte or line count.
  *
  * There are no text nodes in here, so neither `innerText` nor `textContent`
  * can carry a byte of the block, and it is `aria-hidden` because it says
@@ -1105,7 +1100,7 @@ const MASK_CELLS = 14;
 function maskedBody(pending) {
   const m = el("div", "secret-mask" + (pending ? " pending" : ""));
   m.setAttribute("aria-hidden", "true");
-  m.title = pending ? "Decrypting…" : "Ciphertext hidden — press ⌘E for Source";
+  m.title = pending ? "Decrypting…" : "Ciphertext hidden";
   for (let i = 0; i < MASK_CELLS; i++) m.appendChild(el("i"));
   return m;
 }
@@ -1272,7 +1267,7 @@ export function secretEl(docPath, armor, indent, ord) {
       secretNote(
         "This ```age fence does not contain age armor, so nothing here is encrypted — " +
           "the text above is stored, committed and pushed exactly as you see it. " +
-          "Encrypt it with ⌘⇧E in Source mode, or remove the fence."
+          "Remove the fence, and add the text as a new secret (⌘⇧E) instead."
       )
     );
   } else {

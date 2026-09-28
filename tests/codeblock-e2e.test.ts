@@ -17,8 +17,7 @@
        scroll to, in any theme, at either density, at desktop and phone widths.
      · FIDELITY — wrapping is a rendering choice and may not cost a byte. The
        block's `textContent` is still the source verbatim (tabs, leading spaces
-       and every newline), Copy puts exactly those bytes on the clipboard, and
-       Source is still the file.
+       and every newline), and Copy puts exactly those bytes on the clipboard.
      · DENSITY — Compact must be genuinely tighter than Comfy, in every theme.
        This nearly died once: base.css was retuned while minimal.css and
        terminal.css still overrode the code tokens with the old values, which
@@ -33,7 +32,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { type Browser, type Page } from "puppeteer-core";
 import { sleep, startServer, type SeedMap, type TestServer } from "./helpers";
 import { reply, startMockUpstream, type MockUpstream } from "./mock-upstream";
-import { ensureMode, launchTestBrowser, newAppPage, waitForApp } from "./browser";
+import { launchTestBrowser, newAppPage, waitForApp } from "./browser";
 
 const THEMES = ["minimal", "modern", "terminal"] as const;
 type Theme = (typeof THEMES)[number];
@@ -252,29 +251,6 @@ describe("wrapping is a rendering choice and does not touch the source", () => {
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(WRAP_SRC);
     /* copying is a read: the file must not have moved */
     expect((await srv.doc(WRAP_DOC)).body.markdown).toBe(SEED[WRAP_DOC]);
-  }, 90000);
-
-  test("Raw mode is untouched — the fence is still the bytes on disk", async () => {
-    await bootAs("minimal", "comfy", WRAP_DOC);
-    await ensureMode(page, "raw");
-    await page.waitForSelector("#rawArea", { timeout: 8000 });
-
-    const raw = await page.$eval("#rawArea", (n) => (n as HTMLTextAreaElement).value);
-    const onDisk = (await srv.doc(WRAP_DOC)).body.markdown;
-    expect(`the raw buffer is the file: ${raw === onDisk}`).toBe("the raw buffer is the file: true");
-    expect(`the raw buffer still carries the long line: ${raw.includes(LONG_LINE)}`).toBe(
-      "the raw buffer still carries the long line: true"
-    );
-    /* Source is the byte-faithful surface and answers to a different rule than
-       Edit: it may scroll, and its wrapping is not this change's business. What
-       must hold is that the source came through it unaltered. */
-    expect(`the tab is still a tab in Raw: ${raw.includes("\tconst tabbed")}`).toBe(
-      "the tab is still a tab in Raw: true"
-    );
-    /* …and back in Edit, still verbatim */
-    await ensureMode(page, "preview");
-    await page.waitForSelector(CODE, { timeout: 25000 });
-    expect((await measureCode()).text).toBe(WRAP_SRC);
   }, 90000);
 });
 

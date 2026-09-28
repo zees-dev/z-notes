@@ -13,7 +13,7 @@ import { $, $$, apiFail, dirname, toast, vaultOf, withDefaultExtension } from ".
 import { adoptVaultSync, closeCtx, loadTree, renderTree, revealFolder } from "./tree.js";
 import { closeConfirm, closeConflict, confirmDialog } from "./dialogs.js";
 import { adoptTrash, refreshTrash } from "./trash.js";
-import { closeExitGuard, destroyEditor, guardRawExit, markDirty, navGate, openDoc, rawExitDiff, renderDoc, saveDoc, setBaseline, setMode, syncRaw, viewedPath } from "./editor.js";
+import { closeExitGuard, commitVisualDrafts, destroyEditor, exitDiff, guardExit, markDirty, navGate, openDoc, renderDoc, saveDoc, setBaseline, viewedPath } from "./editor.js";
 import { closePP, retargetSecrets } from "./secrets.js";
 import { closeEffort, closePal, renderChat, updateSessionUI } from "./chat.js";
 import { adoptSettings, cacheLook, commitFocusedNumber, exitSettings, guardSettingsExit, paintAiStatus, paintGitRemote, paintVaults, settingAt, settingsDirty, showSettings } from "./settings.js";
@@ -377,9 +377,11 @@ export function connect() {
             /* The SAME doc object is retargeted, never a copy: the mounted
                editor's callbacks, the pending autosave and any in-flight save
                all hold it, and a clean buffer can still take typing while the
-               tree request below is on the wire. */
-            destroyEditor(); // visual secret ids are released against the OLD path
+               tree request below is on the wire. A draft joins the buffer, as a
+               step recorded under the NEW path. */
             state.docs.set(d.to, Object.assign(cached, { path: d.to, name: d.to.split("/").pop() }));
+            commitVisualDrafts();
+            destroyEditor(); // visual secret ids are released against the OLD path
             retargetSecrets(d.path, d.to);
             state.active = d.to;
             /* the one place a re-home cannot go through openDoc, so the URL and
@@ -529,7 +531,6 @@ async function resyncAfterGap() {
    outlive its document; api.js already drops it for a body over the budget.) */
 export function flushBuffer(opts) {
   if (!state.dirty || !state.active) return;
-  syncRaw();
   const leaving = !!(opts && opts.leaving);
   saveDoc(state.active, { silent: true, quiet: leaving, keepalive: leaving });
 }
@@ -613,8 +614,7 @@ const FOCUSABLE =
  * accepting characters, which is exactly the moment a user retypes the whole
  * passphrase — into a server-bound URL. The rule: plaintext never in any
  * server-bound request. The CSS now makes hidden veils untabbable as well;
- * this keeps focus off the DOCUMENT (`#rawArea` is a textarea that gets saved
- * to disk and pushed to git).
+ * this keeps focus off the DOCUMENT, which is saved to disk and pushed to git.
  */
 export function trapTab(e) {
   /* the palette drives its own Tab (it moves the result cursor) — never fight
@@ -669,24 +669,6 @@ export function dismissTop() {
     renderTree();
     return true;
   }
-  /**
-   * THE EDITOR LAYER — Esc leaves Source for Edit, and blurring is not enough:
-   * a bare blur is a state nothing else in the app can see (the chip still read
-   * "Source", the caret was simply gone, and the next Esc closed the chat panel).
-   *
-   * With a buffer that does not match the file, `setMode` stops at the exit
-   * guard instead and this Esc raises the diff. Either way Esc is consumed here,
-   * so the layers below (the drawer, the chat panel) do not also get it.
-   *
-   * Scoped to focus that BELONGS to Source. Esc with the caret in a sidebar
-   * filter, the terminal line or a settings field is that surface's Esc.
-   */
-  const ta = $("#rawArea");
-  const at = document.activeElement;
-  if (ta && state.view !== "settings" && state.mode === "raw" && (at === ta || at === document.body || at === null)) {
-    setMode("preview", { silent: true });
-    return true;
-  }
   if (isDrawer() && app.classList.contains("nav-open")) {
     closeNav();
     return true;
@@ -694,8 +676,8 @@ export function dismissTop() {
   /**
    * THE BOTTOM LAYER: the chat panel, at every width (it used to be dismissed
    * only in the mobile sheet). Deliberately last, so every rule above still
-   * holds — a modal, the palette, the context menu, the session popover, an
-   * inline tree editor and Source-to-Edit each take Esc first, and only
+   * holds — a modal, the palette, the context menu, the session popover and an
+   * inline tree editor each take Esc first, and only
    * once nothing else is up does Esc close the panel.
    *
    * The DRAFT IS NEVER LOST. `toggleChat` collapses a grid column above
@@ -737,10 +719,7 @@ export function dismissTop() {
 
    The server answers both prefixes with the SPA shell.
 
-   MODE (preview ⇄ raw) is deliberately NOT in the URL and creates no entry: it
-   is how you are looking at the doc, not which doc you are looking at. Five
-   ⌘E presses then Back must land on the previous DOC. A settings SECTION is
-   the same kind of thing one level down — it is where you are on a page, so it
+   A settings SECTION is where you are on a page, not which page, so it
    REPLACES the entry: six rail clicks then Back leaves Settings, it does not
    walk you back through six scroll positions.
 
@@ -1006,14 +985,11 @@ function pushLayerMarker() {
  * spent marker (recycled by `routeDoc`, skipped by `onPop`, never stacked
  * twice) covers this one for free.
  *
- * Three callers OPEN a layer, each width-scoped by the layer it belongs to:
- * `openNav` below W_DOCK, `toggleChat` below W_TRIPANE, and `setMode("raw")`
- * below W_SHEET. Mode is
- * still not a history entry and still not in the URL (see the ROUTING header) —
- * this marker names no place and rewrites no address; it is a Back press held
- * in reserve.
+ * Two callers OPEN a layer, each width-scoped by the layer it belongs to:
+ * `openNav` below W_DOCK and `toggleChat` below W_TRIPANE. The marker names no
+ * place and rewrites no address; it is a Back press held in reserve.
  *
- * The third caller opens nothing and HEALS instead: `onPop`'s dismissal branch,
+ * A third caller opens nothing and HEALS instead: `onPop`'s dismissal branch,
  * which is the one place a layer can lose its marker without closing. A modal
  * over the sheet pushes its own marker, that push truncates the sheet's, and
  * dismissing the modal walks down onto the entry the sheet used to be standing
@@ -1025,7 +1001,7 @@ function pushLayerMarker() {
  * already works, and a marker per open/close cycle would make Back walk back
  * through a list of gestures instead of a list of places.
  */
-export function markerForLayer() {
+function markerForLayer() {
   if (!layered()) return; // nothing to spend it on — see `retireLayerMarker`
   const cur = history.state || {};
   if (cur.z === "veil" || canPopBack(cur)) return;
@@ -1040,16 +1016,11 @@ export function markerForLayer() {
    `z === "veil"` half of the same test. */
 let reserveI = 0;
 
-/** Is anything still lying over the document? The four things Back unwinds
-    below the veils, at the widths where each of them is a LAYER rather than
-    part of the layout — the same conditions the `onPop` branches use. */
+/** Is anything still lying over the document? A veil, and the two panels Back
+    unwinds below the veils, at the widths where each of them is a LAYER rather
+    than part of the layout — the same conditions the `onPop` branches use. */
 function layered() {
-  return (
-    VEILS.some(isOpen) ||
-    (isDrawer() && app.classList.contains("nav-open")) ||
-    (!isTriPane() && app.classList.contains("chat-open")) ||
-    (isSheet() && state.mode === "raw")
-  );
+  return VEILS.some(isOpen) || (isDrawer() && app.classList.contains("nav-open")) || (!isTriPane() && app.classList.contains("chat-open"));
 }
 
 /**
@@ -1071,7 +1042,7 @@ function layered() {
  * a tap on the document, Esc. Whichever gesture actually spends the layer, the
  * press held in reserve for it is no longer owed.
  */
-export function retireLayerMarker() {
+function retireLayerMarker() {
   if (!reserveI) return;
   if (layered()) return; // something else is still up and still owes a press
   const cur = history.state || {};
@@ -1103,7 +1074,7 @@ export function retireLayerMarker() {
  * TRUNCATES everything ahead of it: raising the dialog first would destroy the
  * forward entry the very next line was about to spend.
  *
- * Five things use it, in the order Back unwinds them (below the veils, which
+ * Four things use it, in the order Back unwinds them (below the veils, which
  * `dismissTop` already owns):
  *
  *   1. an unsaved SETTINGS draft — ask before the page goes;
@@ -1111,10 +1082,7 @@ export function retireLayerMarker() {
  *      it navigates away from the current doc;
  *   3. the ASSISTANT, while it is an overlay — a layer over the document is
  *      dismissed by Back before the document itself is;
- *   4. SOURCE mode on a phone — Back leaves the source one press before it
- *      leaves the note, because a phone has no ⌘E and the statusbar chip is a
- *      30px target;
- *   5. an unsaved buffer at every other width — the unsaved-work exit guard.
+ *   4. an unsaved buffer — the unsaved-work exit guard.
  */
 let popHold = null;
 function holdPop(after, wasBack) {
@@ -1183,8 +1151,8 @@ export function onPop(e) {
     }
   }
   /** THE SIDEBAR, while it is an off-canvas drawer. It is the most modal panel
-   * over the doc — it owns the scrim — so Back closes it before the assistant,
-   * Source mode or the current place gets a chance to consume the press. */
+   * over the doc — it owns the scrim — so Back closes it before the assistant
+   * or the current place gets a chance to consume the press. */
   if (back && !VEILS.some(isOpen) && isDrawer() && app.classList.contains("nav-open")) {
     holdPop(closeNav);
     return;
@@ -1204,24 +1172,7 @@ export function onPop(e) {
     return;
   }
   /**
-   * SOURCE → EDIT, on a phone, before Back means anything else.
-   *
-   * W_SHEET and not W_DOCK, because this is about the ways OUT of Source that a
-   * phone actually has: there is no ⌘E without a keyboard and `#stMode` is the
-   * 30px statusbar chip. Back is the one gesture a phone has plenty of — so it
-   * spends the Source layer first and leaves the note second.
-   *
-   * `setMode` carries its own unsaved-work guard, so a DIRTY buffer still raises
-   * the staged-diff dialog here; Save and Discard both land in Edit instead of
-   * on the previous page, which is what the press asked for.
-   */
-  if (back && !VEILS.some(isOpen) && isSheet() && state.view !== "settings" && state.mode === "raw") {
-    holdPop(() => setMode("preview", { silent: true }));
-    return;
-  }
-  /**
-   * BROWSER BACK OUT OF A DIRTY BUFFER, in either mode (`rawExitDiff` answers
-   * for Edit too).
+   * BROWSER BACK OUT OF A DIRTY BUFFER.
    *
    * Only BACK, and only when the traversal really leaves: a pop that lands on
    * the entry directly under a marker with nothing below it changes nothing on
@@ -1234,8 +1185,8 @@ export function onPop(e) {
    * this dialog open keeps editing, exactly as Esc does.
    */
   const noop = st.z === "doc" && st.path === viewedPath() && !canPopBack(st);
-  if (back && !noop && !VEILS.some(isOpen) && rawExitDiff()) {
-    holdPop(() => guardRawExit(() => history.back()));
+  if (back && !noop && !VEILS.some(isOpen) && exitDiff()) {
+    holdPop(() => guardExit(() => history.back()));
     return;
   }
   histAt = st.i || 0;
@@ -1582,34 +1533,19 @@ export function syncScrim() {
  * and a clean no-op where the API is absent (it is not in the headless shell,
  * where the overlap is 0 in any case).
  *
- * `--kb` is the overlap and belongs on the SHARED `.doc` container and on the
- * chat panel — never on #rawArea. A mobile-only inset on the source textarea is
- * precisely the mode-parity break the acceptance gates exist to catch, and they
- * could not catch this one: headless there is no keyboard, so `--kb` is always 0.
- *
- * `--visual-bottom` is the visible bottom edge in layout coordinates, which the
- * Edit toolbar docks on directly — it must not be derived from the overlap,
- * because a scrolled visual viewport moves the edge without changing the inset.
+ * `--kb` is the overlap, which the `.doc` container and the chat panel make
+ * room for. `--visual-bottom` is the visible bottom edge in layout coordinates,
+ * which the Edit toolbar docks on directly — it must not be derived from the
+ * overlap, because a scrolled visual viewport moves the edge without changing
+ * the inset.
  */
-export function wireVisualViewport(onChange) {
+export function wireVisualViewport() {
   const vv = window.visualViewport;
   if (!vv) return;
   const publish = () => {
     const bottom = vv.height + vv.offsetTop;
-    const kb = Math.round(Math.max(0, window.innerHeight - bottom));
-    document.documentElement.style.setProperty("--kb", kb + "px");
+    document.documentElement.style.setProperty("--kb", Math.round(Math.max(0, window.innerHeight - bottom)) + "px");
     document.documentElement.style.setProperty("--visual-bottom", bottom + "px");
-    /* …and the same fact as a class, because a stylesheet cannot ask how long a
-       length is. This is the only place in the app that can say "a soft
-       keyboard is up", and the editing bar (ADR 0034) is drawn on it.
-
-       60px, not "anything at all": a soft keyboard is never under ~60px tall,
-       a URL-bar animation's sub-pixel wobble always is, and an iPad's shortcut
-       strip over a hardware keyboard (~55px) is a place where Tab already
-       works. Below the floor the bar would stand over the statusbar with no
-       keyboard under it. */
-    app.classList.toggle("kb-up", kb >= 60);
-    if (onChange) onChange();
   };
   vv.addEventListener("resize", publish);
   vv.addEventListener("scroll", publish);

@@ -12,7 +12,7 @@ import { state } from "./state.js";
 import { $, $$, I, apiFail, dirname, dragHasFiles, el, esc, normTarget, relOf, syncDotClass, toast, vaultOf, vaultPrefix, vaultRootKey, withDefaultExtension } from "./ui.js";
 import { confirmDialog } from "./dialogs.js";
 import { refreshTrash, trashRetentionNote } from "./trash.js";
-import { flushTextRun, guardRawExit, navGate, openDoc, saveDoc, setMode } from "./editor.js";
+import { guardExit, navGate, openDoc, saveDoc } from "./editor.js";
 import { app, isDrawer, openNav, revealInTree } from "./shell.js";
 import { recordHistory } from "./history.js";
 
@@ -444,7 +444,7 @@ async function uploadFiles(files, dirs, folder) {
     }
     /* the same timeline entry an inline create makes, so ⌘Z asks before
        deleting it exactly as it does there (ADR 0014) */
-    rememberFileOp({ kind: "create", path, type: "doc", markdown });
+    recordHistory({ kind: "create", path, type: "doc", markdown });
     made.push(path);
   }
   if (made.length) {
@@ -1048,22 +1048,19 @@ export function startCreate(kind, where) {
  * open the folder it landed in, reload the tree. The inline row, a broken
  * `[[link]]` and a tool call all come through here and keep their own chrome:
  * the row answers a refusal in its error line, a tool answers with data, and
- * neither wants the other's toast. `open` opens a new doc in Raw, which every
- * human create route does.
+ * neither wants the other's toast. `open` opens a new doc with the caret in it,
+ * which every human create route does.
  */
 export async function mintEntry({ path, kind, markdown }, { open } = {}) {
   const type = kind === "folder" ? "folder" : "doc";
   const text = type === "folder" ? "" : String(markdown == null ? "" : markdown);
   const r = await api.createEntry({ path, type, markdown: text });
-  rememberFileOp({ kind: "create", path, type, markdown: text });
+  recordHistory({ kind: "create", path, type, markdown: text });
   /* the intermediate folders were made server-side; open them here so the new
      entry is visible in the tree rather than buried in a collapsed subtree */
   revealFolder(type === "folder" ? path : dirname(path));
   await loadTree();
-  if (open && type === "doc") {
-    await openDoc(path);
-    setMode("raw", { silent: true, caret: 0 });
-  }
+  if (open && type === "doc") await openDoc(path, { focus: true });
   return r;
 }
 
@@ -1304,7 +1301,7 @@ async function moveEntry(node, to, opts) {
 
   try {
     const r = await api.moveDoc(from, to);
-    if (!(opts && opts.noRecord)) rememberFileOp({ kind: "move", from, to, type: kind });
+    if (!(opts && opts.noRecord)) recordHistory({ kind: "move", from, to, type: kind });
     /* Re-home the pane only if this move still owns navigation. If the user
        clicked another doc while the request was in flight, or the SSE `moved`
        echo already followed the doc to its new path, that newer navigation owns
@@ -1486,11 +1483,11 @@ function neighbourDoc(path) {
 /* ============================================================
    FILE-OPERATION UNDO (⌘Z / ⌘⇧Z outside a text surface)
 
-   Source and file operations share the app-owned timeline (ADR 0014). Outside
-   a text surface — the tree, nothing focused — the next entry may be a FILE
-   operation, and that is what ⌘Z should take back. A delete
-   undoes to a restore; a create undoes to a delete; a move undoes through the
-   same move transaction with its paths reversed.
+   Text edits and file operations share the app-owned timeline (ADR 0014).
+   Outside a text surface — the tree, nothing focused — the next entry may be
+   a FILE operation, and that is what ⌘Z should take back. A delete undoes to
+   a restore; a create undoes to a delete; a move undoes through the same move
+   transaction with its paths reversed.
 
    EVERY ONE OF THESE ASKS FIRST. That is not the usual undo contract, and it
    is deliberate: a text undo is instant and reversible in the same keystroke,
@@ -1509,15 +1506,6 @@ function neighbourDoc(path) {
    and the ⌘Z the entry may have been restored elsewhere, purged, or aged out —
    in which case the answer is "it is not in the trash any more", not a 404
    from a stale id. */
-/** Record a completed file operation on the SHARED timeline — the same list
-    the text edits go on, in the order they happened, which is what lets ⌘Z
-    walk back through "edited a.md, edited b.md, deleted a.md" one step at a
-    time. `flushTextRun` first, so a run that is still open is ordered BEFORE
-    the file operation rather than after it. */
-function rememberFileOp(entry) {
-  flushTextRun();
-  recordHistory(entry);
-}
 
 /** The newest trash entry naming `path`, or null. `state.trash.entries` is
     kept fresh by `trash-changed` and by the refresh every delete already does;
@@ -1598,7 +1586,7 @@ function takeFileAway(entry, done) {
     if (doc && typeof doc.markdown === "string") entry.markdown = doc.markdown;
   }
   /* `onDone` rather than a returned boolean, because a dirty active buffer
-     DEFERS the delete behind the Raw exit guard: `doDelete` returns false to
+     DEFERS the delete behind the exit guard: `doDelete` returns false to
      say "not now", and the user may still choose Keep editing, in which case
      nothing happened and the undo must stay on offer. Only the callback can
      tell the difference between "refused" and "not yet". */
@@ -1655,7 +1643,7 @@ function fileOpBody(entry, undoing) {
  *
  * Resolves false on every way out that is not the deed done — Cancel, Esc, a
  * restore blocked by something now occupying the path, a delete still behind
- * the Raw exit guard — which is what leaves the entry on the timeline, still
+ * the exit guard — which is what leaves the entry on the timeline, still
  * offering.
  */
 export function applyFileHistory(entry, undoing) {
@@ -1702,7 +1690,7 @@ export function applyFileHistory(entry, undoing) {
 
 export async function doDelete(path, kind, opts) {
   const affects = state.active === path || (kind === "folder" && state.active && state.active.indexOf(path + "/") === 0);
-  /* Confirming a delete is also an attempt to leave the active Raw buffer.
+  /* Confirming a delete is also an attempt to leave the active buffer.
      Ask the delete question first, then the staged-diff question: Keep editing
      cancels the removal, Save & exit puts the bytes into the retained copy,
      and Exit without saving retains exactly the last server-confirmed file. */
@@ -1717,7 +1705,7 @@ export async function doDelete(path, kind, opts) {
        here instead — at defer time — would be wrong in the other direction: a
        user who then picks Save & exit really does delete the file, and the
        caller would have already been told it did not happen. */
-    const deferred = guardRawExit(
+    const deferred = guardExit(
       () => doDelete(path, kind, opts ? Object.assign({}, opts, { force: true }) : { force: true }),
       opts && opts.onDone ? () => opts.onDone(false) : null
     );
@@ -1741,7 +1729,7 @@ export async function doDelete(path, kind, opts) {
      made "undo, undo, undo" stop one step short of the edit it was walking
      back to. `applyTextHistory` still refuses an entry whose doc is missing,
      for the one path that can produce it: a restore the user declined. */
-  if (!(opts && opts.noRecord)) rememberFileOp({ kind: "delete", path, type: kind, markdown });
+  if (!(opts && opts.noRecord)) recordHistory({ kind: "delete", path, type: kind, markdown });
   if (affects) {
     state.docs.delete(state.active);
     state.active = null;

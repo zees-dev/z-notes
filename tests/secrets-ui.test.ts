@@ -18,10 +18,11 @@
    · Tab out of the passphrase modal landed in the hidden ⌘K box and shipped the
      vault passphrase to GET /api/search?q=…
    · Esc during scrypt closed the modal and unlocked the vault anyway
-   · deleting a revealed-and-edited block in Raw wedged every later save
+   · deleting a revealed-and-edited block wedged every later save
    · three fast ⌘S raised "reload before saving" — advice that destroys work
-   · #rawArea, where every secret is typed BEFORE ⌘⇧E, was missing three of the
-     six anti-exfiltration attributes the reveal editor carries
+   · a new secret's plaintext is typed into the confirm dialog: that field needs
+     the reveal editor's six anti-exfiltration attributes, and no trace of the
+     text may survive the dialog
    · the create-identity modal's footer collapsed its no-recovery warning into a
      56px column and clipped the primary button in Terminal
    · the ? overlay claims to list everything and listed neither new shortcut
@@ -55,7 +56,7 @@ import {
   type SeedMap,
   type TestServer,
 } from "./helpers";
-import { forgetBrowserState, launchTestBrowser, pressChord } from "./browser";
+import { forgetBrowserState, launchTestBrowser, pressChord, waitForFocusedInput } from "./browser";
 
 const PASSPHRASE = "correct horse battery staple mango velvet";
 const PLAIN = "AWS_SECRET_ACCESS_KEY=UICANARYALPHA\n";
@@ -81,17 +82,13 @@ const MIXED = "keys/mixed.md";
 /* the SAME armor twice in one document — copy a fence to make a staging/prod
    pair and this is what you have. Ciphertext alone cannot tell the two apart. */
 const DUP = "keys/duplicate.md";
-/* one block, edited, then saved while the pane is in RAW */
-const RAWSAVE = "keys/raw-save.md";
 /* one block whose decrypt fails in a way the worker's classifier does not
    recognise (its `undecryptable` fallthrough) */
 const ODD = "keys/undecryptable.md";
 /* one block, edited, with the vault locked while its PUT is held open */
 const LOCKHOLD = "keys/lock-hold.md";
-const SELECTION = "SELECTMEALPHA-BRAVO-CHARLIE";
 
 const DUP_PLAIN = "SECRET_ONE=DUPCANARY\n";
-const RAW_PLAIN = "SECRET_TWO=RAWCANARY\n";
 const LOCK_PLAIN = "SECRET_THREE=LOCKCANARY\n";
 const ODD_PLAIN = "SECRET_FOUR=ODDCANARY\n";
 
@@ -107,7 +104,6 @@ let wrapped = "";
 let armor = "";
 let armor2 = ""; // a DIFFERENT ciphertext, so a doc can hold two distinct blocks
 let dupArmor = ""; // seeded TWICE into one document
-let rawArmor = "";
 let lockArmor = "";
 let oddArmor = ""; // decrypts to an error the classifier does not know
 let oddMessage = ""; // …and what that error actually says, measured bun-side
@@ -282,7 +278,7 @@ async function openDoc(p: Page, path: string) {
   await p.waitForFunction((x) => document.getElementById("stPath")!.textContent === x, { timeout: OPEN_TIMEOUT_MS }, path);
   /* Edit mounts its island asynchronously after `renderDoc`: nothing inside the
      document — a secret block least of all — is addressable until it has */
-  await p.waitForSelector("#doc.raw-mode #rawArea, #doc .bn-editor", { timeout: 20000 });
+  await p.waitForSelector("#doc .bn-editor", { timeout: 20000 });
   await sleep(250);
 }
 
@@ -351,17 +347,14 @@ async function unlockBlock(p: Page, nth = 0) {
   await p.waitForFunction(() => !!document.querySelector(".secret.open"), { timeout: 30000 });
 }
 
-const ensureRaw = async (p: Page) => {
-  if (await p.evaluate(() => document.getElementById("doc")!.classList.contains("raw-mode"))) return;
-  await chord(p, "KeyE");
-  await p.waitForSelector("#rawArea", { timeout: 8000 });
-};
+/** the open doc's buffer — what a save writes */
+const buffer = (p: Page): Promise<string> =>
+  p.evaluate(async () => {
+    const { state } = await import("/state.js");
+    return state.docs.get(state.active).markdown;
+  });
 
-const ensureEdit = async (p: Page) => {
-  if (!(await p.evaluate(() => document.getElementById("doc")!.classList.contains("raw-mode")))) return;
-  await chord(p, "KeyE");
-  await p.waitForSelector(".secret", { timeout: 8000 });
-};
+const dialogUp = (p: Page) => p.evaluate(() => document.getElementById("cfVeil")!.classList.contains("show"));
 
 /** type at the end of revealed block `nth` — a real keyboard, so the editor's
     own `input` handler is what marks the entry dirty */
@@ -391,7 +384,6 @@ beforeAll(async () => {
   armor = await encryptTo(recipient, PLAIN.repeat(30));
   armor2 = await encryptTo(recipient, PLAIN2);
   dupArmor = await encryptTo(recipient, DUP_PLAIN);
-  rawArmor = await encryptTo(recipient, RAW_PLAIN);
   lockArmor = await encryptTo(recipient, LOCK_PLAIN);
   oddArmor = await undecryptableArmor(recipient, ODD_PLAIN);
   oddMessage = await decryptMessage(oddArmor);
@@ -408,14 +400,13 @@ beforeAll(async () => {
     [FAKE]: "# Hand written\n\nHANDWRITTENMARKER\n\n" + fence(FAKE_SECRET) + "\ntail\n",
     [BROKEN]: "# Merged\n\nMERGEDMARKER\n\n" + fence(brokenArmor) + "\ntail\n",
     [LIST]: "# List\n\n- an item with a secret:\n\n" + fence(armor, "  ") + "\ntail\n",
-    [SCRATCH]: `# Scratch\n\nheader line\n\n${SELECTION}\n\ntail line\n`,
+    [SCRATCH]: "# Scratch\n\nheader line\n\ntail line\n",
     [WEDGE]: "# Wedge\n\nWEDGEMARKER\n\n" + fence(armor) + "\ntail\n",
     [RACE]: "# Race\n\nRACEMARKER\n\n" + fence(armor) + "\ntail\n",
-    [DRIFT]: "# Drift\n\nDRIFTMARKER\n\nDRIFTSELECTME\n\ntail line\n",
+    [DRIFT]: "# Drift\n\nDRIFTMARKER\n",
     [SECOND]: "# Second\n\nSECONDMARKER\n\n" + fence(armor) + "\nbetween\n\n" + fence(armor2) + "\ntail\n",
     [MIXED]: "# Mixed\n\nMIXEDMARKER\n\n" + fence(brokenArmor) + "\nbetween\n\n" + fence(armor2) + "\ntail\n",
     [DUP]: "# Duplicate\n\nDUPMARKER\n\n" + fence(dupArmor) + "\nbetween\n\n" + fence(dupArmor) + "\ntail\n",
-    [RAWSAVE]: "# Raw save\n\nRAWSAVEMARKER\n\n" + fence(rawArmor) + "\ntail\n",
     [ODD]: "# Undecryptable\n\nODDMARKER\n\n" + fence(oddArmor) + "\ntail\n",
     [LOCKHOLD]: "# Lock hold\n\nLOCKHOLDMARKER\n\n" + fence(lockArmor) + "\ntail\n",
     ".znotes/identity.age": wrapped,
@@ -713,28 +704,22 @@ describe("Esc during key derivation cancels the unlock", () => {
 });
 
 describe("saving survives a revealed block disappearing from the document", () => {
-  test("deleting an edited reveal in Raw does not wedge every later save", async () => {
+  test("deleting an edited reveal does not wedge every later save", async () => {
     const p = await newPage(srv);
     try {
       await openDoc(p, WEDGE);
       await unlockBlock(p, 0);
+      await typeInto(p, 0, "EDITEDINPLACE=1\n");
 
-      /* make the reveal dirty */
-      await p.evaluate(() => {
-        const ta = document.querySelector<HTMLTextAreaElement>(".secret.open textarea")!;
-        ta.focus();
-        ta.setSelectionRange(ta.value.length, ta.value.length);
+      /* …then delete its whole block, which is an ordinary thing to do */
+      await p.$eval("#doc .bn-editor", (element) => {
+        const view = (element as unknown as EditorElement).editor.view;
+        let secret: { pos: number; node: PMNode } | undefined;
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === "blockContainer" && node.firstChild?.type.name === "secret") secret = { pos, node };
+        });
+        view.dispatch(view.state.tr.delete(secret!.pos, secret!.pos + secret!.node.nodeSize));
       });
-      await p.keyboard.type("EDITEDINPLACE=1\n");
-
-      /* …then remove the whole fence in Raw, which is an ordinary thing to do */
-      await ensureRaw(p);
-      await p.evaluate(() => {
-        const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-        ta.value = "# Wedge\n\nWEDGEMARKER\n\nAFTERTHEDELETE\n";
-        ta.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-      await clearToasts(p);
       await chord(p, "KeyS");
 
       /* the save used to abort before writing anything, for the rest of the
@@ -742,19 +727,16 @@ describe("saving survives a revealed block disappearing from the document", () =
       const onDisk = await waitUntil(
         () => {
           const t = readVaultText(vaultDir, WEDGE);
-          return t.includes("AFTERTHEDELETE") ? t : null;
+          return t.includes("```age") ? null : t;
         },
         { timeout: 15000, label: "the save to reach disk after the fence was deleted" }
       );
-      expect(onDisk).not.toContain("```age");
       expect(onDisk).not.toContain("EDITEDINPLACE"); // plaintext never lands on disk
 
       /* and a further ordinary edit still saves */
-      await p.evaluate(() => {
-        const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-        ta.value += "\nSECONDEDIT\n";
-        ta.dispatchEvent(new Event("input", { bubbles: true }));
-      });
+      await p.click('#doc [data-content-type="paragraph"]');
+      await p.keyboard.press("End");
+      await p.keyboard.type(" SECONDEDIT");
       await chord(p, "KeyS");
       await waitUntil(() => readVaultText(vaultDir, WEDGE).includes("SECONDEDIT"), {
         timeout: 15000,
@@ -811,61 +793,69 @@ describe("saving survives a revealed block disappearing from the document", () =
   }, 120000);
 });
 
-describe("the Raw editor is where secrets are typed before ⌘⇧E", () => {
-  test("#rawArea carries the same six anti-exfiltration attributes as the reveal editor", async () => {
+describe("a new secret is typed into its dialog and nowhere else", () => {
+  test("/secret asks for the text, inserts one encrypted block, and leaves the plaintext nowhere", async () => {
     const p = await newPage(srv);
-    try {
-      await openDoc(p, SCRATCH);
-      await ensureRaw(p);
-      const attrs = await p.$eval("#rawArea", (n) => ({
-        spellcheck: n.getAttribute("spellcheck"),
-        autocomplete: n.getAttribute("autocomplete"),
-        autocapitalize: n.getAttribute("autocapitalize"),
-        autocorrect: n.getAttribute("autocorrect"),
-        gramm: n.getAttribute("data-gramm"),
-        grammarly: n.getAttribute("data-enable-grammarly"),
-      }));
-      expect(attrs).toEqual({
-        spellcheck: "false",
-        autocomplete: "off",
-        autocapitalize: "off",
-        autocorrect: "off",
-        gramm: "false",
-        grammarly: "false",
+    const sent: string[] = [];
+    p.on("request", (r) => sent.push(r.url() + " " + (r.postData() ?? "")));
+    const plain = "NEW_SECRET=UICANARYNEW";
+    const field = () => p.$eval("#cfField", (n) => (n as HTMLTextAreaElement).value);
+    /* at the end of a paragraph: picking the item deletes the query, so the
+       paragraph is left as it was */
+    const askForSecret = async () => {
+      await p.click('#doc [data-content-type="paragraph"]');
+      await p.keyboard.press("End");
+      await p.keyboard.type("/secret");
+      await p.waitForFunction(() => {
+        const options = [...document.querySelectorAll('.bn-suggestion-menu [role="option"]')];
+        return options.length === 1 && options[0].textContent === "Secret";
       });
-    } finally {
-      await p.close();
-    }
-  }, 60000);
-});
-
-describe("encryption is bound to a recipient the vault can actually read", () => {
-  test("the encrypt toast names the WHOLE recipient, not a 16-character prefix", async () => {
-    const p = await newPage(srv);
+      await p.keyboard.press("Enter");
+      await waitForFocusedInput(p, "#cfField");
+      await p.keyboard.type(plain);
+    };
     try {
       await openDoc(p, SCRATCH);
-      await ensureRaw(p);
-      await p.evaluate((needle) => {
-        const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-        const at = ta.value.indexOf(needle);
-        ta.focus();
-        ta.setSelectionRange(at, at + needle.length);
-      }, SELECTION);
+      const before = readVaultText(vaultDir, SCRATCH);
+
+      await askForSecret();
+      const attrs = await p.$eval("#cfField", (n) => Object.fromEntries([...n.attributes].map((a) => [a.name, a.value])));
+      expect(attrs).toMatchObject({ spellcheck: "false", autocomplete: "off", autocapitalize: "off", autocorrect: "off" });
+      expect(attrs).toMatchObject({ "data-gramm": "false", "data-enable-grammarly": "false" });
+      await p.click('#cfVeil [data-act="cf-cancel"]');
+      expect(await field()).toBe("");
+      expect(await buffer(p)).toBe(before);
+
+      await askForSecret();
       await clearToasts(p);
-      await chord(p, "KeyE", "Meta", "Shift");
-      await p.waitForFunction(
-        () => ((document.getElementById("rawArea") as HTMLTextAreaElement)?.value ?? "").includes("```age"),
-        { timeout: 15000 }
+      await p.click("#cfOk");
+      expect(await field()).toBe("");
+      await waitUntil(async () => (await buffer(p)).includes("```age"), { timeout: 15000, label: "the new block" });
+      await chord(p, "KeyS");
+      const saved = await waitUntil(
+        () => {
+          const md = readVaultText(vaultDir, SCRATCH);
+          return md.includes("```age") ? md : null;
+        },
+        { timeout: 15000, label: "the new block to reach disk" }
       );
-      const said = (await toasts(p)).join(" | ");
-      /* a substituted key differs somewhere — a truncated prefix is exactly
-         where a swap hides */
-      expect(said).toContain(recipient);
+      expect(ageFences(saved)).toHaveLength(1);
+      expect(await decryptArmor(ageFences(saved)[0])).toBe(plain);
+      /* the WHOLE recipient: a substituted key differs somewhere, and a
+         truncated prefix is exactly where a swap hides */
+      expect((await toasts(p)).join(" | ")).toContain(recipient);
+      const shown = await p.evaluate(() => document.body.innerText);
+      const traces = { file: saved, buffer: await buffer(p), page: shown, requests: sent.join("\n") };
+      for (const [where, text] of Object.entries(traces)) {
+        expect(`the plaintext in the ${where}: ${text.includes(plain)}`).toBe(`the plaintext in the ${where}: false`);
+      }
     } finally {
       await p.close();
     }
   }, 90000);
+});
 
+describe("encryption is bound to a recipient the vault can actually read", () => {
   test("a substituted .znotes/vault.pub blocks the encrypt instead of capturing it", async () => {
     /* the finding's exact scenario: both keyring files are tracked and pushed,
        so an ordinary pull (or anyone with write access to the remote) can move
@@ -873,16 +863,8 @@ describe("encryption is bound to a recipient the vault can actually read", () =>
     const p = await newPage(srv);
     try {
       await openDoc(p, DRIFT);
-      await ensureRaw(p);
       writeVaultFile(vaultDir, ".znotes/vault.pub", foreignRecipient + "\n");
       await sleep(300);
-
-      await p.evaluate(() => {
-        const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-        const at = ta.value.indexOf("DRIFTSELECTME");
-        ta.focus();
-        ta.setSelectionRange(at, at + "DRIFTSELECTME".length);
-      });
       await clearToasts(p);
       await chord(p, "KeyE", "Meta", "Shift");
       await sleep(1500);
@@ -892,11 +874,8 @@ describe("encryption is bound to a recipient the vault can actually read", () =>
       /* it names the key that appeared, in full — the user cannot notice a
          substitution they are never shown */
       expect(said).toContain(foreignRecipient);
-      /* and NOTHING was encrypted to it */
-      expect(said).not.toMatch(/^Encrypted to|\| Encrypted to/);
-      const buf = await p.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value);
-      expect(buf).toContain("DRIFTSELECTME");
-      expect(buf).not.toContain("BEGIN AGE ENCRYPTED FILE");
+      /* and NOTHING can be encrypted to it: the text is never even asked for */
+      expect(await dialogUp(p)).toBe(false);
     } finally {
       writeVaultFile(vaultDir, ".znotes/vault.pub", recipient + "\n");
       await p.close();
@@ -997,31 +976,20 @@ describe("vault.pub without identity.age says so, instead of claiming to be read
     }
   }, 90000);
 
-  test("⌘⇧E refuses instead of writing a block nobody can ever open", async () => {
+  test("the new-secret button refuses instead of writing a block nobody can ever open", async () => {
     const p = await newPage(orphanSrv);
     try {
       await openDoc(p, KEYS);
-      await ensureRaw(p);
-      const armorCount = (s: string) => s.split(ARMOR_HEAD).length - 1;
-      const before = await p.$eval("#rawArea", (n) => (n as HTMLTextAreaElement).value);
       /* the recipient alone is enough to ENCRYPT — which is the trap: the block
          would be one nobody can ever open ("unrecoverable data-loss-by-
          encryption", vault.ts) */
-      await p.evaluate(() => {
-        const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-        ta.focus();
-        ta.setSelectionRange(2, 7); // inside "# Cloud keys"
-      });
       await clearToasts(p);
-      await chord(p, "KeyE", "Meta", "Shift");
+      await p.click("#encBtn");
       await waitUntil(async () => (await toasts(p)).some((t) => /identity\.age is missing/i.test(t)), {
         timeout: 10000,
-        label: "the encrypt gesture to refuse",
+        label: "the new-secret button to refuse",
       });
-      await sleep(400);
-      const after = await p.$eval("#rawArea", (n) => (n as HTMLTextAreaElement).value);
-      expect(`armor blocks after ⌘⇧E: ${armorCount(after)}`).toBe(`armor blocks after ⌘⇧E: ${armorCount(before)}`);
-      expect(after).toBe(before);
+      expect(await dialogUp(p)).toBe(false);
     } finally {
       await p.close();
     }
@@ -1033,7 +1001,6 @@ describe("degradation without crypto.subtle", () => {
     const p = await newPage(srv, { noSubtle: true });
     try {
       await openDoc(p, SCRATCH);
-      await ensureRaw(p);
       /* the probe finishes off the critical path, so give it a beat */
       await waitUntil(async () => (await p.$eval("#encBtn", (n) => (n as HTMLElement).hidden)) === true, {
         timeout: 10000,
@@ -1060,7 +1027,7 @@ describe("the ? overlay lists every global shortcut", () => {
       await p.waitForFunction(() => document.getElementById("scVeil")!.classList.contains("show"), { timeout: 8000 });
       const rows = await p.$$eval("#scVeil .sc-row", (ns) => ns.map((n) => (n.textContent ?? "").replace(/\s+/g, " ").trim()));
       const joined = rows.join(" | ");
-      expect(joined).toMatch(/encrypt selection.*⇧⌘E/i);
+      expect(joined).toMatch(/new secret.*⇧⌘E/i);
       expect(joined).toMatch(/lock vault.*⇧⌘L/i);
     } finally {
       await p.close();
@@ -1274,8 +1241,7 @@ describe("the create-identity modal reads as prose in every theme", () => {
      was a wall of ciphertext, not the padlock and the LOCKED badge above it,
      and a summary bar spanning the doc width in a pane that says "click a line
      to edit" is one stray click from the same wall. A locked block now shows
-     NOTHING of itself — no armor, no header line, no byte or line count — and
-     ⌘E (Raw) is the honest way to see the source.
+     NOTHING of itself — no armor, no header line, no byte or line count.
 
    · Reveal was PER BLOCK and opt-in: unlocking the vault revealed nothing, and
      every block, in every doc, cost its own click on a vault that was already
@@ -1372,18 +1338,6 @@ describe("a locked block shows no ciphertext at all", () => {
       /* and it is COMPACT: a padlock bar over one row of blanks. The old
          inline dump of this armor was ~800px. */
       expect(`the locked block is ${v.h}px: ${v.h < 130}`).toBe(`the locked block is ${v.h}px: true`);
-    } finally {
-      await p.close();
-    }
-  }, 60000);
-
-  test("Raw mode is the escape hatch — the source is there, verbatim", async () => {
-    const p = await newPage(srv);
-    try {
-      await openDoc(p, KEYS);
-      await ensureRaw(p);
-      const raw = await p.$eval("#rawArea", (n) => (n as HTMLTextAreaElement).value);
-      expect(`the armor is in Raw, verbatim: ${raw.includes(armor)}`).toBe("the armor is in Raw, verbatim: true");
     } finally {
       await p.close();
     }
@@ -1496,18 +1450,19 @@ describe("unlocking the vault reveals every block, everywhere", () => {
 
       /* and the flagged one stays flagged across a full re-render rather than
          being retried into a fresh "Locked" chip */
-      await chord(p, "KeyE");
-      await p.waitForSelector("#rawArea", { timeout: 8000 });
-      await chord(p, "KeyE");
+      await openDoc(p, "inbox.md");
+      await openDoc(p, MIXED);
       await waitForReveals(p, 1);
       await sleep(300);
-      expect(`still flagged after ⌘E: ${(await blocks(p))[0].flagged}`).toBe("still flagged after ⌘E: true");
+      expect(`still flagged after a re-render: ${(await blocks(p))[0].flagged}`).toBe(
+        "still flagged after a re-render: true"
+      );
     } finally {
       await p.close();
     }
   }, 90000);
 
-  test("the revealed state survives ⌘E and an external write to the file", async () => {
+  test("the revealed state survives an external write to the file", async () => {
     const p = await newPage(srv);
     const seeded = "# Second\n\nSECONDMARKER\n\n" + fence(armor) + "\nbetween\n\n" + fence(armor2) + "\ntail\n";
     try {
@@ -1516,16 +1471,7 @@ describe("unlocking the vault reveals every block, everywhere", () => {
       await typePassphrase(p);
       await waitForReveals(p, 2);
 
-      /* ⌘E to Raw and back rebuilds the preview from scratch */
-      await chord(p, "KeyE");
-      await p.waitForSelector("#rawArea", { timeout: 8000 });
-      await chord(p, "KeyE");
-      await waitForReveals(p, 2);
-      expect(`revealed after ⌘E → Raw → ⌘E: ${JSON.stringify(await revealedTexts(p))}`).toBe(
-        `revealed after ⌘E → Raw → ⌘E: ${JSON.stringify([PLAIN.repeat(30), PLAIN2])}`
-      );
-
-      /* and the case this app calls normal — "files are edited outside the app
+      /* the case this app calls normal — "files are edited outside the app
          too": the SSE reconcile lands new text and repaints the doc */
       writeVaultFile(vaultDir, SECOND, seeded.replace("SECONDMARKER", "SECONDMARKER edited outside"));
       await p.waitForFunction(() => (document.getElementById("doc")!.textContent ?? "").includes("edited outside"), {
@@ -2267,67 +2213,6 @@ describe("two identical age fences in one document are two blocks", () => {
 });
 
 /* ============================================================
-   THE RAW BUFFER IS NOT THE MODEL
-
-   `doSaveDoc` runs `syncRaw()` (textarea → model) and only then
-   `flushSecretEdits` (which rewrites the model). A save that lands while the
-   pane is in Raw therefore left `#rawArea` holding the PRE-flush armor, and
-   the next `syncRaw` — every mode switch does one — wrote that stale armor
-   back over the ciphertext that had just been saved. The rotated credential
-   was destroyed on disk and the superseded one restored, under "Saved".
-   ============================================================ */
-
-describe("a save that lands while the pane is in Raw", () => {
-  test("the re-encrypted edit survives the trip back to Edit", async () => {
-    const p = await newPage(srv);
-    try {
-      const want = RAW_PLAIN + "ROTATED=1\n";
-      await openDoc(p, RAWSAVE);
-      await unlockBlock(p, 0);
-      await typeInto(p, 0, "ROTATED=1\n");
-      expect(`the editor holds the rotation: ${JSON.stringify(await revealedTexts(p))}`).toBe(
-        `the editor holds the rotation: ${JSON.stringify([want])}`
-      );
-
-      /* look at the source — an ordinary thing to do — and save from there */
-      await ensureRaw(p);
-      await clearToasts(p);
-      await chord(p, "KeyS");
-      const saved = await waitUntil(
-        () => {
-          const f = ageFences(readVaultText(vaultDir, RAWSAVE));
-          return f.length === 1 && f[0] !== rawArmor ? f[0] : null;
-        },
-        { timeout: 20000, label: "the re-encrypted block to reach disk" }
-      );
-      expect(`the save wrote the rotation: ${JSON.stringify(await decryptArmor(saved))}`).toBe(
-        `the save wrote the rotation: ${JSON.stringify(want)}`
-      );
-
-      /* back to Edit: the mode switch syncs the source buffer into the model */
-      await ensureEdit(p);
-      await waitForReveals(p, 1);
-      expect(`the block still shows the rotation: ${JSON.stringify(await revealedTexts(p))}`).toBe(
-        `the block still shows the rotation: ${JSON.stringify([want])}`
-      );
-
-      /* and the next save does not put the superseded ciphertext back */
-      await chord(p, "KeyS");
-      await sleep(2000);
-      const finalFences = ageFences(readVaultText(vaultDir, RAWSAVE));
-      expect(`the file still decrypts to the rotation: ${JSON.stringify(await decryptArmor(finalFences[0]))}`).toBe(
-        `the file still decrypts to the rotation: ${JSON.stringify(want)}`
-      );
-      expect(`and the superseded armor is gone: ${!readVaultText(vaultDir, RAWSAVE).includes(rawArmor)}`).toBe(
-        "and the superseded armor is gone: true"
-      );
-    } finally {
-      await p.close();
-    }
-  }, 180000);
-});
-
-/* ============================================================
    AN UNCLASSIFIED FAILURE IS STILL A FAILURE
 
    `FAIL_STATES` covered four codes, and the failure was recorded only when the
@@ -2557,11 +2442,14 @@ describe("a revealed secret that MOVES keeps its edit, and a re-encrypt mid-typi
       MOVED,
       "# Visual duplicate\n\n" + fence(dupArmor) + "\nbetween\n\n" + fence(dupArmor) + "\ntail\n"
     );
+    // A page that boots before the watcher lists the file never shows it in the tree.
+    await waitUntil(async () => JSON.stringify((await srv.api("GET", "/api/docs")).body).includes(MOVED), {
+      label: MOVED + " listed",
+    });
     const p = await newPage(srv);
     const requests: string[] = [];
     p.on("request", (r) => requests.push(r.url() + (r.postData() ?? "")));
     try {
-      await p.waitForSelector(`#tree .row.file[data-doc="${MOVED}"]`, { timeout: 20000 });
       await openDoc(p, MOVED);
       await unlockBlock(p, 0);
       await waitForReveals(p, 2);
@@ -2663,9 +2551,10 @@ describe("a revealed secret that MOVES keeps its edit, and a re-encrypt mid-typi
 
       /* ciphertext maintenance is not an edit: undo steps over the prose, never
          over the armor, and a save on either side stores the same two fences */
+      const mod = await p.evaluate(() => (/Mac/.test(navigator.platform) ? "Meta" : "Control"));
       for (const redo of [false, true]) {
         await p.$eval(EDITOR, (node) => (node as HTMLElement).focus());
-        await chord(p, "KeyZ", "Control", ...(redo ? ["Shift"] : []));
+        await chord(p, "KeyZ", mod, ...(redo ? ["Shift"] : []));
         await p.waitForFunction(
           (want) => document.querySelector("#doc .bn-editor")!.textContent!.includes("TYPEDDURINGENCRYPTION") === want,
           { timeout: 10000, polling: 100 },
@@ -2694,10 +2583,7 @@ describe("a revealed secret that MOVES keeps its edit, and a re-encrypt mid-typi
       await clickBlockButton(p, 0, /^\s*lock\b/i);
       await p.waitForFunction(() => !document.querySelector(".secret.open"), { timeout: 15000 });
       expect(await p.$$eval(".secret textarea", (nodes) => nodes.length)).toBe(0);
-      await ensureRaw(p);
-      expect(await p.$eval("#rawArea", (node) => (node as HTMLTextAreaElement).value)).toBe(
-        readVaultText(vaultDir, MOVED)
-      );
+      expect(await buffer(p)).toBe(readVaultText(vaultDir, MOVED));
     } finally {
       await p.close();
     }

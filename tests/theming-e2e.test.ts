@@ -22,8 +22,7 @@
 
    Density lives here too, because it is the third knob on the same surface and
    it shares the harness: the new Compact must be MEASURABLY tighter than the
-   new Comfy on real rects, and the Edit/Source container parity must still
-   hold in both.
+   new Comfy on real rects.
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
@@ -32,14 +31,12 @@ import { startServer, sleep, makeVault, SEED_VAULT, type TestServer } from "./he
 import { cpSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  ensureMode as setMode,
   gotoSettings,
   launchTestBrowser,
   leaveSettings,
   newAppPage,
   onSettings as isOnSettings,
   saveSettings,
-  waitSettings as waitForSettings,
 } from "./browser";
 import { DEFAULTS } from "../server/settings";
 
@@ -617,7 +614,7 @@ describe("theming — the scheme is resolved before the first paint", () => {
 });
 
 /* ============================================================
-   4. DENSITY — the rescale is real, and parity survived it
+   4. DENSITY — the rescale is real
    ============================================================ */
 
 /** Rects and computed sizes a density change must actually move. */
@@ -629,10 +626,6 @@ async function measureDensity() {
     const doc = document.getElementById("doc")!;
     const topbar = document.querySelector(".topbar");
     const statusbar = document.querySelector(".statusbar");
-    /* was `#modeSeg button` — the Raw|Preview segmented control, which no
-       longer exists (the mode is statusbar text now). The assertion it fed was
-       "a topbar CONTROL rescales with --d-ctl-h", and the topbar icon buttons
-       are sized by exactly that token, so the substance is unchanged. */
     /* the first one that is actually painted: the topbar carries both a
        `.only-mobile` and a `.no-mobile` icon button and one of them is always
        display:none, which would measure 0 and pass a "got tighter" test by
@@ -656,54 +649,6 @@ async function measureDensity() {
     };
   });
 }
-
-const PARITY_PROPS = [
-  "paddingTop",
-  "paddingRight",
-  "paddingBottom",
-  "paddingLeft",
-  "marginTop",
-  "marginLeft",
-  "marginRight",
-  "maxWidth",
-  "borderTopWidth",
-  "borderLeftWidth",
-  "backgroundColor",
-  "boxSizing",
-] as const;
-
-/** The container AND the text origin inside it — the same two clauses
-    tests/e2e.test.ts measures, because a theme is exactly where a rule that
-    moves the text without moving the container would come from. */
-async function docContainer() {
-  return page.evaluate((props: readonly string[]) => {
-    const d = document.getElementById("doc") as HTMLElement;
-    const cs = getComputedStyle(d);
-    const style: Record<string, string> = {};
-    for (const p of props) style[p] = (cs as any)[p];
-    const r = d.getBoundingClientRect();
-    const round = (n: number) => Math.round(n * 100) / 100;
-
-    const raw = d.querySelector("#rawArea") as HTMLElement | null;
-    /* Edit: the first block the island painted — the same reading the parity
-       gate in e2e.test.ts takes. Descending `firstElementChild` instead lands
-       on BlockNote's injected <style> element, whose rect is the container's
-       own origin, which would make this a measurement of `#doc` twice over. */
-    const first: Element | null = raw ?? d.querySelector(".bn-editor .bn-block-content");
-    let text: { x: number; y: number } | null = null;
-    if (first) {
-      const tr = first.getBoundingClientRect();
-      const ts = getComputedStyle(first);
-      text = { x: round(tr.x + parseFloat(ts.paddingLeft || "0")), y: round(tr.y + parseFloat(ts.paddingTop || "0")) };
-    }
-    return { style, rect: { x: round(r.x), width: round(r.width), top: round(r.top) }, text };
-  }, PARITY_PROPS as unknown as string[]);
-}
-
-/* the shared toggle — see tests/browser.ts. `settle` is load-bearing HERE and
-   nowhere else: every caller in this file measures COMPUTED STYLE straight
-   afterwards, and the stylesheet swap is not done when the class is. */
-const ensureMode = (want: "raw" | "preview") => setMode(page, want, { settle: 140 });
 
 describe("density — the rescale is measurable, in every theme", () => {
   test("Compact is tighter than Comfy on REAL rects, not just on tokens", async () => {
@@ -817,53 +762,6 @@ describe("density — the rescale is measurable, in every theme", () => {
       }
     }
   }, 180000);
-
-  test("Edit/Source parity survives the rescale, in every theme × density × breakpoint", async () => {
-    /* the parity gate in e2e.test.ts runs on the default theme only. The
-       rescale touched all three stylesheets, and a theme that re-states a
-       density token in only one of the two modes breaks parity in that theme
-       alone — invisible to a gate that never switches themes.
-
-       The narrow breakpoint is here because the meta line above the document is
-       where the two modes differ in CONTENT (the mode note is longer in Raw):
-       in a mono theme at 720px it used to wrap to a second line in Raw only,
-       which moved the first line of the document 13px down on ⌘E while `#doc`
-       itself never moved — the exact blind spot the text-origin measurement
-       above was added for. */
-    for (const [width, height] of [
-      [1440, 900],
-      [720, 900],
-    ] as Array<[number, number]>) {
-      await page.setViewport({ width, height });
-      await sleep(220);
-      for (const theme of THEMES) {
-        await setTheme(theme);
-        await themeSheetReady(theme);
-        for (const density of ["comfy", "compact"] as const) {
-          await setDensity(density);
-          await sleep(420);
-          const at = `${theme}/${density}/${width}px`;
-
-          await ensureMode("preview");
-          const preview = await docContainer();
-          await ensureMode("raw");
-          const raw = await docContainer();
-          await ensureMode("preview");
-
-          expect({ at, ...raw.style }).toEqual({ at, ...preview.style });
-          expect(raw.rect.x).toBeCloseTo(preview.rect.x, 1);
-          expect(raw.rect.width).toBeCloseTo(preview.rect.width, 1);
-          expect(raw.rect.top).toBeCloseTo(preview.rect.top, 1);
-          expect(
-            `${at} ⌘E moves the text by dx=${(raw.text!.x - preview.text!.x).toFixed(2)} dy=${(
-              raw.text!.y - preview.text!.y
-            ).toFixed(2)}`
-          ).toBe(`${at} ⌘E moves the text by dx=0.00 dy=0.00`);
-        }
-      }
-    }
-    await page.setViewport({ width: 1440, height: 900 });
-  }, 300000);
 
   test("nothing clips or overflows at the tightest setting, in either scheme", async () => {
     /* The rescale shrank `--d-topbar` under content that was sized in hard

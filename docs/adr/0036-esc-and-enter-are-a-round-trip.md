@@ -10,6 +10,9 @@ pane's top one — and rides on
 [ADR 0032](0032-raw-is-a-line-editor.md)'s surface (`boxAt`,
 `selectionStart`, `setSelectionRange`).
 
+**Superseded by [0039](0039-edit-is-the-only-doc-surface.md)**, 2026-09-29:
+ADR 0037 retired the Enter half, and the Esc half left with Source.
+
 ## Context
 
 Esc has always left Raw for Preview. Nothing went the other way to the place

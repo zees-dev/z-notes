@@ -1,27 +1,18 @@
 /* ============================================================
-   edit-exit-e2e.test.ts — unsaved Raw-mode exit is one guarded funnel.
+   edit-exit-e2e.test.ts — leaving an unsaved doc is one guarded funnel.
 
-   The modal is not merely present: these checks drive the real textarea and
-   every important exit class (Esc, an in-app navigation, browser Back). They
-   also pin the most important visual contract — only changed lines are shown,
-   never the whole original document as context.
+   The modal is not merely present: these checks type through the real editor
+   and drive every exit class (an in-app navigation, browser Back, deleting
+   the open doc). They also pin the most important visual contract — only
+   changed lines are shown, never the whole original document as context.
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { type Browser, type HTTPRequest, type Page } from "puppeteer-core";
-import { startServer, type TestServer } from "./helpers";
-import {
-  launchTestBrowser,
-  newAppPage,
-  appDriver,
-  gotoSettings,
-  pressChord,
-  saveSettings,
-  type AppDriver,
-} from "./browser";
+import { sleep, startServer, type TestServer } from "./helpers";
+import { launchTestBrowser, newAppPage, appDriver, gotoSettings, saveSettings, type AppDriver } from "./browser";
 
-const ORIGINAL = "# Alpha\n\nkeep before\nold first\nunchanged middle\nold second\nkeep after\n";
-const EDITED = "# Alpha\n\nkeep before\nnew first\nunchanged middle\nnew second\nkeep after\n";
+const ORIGINAL = "# Alpha\n\nkeep before\n\nfirst\n\nunchanged middle\n\nsecond\n\nkeep after\n";
 const ALPHA = "alpha.md";
 const BETA = "beta.md";
 const DELETE_ME = "delete-me.md";
@@ -30,7 +21,6 @@ const LARGE = "large.md";
 const SHORT = "short.md";
 const SHORT_MARKDOWN = "# Short\nsecond line";
 const LARGE_ORIGINAL = Array.from({ length: 800 }, (_, i) => `old line ${i}`).join("\n") + "\n";
-const LARGE_EDITED = Array.from({ length: 800 }, (_, i) => `new line ${i}`).join("\n") + "\n";
 
 let srv: TestServer;
 let browser: Browser;
@@ -73,27 +63,24 @@ beforeEach(async () => {
   await app.boot("/d/alpha.md");
 });
 
-async function enterRaw() {
-  await pressChord(page, "KeyE");
-  await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 8000 });
-}
-
-async function typeMarkdown(markdown: string) {
-  await page.evaluate((text) => {
-    const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-    ta.focus();
-    ta.value = text;
-    ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: null }));
-  }, markdown);
+/** Type at the end of the paragraph that reads `line`, through the Edit island. */
+async function appendTo(line: string, text: string) {
+  await (await page.waitForSelector(`xpath///*[contains(@class,"bn-inline-content")][.="${line}"]`, { timeout: 15000 }))!.click();
+  await sleep(80); // ProseMirror ignores a caret move for 50 ms after a view update
+  await page.keyboard.press("End");
+  await page.keyboard.type(text);
   await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Unsaved changes", {
     timeout: 5000,
   });
 }
 
 const guardOpen = () => app.veilUp("xgVeil");
+const editorText = () => page.$eval("#doc .bn-editor", (n) => n.textContent!);
 
 async function waitGuard(want: boolean) {
   await app.waitVeil("xgVeil", want);
+  /* the veil takes the focus 30 ms after it shows; a key sent before that lands in the editor */
+  if (want) await page.waitForFunction(() => !!document.activeElement?.closest("#xgVeil"), { timeout: 2000 });
 }
 
 async function serverMarkdown(path = ALPHA): Promise<string> {
@@ -102,17 +89,13 @@ async function serverMarkdown(path = ALPHA): Promise<string> {
   return r.body.markdown;
 }
 
-/* The pane-whitespace click zone is gone with the Preview renderer (spec 0020):
-   Edit owns every pixel of the document pane, so ⌘E and the mode chip are the
-   only doors out of Source. Its three cases are re-expressed through ⌘E below. */
-describe("unsaved Raw exit", () => {
-  test("Esc shows only changed lines; Esc keeps editing; Discard changes lands in Edit", async () => {
-    await enterRaw();
-    await typeMarkdown(EDITED);
+describe("unsaved exit", () => {
+  test("a navigation waits and shows only changed lines; Esc and the scrim keep editing", async () => {
+    await appendTo("first", " edited");
+    await appendTo("second", " edited");
 
-    await page.keyboard.press("Escape");
+    await page.click(`#tree .row.file[data-doc="${BETA}"]`);
     await waitGuard(true);
-
     const modal = await page.evaluate(() => ({
       title: document.getElementById("xgTitle")!.textContent,
       path: document.getElementById("xgPath")!.textContent,
@@ -120,52 +103,31 @@ describe("unsaved Raw exit", () => {
         marker: r.querySelector(".g")?.textContent ?? "",
         text: r.querySelector(".t")?.textContent ?? "",
       })),
-      raw: document.getElementById("doc")!.classList.contains("raw-mode"),
     }));
     expect(modal.title).toBe("Exit without saving?");
     expect(modal.path).toBe(ALPHA);
     expect(modal.rows).toEqual([
-      { marker: "-", text: "old first" },
-      { marker: "+", text: "new first" },
-      { marker: "-", text: "old second" },
-      { marker: "+", text: "new second" },
+      { marker: "-", text: "first" },
+      { marker: "+", text: "first edited" },
+      { marker: "-", text: "second" },
+      { marker: "+", text: "second edited" },
     ]);
-    expect(modal.raw).toBe(true);
-    expect(await serverMarkdown()).toBe(ORIGINAL);
-
-    /* Esc on the question is the non-destructive answer. */
-    await page.keyboard.press("Escape");
-    await waitGuard(false);
-    expect(await page.evaluate(() => document.getElementById("doc")!.classList.contains("raw-mode"))).toBe(true);
-    expect(await page.$eval("#rawArea", (n) => (n as HTMLTextAreaElement).value)).toBe(EDITED);
-
-    await page.keyboard.press("Escape");
-    await waitGuard(true);
-    await page.click('#xgVeil [data-act="xg-discard"]');
-    await waitGuard(false);
-    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", { timeout: 8000 });
-    expect(await serverMarkdown()).toBe(ORIGINAL);
-    expect(await page.$eval("#doc", (n) => n.textContent!.includes("old first") && !n.textContent!.includes("new first"))).toBe(true);
-    expect(pageErrors).toEqual([]);
-  }, 60000);
-
-  test("a document navigation waits; Save & exit writes, then opens the requested doc", async () => {
-    await enterRaw();
-    await typeMarkdown(EDITED);
-
-    await page.click(`#tree .row.file[data-doc="${BETA}"]`);
-    await waitGuard(true);
     expect(await app.shown()).toBe(ALPHA);
     expect(await serverMarkdown()).toBe(ORIGINAL);
 
-    await page.click('#xgVeil [data-act="xg-save"]');
+    /* Esc on the question is the non-destructive answer, and so is a click on the scrim. */
+    await page.keyboard.press("Escape");
     await waitGuard(false);
-    await app.settled(BETA);
-    expect(await serverMarkdown()).toBe(EDITED);
+    await page.click(`#tree .row.file[data-doc="${BETA}"]`);
+    await waitGuard(true);
+    await page.mouse.click(4, 4);
+    await waitGuard(false);
+    expect(await app.shown()).toBe(ALPHA);
+    expect(await editorText()).toContain("second edited");
     expect(pageErrors).toEqual([]);
   }, 60000);
 
-  test("turning off Ask before leaving edits saves before Edit and navigation without a prompt", async () => {
+  test("turning off Ask before leaving edits saves before navigation without a prompt", async () => {
     expect((await srv.get("/api/settings")).body.settings.editor.confirmBeforeExit).toBe(true);
     try {
       await gotoSettings(page);
@@ -175,33 +137,17 @@ describe("unsaved Raw exit", () => {
 
       /* Saving the draft applies the preference live; no reload is needed. */
       await app.clickDoc(SHORT);
-      await enterRaw();
-      const previewBytes = "# Short\n\nauto-saved before Edit\n";
-      await typeMarkdown(previewBytes);
-
-      /* ⌘E, the door the click zone used to be: with the preference off it
-         writes first and leaves for Edit without asking */
-      await pressChord(page, "KeyE");
-      await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", {
-        timeout: 10000,
-      });
-      expect(await guardOpen()).toBe(false);
-      expect(await serverMarkdown(SHORT)).toBe(previewBytes);
-
-      await enterRaw();
-      const navigationBytes = "# Short\n\nauto-saved before navigation\n";
-      await typeMarkdown(navigationBytes);
+      await appendTo("second line", " saved on leaving");
       await page.click(`#tree .row.file[data-doc="${BETA}"]`);
       await app.settled(BETA);
       expect(await guardOpen()).toBe(false);
-      expect(await serverMarkdown(SHORT)).toBe(navigationBytes);
+      const saved = await serverMarkdown(SHORT);
+      expect(saved).toContain("second line saved on leaving");
 
       /* No prompt must not become navigate-at-any-cost. If the automatic write
-         fails, Raw and its only copy of the new bytes stay where they are. */
+         fails, the doc and its only copy of the new text stay where they are. */
       await app.clickDoc(SHORT);
-      await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 8000 });
-      const failedBytes = "# Short\n\nkeep me when the automatic save fails\n";
-      await typeMarkdown(failedBytes);
+      await appendTo("second line saved on leaving", " and kept");
       await page.setRequestInterception(true);
       const refuseSave = (request: HTTPRequest) => {
         if (request.method() === "PUT" && request.url().endsWith("/api/docs/short.md")) void request.abort();
@@ -215,8 +161,8 @@ describe("unsaved Raw exit", () => {
           { timeout: 10000 }
         );
         expect(await app.shown()).toBe(SHORT);
-        expect(await page.$eval("#rawArea", (n) => (n as HTMLTextAreaElement).value)).toBe(failedBytes);
-        expect(await serverMarkdown(SHORT)).toBe(navigationBytes);
+        expect(await editorText()).toContain("saved on leaving and kept");
+        expect(await serverMarkdown(SHORT)).toBe(saved);
       } finally {
         page.off("request", refuseSave);
         await page.setRequestInterception(false);
@@ -230,9 +176,7 @@ describe("unsaved Raw exit", () => {
 
   test("browser Back is guarded and Discard changes replays that navigation", async () => {
     await app.clickDoc(BETA);
-    await enterRaw();
-    const betaEdited = "# Beta\n\nunsaved back-navigation edit\n";
-    await typeMarkdown(betaEdited);
+    await appendTo("second doc", " with an unsaved edit");
 
     await app.back();
     await waitGuard(true);
@@ -246,18 +190,9 @@ describe("unsaved Raw exit", () => {
     expect(pageErrors).toEqual([]);
   }, 60000);
 
-  test("Esc leaves a clean Raw buffer directly, with no modal", async () => {
-    await enterRaw();
-    await page.keyboard.press("Escape");
-    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", { timeout: 8000 });
-    expect(await guardOpen()).toBe(false);
-    expect(pageErrors).toEqual([]);
-  }, 30000);
-
-  test("confirming deletion of a dirty Raw doc asks about its staged diff before removing it", async () => {
+  test("confirming deletion of a dirty doc asks about its staged diff before removing it", async () => {
     await app.clickDoc(DELETE_ME);
-    await enterRaw();
-    await typeMarkdown("# Delete me\n\nstaged text that is not on disk\n");
+    await appendTo("original retained bytes", " and staged text");
 
     await page.evaluate((path) => {
       const b = document.querySelector<HTMLElement>(
@@ -279,21 +214,24 @@ describe("unsaved Raw exit", () => {
   }, 60000);
 
   test("a large rewrite stays bounded and still shows only removed and added rows", async () => {
+    /* the file is one 800-line paragraph; a triple click selects all of it, so
+       801 rows change and the modal keeps 150 removed and the one added */
     await app.clickDoc(LARGE);
-    await enterRaw();
-    await typeMarkdown(LARGE_EDITED);
-    await page.keyboard.press("Escape");
+    await (await page.waitForSelector("#doc .bn-inline-content", { timeout: 15000 }))!.click({ count: 3 });
+    await sleep(80);
+    await page.keyboard.type("new");
+    await page.click(`#tree .row.file[data-doc="${BETA}"]`);
     await waitGuard(true);
 
     const rows = await page.$$eval("#xgDiff .dl", (all) =>
       all.map((r) => ({ marker: r.querySelector(".g")?.textContent ?? "", text: r.querySelector(".t")?.textContent ?? "" }))
     );
-    expect(rows).toHaveLength(300);
+    expect(rows).toHaveLength(151);
     expect(rows.slice(0, 150).every((r) => r.marker === "-" && r.text.startsWith("old line "))).toBe(true);
-    expect(rows.slice(150).every((r) => r.marker === "+" && r.text.startsWith("new line "))).toBe(true);
+    expect(rows[150]).toEqual({ marker: "+", text: "new" });
 
     await page.click('#xgVeil [data-act="xg-discard"]');
-    await app.waitVeil("xgVeil", false);
+    await waitGuard(false);
     expect(pageErrors).toEqual([]);
   }, 60000);
 });

@@ -6,6 +6,10 @@ Accepted, 2026-08-08. Supersedes the sheet-height sentence of
 [spec 0001](../specs/done/0001-z-notes-v1.md) §11 (440px), which is an archive
 of how it shipped.
 
+Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: Back has
+no Source layer. Step 4 is gone, and step 5 guards the doc buffer at every
+width.
+
 ## Context
 
 The app's history model was built around PLACES: one entry per open doc, one

@@ -8,8 +8,8 @@
        before `done`) — the whole point of streaming the relay at all;
      - a plain answer shows NO diff card (the binding user preference: not
        every reply proposes an edit);
-     - a tool-call turn renders a real diff, Accept writes the doc in BOTH
-       modes, and the change stack is server-authoritative — the older card's
+     - a tool-call turn renders a real diff, Accept writes the doc and the open
+       buffer, and the change stack is server-authoritative — the older card's
        Revert is disabled and says which one to revert first;
      - a new session drops the thread and keeps the stack;
      - starting a second turn cancels the first: no interleaved bubbles in the
@@ -31,7 +31,7 @@ import {
   type TestServer,
 } from "./helpers";
 import { proposeEdits, reply, startMockUpstream, type MockUpstream } from "./mock-upstream";
-import { ensureMode as setMode, launchTestBrowser, newAppPage, waitSettings } from "./browser";
+import { launchTestBrowser, newAppPage, waitSettings } from "./browser";
 
 const DOC = "notes/e2e-target.md";
 const DOC_MD =
@@ -98,11 +98,6 @@ afterAll(async () => {
 
 /* ---------------- helpers ---------------- */
 
-/* the shared toggle, driven by the statusbar CHIP rather than ⌘E: this file's
-   point is the chat panel, and a keyboard chord that lands on a chat control is
-   noise, not signal — doubly so now that ⌘C is one of them. */
-const ensureMode = (want: "raw" | "preview") => setMode(page, want, { via: "chip" });
-
 async function send(text: string) {
   await page.focus("#composer");
   await page.keyboard.type(text);
@@ -123,6 +118,13 @@ const cardCount = () => page.evaluate(() => document.querySelectorAll(".diffcard
 const stackCount = () => page.evaluate(() => document.getElementById("stackCnt")!.textContent ?? "");
 
 const docText = () => page.evaluate(() => document.getElementById("doc")!.textContent ?? "");
+
+/** the open doc's buffer: the bytes the next save would send */
+const buffer = () =>
+  page.evaluate(async () => {
+    const { state } = await import("/state.js");
+    return state.docs.get(state.active).markdown as string;
+  });
 
 /** wait until the assistant's last bubble contains `marker`, sampling its length on the way */
 async function awaitAnswer(marker: string, samples: number[], timeout = 25000) {
@@ -223,7 +225,7 @@ describe("ai e2e — proposals, accept, LIFO in the UI", () => {
     expect(readVaultText(srv.vault, DOC)).toBe(DOC_MD);
   }, 60000);
 
-  test("Accept writes the doc, updates BOTH modes and stamps the stack chip", async () => {
+  test("Accept writes the doc, updates the open editor and stamps the stack chip", async () => {
     await page.click(".diffcard .diff-foot .btn.primary");
 
     await page.waitForFunction(
@@ -243,19 +245,15 @@ describe("ai e2e — proposals, accept, LIFO in the UI", () => {
     expect(`stack count: ${await stackCount()}`).toBe("stack count: 1");
     expect(await page.evaluate(() => document.getElementById("stack")!.hidden)).toBe(false);
 
-    /* preview shows it… */
-    await ensureMode("preview");
+    /* Edit shows it… */
     await page.waitForFunction(() => (document.getElementById("doc")!.textContent ?? "").includes("ANCHORONE LINE WAS EDITED"), {
       timeout: 8000,
     });
     expect(await docText()).toContain("ANCHORONE LINE WAS EDITED");
     expect(await docText()).not.toContain("ANCHORONE line waiting for an edit");
 
-    /* …and Raw is byte-identical to what is on disk */
-    await ensureMode("raw");
-    const raw = await page.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value);
-    expect(raw).toBe(afterFirst);
-    await ensureMode("preview");
+    /* …and the buffer is byte-identical to what is on disk */
+    expect(await buffer()).toBe(afterFirst);
   }, 60000);
 
   test("a second accepted proposal disables the older card's Revert and says which to revert first", async () => {
@@ -327,10 +325,10 @@ describe("ai e2e — proposals, accept, LIFO in the UI", () => {
     );
     expect(restored).toBe(afterFirst);
 
-    await ensureMode("raw");
-    const raw = await page.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value);
-    expect(raw).toBe(afterFirst);
-    await ensureMode("preview");
+    await page.waitForFunction(() => (document.getElementById("doc")!.textContent ?? "").includes("ANCHORTWO line waiting for an edit"), {
+      timeout: 8000,
+    });
+    expect(await buffer()).toBe(afterFirst);
   }, 60000);
 
   test("a new session drops the thread, keeps the stack", async () => {

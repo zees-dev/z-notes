@@ -6,6 +6,9 @@ Accepted, 2026-08-16. Amends the unconditional Raw-exit question in
 [the product spec](../specs/done/0001-z-notes-v1.md) §4 and the guard consequence
 in [ADR 0012](0012-save-state-is-a-statusbar-pip.md).
 
+Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: the gate
+is Edit's (`guardExit`), and there is no mode change left for it to hold.
+
 ## Context
 
 The Raw exit gate protects source bytes that have not reached disk. Its only

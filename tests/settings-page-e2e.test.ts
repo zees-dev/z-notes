@@ -224,7 +224,7 @@ describe("the create flow works from the settings page (the tree never left)", (
     );
   }, 90000);
 
-  test("a nested create navigates OUT of Settings and lands on the new doc in Raw", async () => {
+  test("a nested create navigates OUT of Settings and lands on the new doc", async () => {
     await boot("/d/" + HOME);
     await gotoSettings();
     await startCreateRow();
@@ -246,7 +246,6 @@ describe("the create flow works from the settings page (the tree never left)", (
     const after = await page.evaluate(() => ({
       url: location.pathname,
       onSettings: document.getElementById("app")!.classList.contains("route-settings"),
-      raw: !!document.getElementById("rawArea"),
       /* the page's own chrome must have stood down with it */
       current: document.getElementById("settingsLink")!.getAttribute("aria-current"),
       viewHidden: document.getElementById("settingsView")!.getAttribute("aria-hidden"),
@@ -254,8 +253,6 @@ describe("the create flow works from the settings page (the tree never left)", (
 
     expect(`url: ${after.url}`).toBe("url: /d/architecture/x/y/z.md");
     expect(`left the settings page: ${!after.onSettings}`).toBe("left the settings page: true");
-    /* a new doc opens in Raw — there is nothing to preview yet */
-    expect(`opened in Raw: ${after.raw}`).toBe("opened in Raw: true");
     expect(`the sidebar row is no longer current: ${after.current}`).toBe(
       "the sidebar row is no longer current: false"
     );

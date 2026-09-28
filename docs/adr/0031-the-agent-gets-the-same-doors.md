@@ -9,6 +9,10 @@ Accepted, 2026-09-04. Implements
 leaves the browser, and puts every file operation it performs on
 [ADR 0014](0014-file-operations-undo-but-they-ask.md)'s timeline.
 
+Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29:
+`set_mode` and `indent_lines` are gone, and `open_doc`/`get_app_state` carry
+no `mode`. A new secret stays a human gesture, as encrypt-selection was.
+
 ## Context
 
 An agent that wanted to use z-notes had two doors and neither was the app's.

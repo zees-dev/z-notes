@@ -10,7 +10,7 @@
    The gates, in the order they run:
 
      · a locked block shows NEITHER plaintext nor ciphertext — the armor is in
-       the document model (Raw), never on the screen
+       the document model, never on the screen
      · wrong passphrase → visible failure, block stays locked
      · right passphrase → plaintext revealed, in an editor carrying every
        anti-exfiltration attribute the research leak table names
@@ -26,8 +26,6 @@
      · every PUT body the browser ever sent carried armor and never plaintext,
        including the autosave that fires mid-reveal
      · reload ⇒ locked again, nothing persisted
-     · Encrypt selection (⌘⇧E) in Raw works while the vault is LOCKED, and the
-       fence it writes decrypts — bun-side — to exactly the selection
      · unlocking is VAULT-WIDE and DISPLAY ONLY: one Unlock reveals this doc,
        the next doc opened arrives revealed with no click, and neither costs a
        byte — ⌘S with nothing edited is byte-identical, and the autosave that
@@ -60,7 +58,7 @@ import {
   type SeedMap,
   type TestServer,
 } from "./helpers";
-import { ensureMode as setMode, forgetBrowserState, launchTestBrowser, pressChord, waitForApp } from "./browser";
+import { forgetBrowserState, launchTestBrowser, pressChord, waitForApp } from "./browser";
 
 /* ------------------------------------------------------------------
    fixtures — everything below is generated, so the test can decrypt it
@@ -90,10 +88,6 @@ const CANARY2 = "CANARYBRAVOONLY";
 
 const KEYS_DOC = "keys/cloud-keys.md";
 const OTHER_DOC = "keys/other-keys.md";
-const SCRATCH_DOC = "notes/scratch.md";
-const SELECTION = "SELECTMEALPHA-BRAVO-CHARLIE";
-
-const SCRATCH_MD = `# Scratch\n\nheader line\n\n${SELECTION}\n\ntail line\n`;
 
 let identity = "";
 let recipient = "";
@@ -227,7 +221,6 @@ async function launchDrivableBrowser(base: string): Promise<Browser> {
 
 /* the shared app vocabulary — see tests/browser.ts */
 const chord = (code: string, ...mods: string[]) => pressChord(page, code, ...mods);
-const ensureMode = (want: "raw" | "preview") => setMode(page, want);
 
 async function openDoc(path: string) {
   await page.click(`#tree .row.file[data-doc="${path}"]`);
@@ -259,7 +252,7 @@ async function typeInVisual(needle: string, text: string) {
   await page.keyboard.type(text);
 }
 
-/** everything the open document RENDERS as text, in either mode */
+/** everything the open document RENDERS as text */
 const docVisibleText = () => page.evaluate(() => document.getElementById("doc")!.textContent ?? "");
 
 /** the observable state of the first secret block in the document */
@@ -295,16 +288,13 @@ async function block() {
 /**
  * MASKED, NEVER DROPPED. A locked block renders no ciphertext, so
  * "the armor is still there" can no longer be read off the block's DOM — the
- * document MODEL is where it has to be, and Source is that model rendered
- * verbatim. Leaves the pane back in Edit.
+ * document MODEL is where it has to be.
  */
-async function armorInModel() {
-  await ensureMode("raw");
-  const raw = await page.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value);
-  await ensureMode("preview");
-  await sleep(150);
-  return raw.includes(blockArmor);
-}
+const armorInModel = () =>
+  page.evaluate(async (armor) => {
+    const { state } = await import("/state.js");
+    return state.docs.get(state.active).markdown.includes(armor);
+  }, blockArmor);
 
 async function clickBlockButton(re: RegExp) {
   const label = await page.evaluate((src) => {
@@ -469,7 +459,6 @@ beforeAll(async () => {
     "inbox.md": "# Inbox\n\nnothing yet\n",
     [KEYS_DOC]: keysDoc,
     [OTHER_DOC]: otherDoc,
-    [SCRATCH_DOC]: SCRATCH_MD,
     ".znotes/identity.age": wrappedIdentity,
     ".znotes/vault.pub": recipient + "\n",
   };
@@ -559,7 +548,7 @@ describe("secrets e2e — a locked block", () => {
     expect(b!.open).toBe(false);
     /* a locked block shows no ciphertext at all. The armor is not in
        this node's rendered text and not in its DOM either — it is in the
-       document model, which is what Raw and the save path read. */
+       document model, which is what the save path reads. */
     expect(b!.text).not.toContain(ARMOR_HEAD);
     expect(await armorInModel()).toBe(true);
 
@@ -885,58 +874,6 @@ describe("secrets e2e — the session does not survive a reload", () => {
   }, 60000);
 });
 
-describe("secrets e2e — Encrypt selection works while LOCKED", () => {
-  test("⌘⇧E in Raw replaces the selection with a fence that decrypts to it", async () => {
-    /* precondition: the vault really is locked — this is the whole point (the
-       recipient is public, so writing a secret needs no passphrase) */
-    await openDoc(KEYS_DOC);
-    expect((await block())!.open).toBe(false);
-
-    await openDoc(SCRATCH_DOC);
-    await ensureMode("raw");
-    await page.waitForSelector("#rawArea", { timeout: 8000 });
-
-    const selected = await page.evaluate((needle) => {
-      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-      const at = ta.value.indexOf(needle);
-      if (at < 0) throw new Error("selection anchor not found in #rawArea");
-      ta.focus();
-      ta.setSelectionRange(at, at + needle.length);
-      return ta.value.slice(at, at + needle.length);
-    }, SELECTION);
-    expect(selected).toBe(SELECTION);
-
-    await chord("KeyE", "Meta", "Shift");
-
-    await page.waitForFunction(
-      () => ((document.getElementById("rawArea") as HTMLTextAreaElement)?.value ?? "").includes("```age"),
-      { timeout: 15000 }
-    );
-
-    const buffer = await page.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value);
-    expect(buffer.includes(SELECTION)).toBe(false); // the selection was REPLACED
-    const fences = ageFences(buffer);
-    expect(fences.length).toBe(1);
-    expect(fences[0].startsWith(ARMOR_HEAD)).toBe(true);
-
-    /* the ONLY proof that matters: bun-side, with the vault identity */
-    expect((await decryptArmor(fences[0])).trimEnd()).toBe(SELECTION);
-
-    await chord("KeyS");
-    const onDisk = await waitUntil(
-      () => {
-        const t = readVaultText(vaultDir, SCRATCH_DOC);
-        return t.includes("```age") ? t : null;
-      },
-      { timeout: 10000, label: "⌘S to write the new fence" }
-    );
-    expect(onDisk).toBe(buffer);
-    expect(ageFences(onDisk)[0]).toBe(fences[0]);
-    /* the vault never unlocked to do any of this */
-    expect(await page.evaluate(() => document.getElementById("ppVeil")!.classList.contains("show"))).toBe(false);
-  }, 60000);
-});
-
 /* ============================================================
    UNLOCKING IS VAULT-WIDE — AND IT IS DISPLAY ONLY
 
@@ -953,17 +890,14 @@ describe("secrets e2e — Encrypt selection works while LOCKED", () => {
        armor only — intercepted here as the request body the browser actually
        sent, not inferred from what landed on disk.
 
-   Runs last of the unlocked describes because the two before it need a LOCKED
-   vault (reload, then ⌘⇧E while locked).
+   Runs last of the unlocked describes because the one before it needs a
+   LOCKED vault (the reload).
    ============================================================ */
 
 describe("secrets e2e — unlocking is vault-wide, and it is display only", () => {
   test("one unlock reveals this doc — and the doc opened NEXT, with no click", async () => {
-    /* the precondition the two describes above left behind — including the
-       PANE MODE: ⌘⇧E is a Raw-only gesture, so the suite arrives here in Raw,
-       where there is no rendered block to look at */
+    /* the precondition the reload above left behind */
     await openDoc(OTHER_DOC);
-    await ensureMode("preview");
     expect(`the vault starts locked: ${(await block())!.open}`).toBe("the vault starts locked: false");
 
     /* the entry point: ONE Unlock button, ONE passphrase */
@@ -1126,8 +1060,7 @@ describe("secrets e2e — degradation without crypto.subtle", () => {
       /* the badge has to SAY why — a silently dead button is the failure mode */
       expect(/unavailable|not available|unsupported|disabled|secure context|no crypto/i.test(s.text)).toBe(true);
       /* …and it still shows no ciphertext: "we cannot decrypt here" is not a
-         reason to paint the armor into the document. The source is
-         one ⌘E away, exactly as it is for every other locked block. */
+         reason to paint the armor into the document. */
       expect(s.text).not.toContain(ARMOR_HEAD);
       expect(s.docText).not.toContain(ARMOR_HEAD);
       /* no live unlock affordance */

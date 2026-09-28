@@ -599,7 +599,7 @@ function fillCommandFoot(c, foot) {
     run.disabled = !ready || state.term.busy;
     run.title = ready ? "Run this command and show its output" : "Unlock the terminal first (Settings → Terminal)";
     run.addEventListener("click", async () => {
-      /* NOT openSettings(): that call is a GATED navigation — with a dirty Raw
+      /* NOT openSettings(): that call is a GATED navigation — with a dirty
          buffer it raises the exit guard and paints nothing, and this handler
          used to run the command anyway, streaming its output into a page the
          user was never shown. Running the command is the decision the click

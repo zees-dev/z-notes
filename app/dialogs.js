@@ -36,7 +36,18 @@ export function confirmDialog(opts) {
      zero-height paragraph and its padding — a band of empty panel between the
      path and the verbs that reads as a rendering fault. */
   $("#cfBody").textContent = opts.body || "";
-  $("#cfBody").closest(".modal-body").hidden = !opts.body;
+  $("#cfBody").closest(".modal-body").hidden = !opts.body && !opts.field;
+  /* `field` asks for text too (a new secret's plaintext): Enter is a newline,
+     ⌘/Ctrl+Enter is OK, and `takeField` empties it on every way out */
+  const field = $("#cfField");
+  field.hidden = !opts.field;
+  field.placeholder = opts.field || "";
+  field.value = "";
+  field.onkeydown = (e) => {
+    if (e.key !== "Enter" || !(e.metaKey || e.ctrlKey)) return;
+    e.preventDefault();
+    confirmOk();
+  };
   $("#cfOkTxt").textContent = opts.ok || "Confirm";
   /* THE CHROME IS PER CALLER, not hard-coded for the delete case.
      The warning triangle, the red OK button and the footer line are the app's
@@ -52,12 +63,22 @@ export function confirmDialog(opts) {
   $("#cfOk").classList.toggle("primary", !danger);
   $("#cfNote").textContent = opts.note || (danger ? "Recoverable only from git history." : "");
   $("#cfVeil").classList.add("show");
-  setTimeout(() => $("#cfOk").focus(), 30);
+  setTimeout(() => (opts.field ? field : $("#cfOk")).focus(), 30);
+}
+
+/** The field's text, gone from the DOM: it may be a secret's plaintext. */
+function takeField() {
+  const field = $("#cfField");
+  const text = field.value;
+  field.value = "";
+  field.hidden = true;
+  return text;
 }
 
 export function closeConfirm() {
   const fn = state.confirming && state.confirming.onCancel;
   state.confirming = null;
+  takeField();
   $("#cfVeil").classList.remove("show");
   if (fn) fn();
 }
@@ -67,8 +88,9 @@ export function closeConfirm() {
 export function confirmOk() {
   const c = state.confirming;
   state.confirming = null;
+  const text = takeField();
   $("#cfVeil").classList.remove("show");
-  if (c && c.onOk) c.onOk();
+  if (c && c.onOk) c.onOk(text);
 }
 
 /* ---------- save conflict (dirty buffer → banner with diff) ---------- */
@@ -76,11 +98,10 @@ export function confirmOk() {
 /**
  * A 409 used to be answered by re-GETting the doc and assigning the disk text
  * straight over `doc.markdown` — silently destroying whatever the user had
- * typed, with no confirmation and no undo (`renderDoc` rebuilds the textarea,
- * so even the browser's own undo stack went with it). The rule is the
- * opposite: clean buffer → silent reload, dirty buffer → this banner, with the
- * diff and both ways out. The 409 body already carries the server's markdown
- * precisely so it can be drawn without a second round trip.
+ * typed, with no confirmation and no undo. The rule is the opposite: clean
+ * buffer → silent reload, dirty buffer → this banner, with the diff and both
+ * ways out. The 409 body already carries the server's markdown precisely so
+ * it can be drawn without a second round trip.
  */
 export function conflictDialog(path, diskText, mineText) {
   state.conflict = { path: path, disk: diskText, mine: mineText, mode: "conflict" };
@@ -241,7 +262,7 @@ function lineDiff(disk, mine) {
  *
  * `lineDiff` above intentionally includes a context row and collapses the
  * whole middle between a common head and tail. That is useful in the conflict
- * and proposal surfaces, but it is not the Raw-exit contract: two edits far
+ * and proposal surfaces, but it is not the exit-guard contract: two edits far
  * apart must not make every unchanged line between them appear removed and
  * re-added. Myers' shortest-edit walk gives the real changed rows without
  * copying the full document into the modal. The result is capped at the same

@@ -89,47 +89,33 @@ ES modules served as-is, plus one React island the server bundles at boot
   `markdown-source.ts` (the source adapter). Leaves import only leaves.
 - **The island** — `block-editor.tsx`: the BlockNote editor (Edit), React,
   TypeScript, bundled by `server/index.ts` at boot and loaded lazily by
-  `editor.js` from `/vendor/editor.js`. It imports npm packages and
-  `markdown-source.ts` only; `mountEditor(host, options)` takes callbacks
-  (`onChange`, `onSource`, `renderSecret`, `resolveWikiLink`, `onWikiLink`,
-  `copyText`) and returns a controller (`setMarkdown`, `revealLine`,
-  `anchorLine`, `getSecrets`, `replaceSecret`, `destroy`). The adapter
-  (`SourceSession`) owns format conversion: top-level MDAST groups with byte
-  ranges, untouched groups verbatim, edited groups through the standard
-  serialiser, protected blocks for what it cannot edit, ciphertext blocks for
+  `editor.js` from `/vendor/editor.js`; a load that fails leaves a Reload note
+  and nothing editable. It imports npm packages and `markdown-source.ts` only;
+  `mountEditor(host, options)` takes callbacks (`onChange`, `onSourceEdit`,
+  `onNewSecret`, `renderSecret`, `copyText`, `resolveWikiLink`, `onWikiLink`,
+  `onError`) and returns a controller (`setMarkdown`, `revealLine`,
+  `anchorLine`, `getSecrets`, `replaceSecret`, `insertSecret`, `destroy`). The
+  adapter (`SourceSession`) owns format conversion: top-level MDAST groups
+  with byte ranges, untouched groups verbatim, edited groups through the
+  standard serialiser, protected blocks for what it cannot edit (edited in
+  place as Markdown and spliced back by byte range), ciphertext blocks for
   age fences. Extra whitespace between top-level groups imports as ordinary
   empty paragraphs with zero-width source groups: three/four newlines map to
   one, five/six to two. Retained separators preserve the original bytes;
   newly inserted empty paragraphs add two newlines each. Same-family list
   boundaries stay separators because edited markers can merge those lists.
   Editing behaviour is BlockNote's; the shell never sees a block.
-- **Features** — `tree, editor, rawedit, secrets, chat, terminal,
-  trash, settings, shell, webmcp, zoom, keybar`, composed by `app.js`
+- **Features** — `tree, editor, secrets, chat, terminal,
+  trash, settings, shell, webmcp, zoom`, composed by `app.js`
   (`start()`). These are mutually entangled (14 mutual import pairs, a legacy
   of the single-file split); new cross-feature needs should go through
   `state.js`, an injected callback, or a DOM event rather than adding pairs.
   No `export let` anywhere in `app/`.
-  `editor.js` owns the doc lifecycle for BOTH surfaces: `renderDoc` mounts
-  the island (Edit) or `rawedit.js` (Source) into `#doc`, holds the disk
-  baseline, the exit guard, autosave and the CAS save keyed by the doc object
-  (so a move mid-save follows the doc). `rawedit.js` is a
-  leaf of a FEATURE rather than a peer of one: `ui.js` in, `editor.js` its only
-  importer. It builds the Source surface, a `contenteditable` with one block per
-  source line so a heading is drawn at the heading's size and a link in the
-  link's colour (ADR 0032), behind the textarea's own vocabulary (`value`,
-  `selectionStart`, `setSelectionRange`, `input`/`select`/`copy`/`cut`) plus
-  two verbs of its own: `replaceRange`, the write primitive every edit goes
-  through, and `boxAt`, where ADR 0027's measurement happens. `keybar.js` is
-  the newest and shallow on purpose: `ui.js`, `history.js` and `editor.js` in,
-  `app.js` its only importer, no logic of its own. It owns the bar on the soft
-  keyboard's top edge (ADR 0034), where a phone gets the Outdent, Indent, Undo,
-  Redo and Done its keyboard has not got; the markup is static in `index.html`
-  and every button calls the function its missing chord calls. What it owns is
-  the CONDITION `raw-focus` on `#app`, which with `wireVisualViewport`'s
-  `kb-up` is what base.css §8a draws the bar on, and `--keybar`, the bar's
-  measured height, which `revealRawCaret` subtracts alongside `--kb`. Edit has
-  its own phone toolbar inside the island (Undo, Redo, Bullet, Numbered,
-  Checklist, Outdent, Indent, and a ⋯ position calibration), docked on
+  `editor.js` owns the doc lifecycle: `renderDoc` mounts the island into
+  `#doc`, holds the disk baseline, the exit guard, autosave and the CAS save
+  keyed by the doc object (so a move mid-save follows the doc). Edit's phone
+  toolbar lives inside the island (Undo, Redo, Bullet, Numbered, Checklist,
+  Outdent, Indent, and a ⋯ position calibration), docked on
   `--visual-bottom`, the visible viewport's bottom edge that
   `wireVisualViewport` publishes beside `--kb`.
 - **Static, not modules** — `index.html`, `themes/*.css`, `manifest.json`
@@ -194,17 +180,17 @@ re-issued if the user says leave):
 
 | Surface | Gate | Raised by |
 |---|---|---|
-| a doc buffer (Edit or Source) that differs from disk, or a dirty revealed secret | `guardRawExit` (editor.js) | ⌘E, the mode chip, Esc, `openDoc`, `openSettings`, Back |
+| the doc buffer that differs from disk, or a dirty revealed secret | `guardExit` (editor.js) | `openDoc`, `openSettings`, deleting the open doc, Back |
 | the settings page's unsaved draft | `guardSettingsExit` (settings.js) | the header Back button, `openDoc`, Back |
 
-The Raw gate's presentation is policy (ADR 0022):
+The doc gate's presentation is policy (ADR 0022):
 `editor.confirmBeforeExit=true` mounts its staged-diff question, while `false`
 keeps the same gate and pending destination but saves first and proceeds only
 after the write lands. The Settings-draft guard is separate and unaffected.
 
 Below them, Back also unwinds the layers that cover the document — the veils
-(`dismissTop`), then the assistant while it is an overlay, then Source→Edit on
-a phone. `shell.js onPop` is the one place that order is written down.
+(`dismissTop`), then the assistant while it is an overlay. `shell.js onPop` is
+the one place that order is written down.
 
 ## Tests as the enforcement layer
 

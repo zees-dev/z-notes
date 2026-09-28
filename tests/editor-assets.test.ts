@@ -201,7 +201,7 @@ test("dependency bytes change asset URLs; a failed build preserves the shell, AP
       const failed = await srv.get(`/vendor/editor.${ext}`);
       expect(failed.status).toBe(503);
       expect(failed.body.error).toBe("vendor-unavailable");
-      expect(failed.body.message).toContain("Source");
+      expect(failed.body.message).toBe("The editor bundle is unavailable; reload once the server has rebuilt it.");
       expect(typeof failed.body.detail).toBe("string");
     }
     const degraded = await srv.get("/");

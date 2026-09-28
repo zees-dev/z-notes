@@ -7,6 +7,11 @@ click-to-edit and ⌘E, and builds on
 [ADR 0015](0015-a-newline-is-a-line-break.md) — the reason there is
 a shared coordinate to keep at all.
 
+**Superseded by [0039](0039-edit-is-the-only-doc-surface.md)**, 2026-09-29:
+there is no mode switch left to keep a line across. The island's measured
+anchor (`anchorLine`, `revealLine`) outlives it, as the way a re-render keeps
+the reader's block where it sat.
+
 ## Context
 
 Clicking a line in Preview jumped the document and left the caret somewhere

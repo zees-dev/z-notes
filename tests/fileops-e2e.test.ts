@@ -27,8 +27,8 @@ import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test
 import { type Browser, type Page } from "puppeteer-core";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { startServer, type SeedMap, type TestServer } from "./helpers";
-import { ensureMode, forgetBrowserState, launchTestBrowser, pressChord, waitForFocusedInput } from "./browser";
+import { startServer, waitUntil, type SeedMap, type TestServer } from "./helpers";
+import { forgetBrowserState, launchTestBrowser, pressChord, waitForFocusedInput } from "./browser";
 
 /* ------------------------------------------------------------------
    fixtures
@@ -150,9 +150,6 @@ async function openDoc(p: Page, path: string) {
   }
   await p.waitForFunction((x) => document.getElementById("stPath")!.textContent === x, { timeout: 10000 }, path);
 }
-
-/** [[link]] pills only exist in Edit — make sure that is the mode */
-const ensureEdit = (p: Page) => ensureMode(p, "preview");
 
 const treePaths = (p: Page) =>
   p.evaluate(() => [...document.querySelectorAll<HTMLElement>("#tree .row.file")].map((r) => r.dataset.doc!));
@@ -743,7 +740,6 @@ describe("e2e — sidebar move is keyboard-reachable", () => {
 describe("e2e — a broken [[link]] is flagged and offers to create the doc", () => {
   test("the dead pill is flagged, the live one is not, and the create affordance creates + opens", async () => {
     await openDoc(page, BROKEN);
-    await ensureEdit(page);
     await page.waitForFunction(
       (s) => !!document.querySelector(`#doc button.wiki-link[data-target="${s}"]`),
       { timeout: 10000 },
@@ -801,7 +797,6 @@ describe("e2e — a broken [[link]] is flagged and offers to create the doc", ()
 
     /* going back, the pill is no longer flagged — the link resolves now */
     await openDoc(page, BROKEN);
-    await ensureEdit(page);
     await page
       .waitForFunction(
         (s) => {
@@ -900,16 +895,8 @@ describe("e2e — a dirty buffer is never overwritten by a 409", () => {
     const errorsBefore = pageErrors.length;
     await openDoc(page, CX_REF);
 
-    /* type in Raw, which is the exact source the save will send */
-    /* the statusbar mode chip — one button, it toggles, and the doc opens in
-       Edit, so one click is Source. Asserted rather than assumed. */
-    expect(await page.$eval("#stMode", (b) => b.getAttribute("data-mode"))).toBe("preview");
-    await page.click("#stMode");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
-    await page.focus("#rawArea");
-    await page.keyboard.press("End");
-    await page.type("#rawArea", "\n" + TYPED + "\n");
-    await page.waitForFunction(() => !!document.querySelector("#stDirty, .dirty, [data-dirty='true']") || true);
+    await (await page.waitForSelector('#doc .bn-editor [data-content-type="paragraph"]', { timeout: 20000 }))!.click();
+    await page.keyboard.type(TYPED);
 
     /* the server rewrites CX_REF's [[link]] on disk, out from under the buffer */
     const mv = await srv.api("PATCH", "/api/docs/" + CX_TARGET.split("/").map(encodeURIComponent).join("/"), {
@@ -932,7 +919,7 @@ describe("e2e — a dirty buffer is never overwritten by a 409", () => {
       hasDel: !!document.querySelector("#cxDiff .dl.del"),
       takeDisk: !!document.querySelector("[data-act='cx-take-disk']"),
       keepMine: !!document.querySelector("[data-act='cx-keep-mine']"),
-      raw: (document.getElementById("rawArea") as HTMLTextAreaElement | null)?.value ?? "",
+      typed: document.querySelector("#doc .bn-editor")?.textContent ?? "",
     }));
     expect(`the banner names the doc: ${shown.path}`).toBe(`the banner names the doc: ${CX_REF}`);
     expect(`the banner draws a diff: ${shown.diffLines > 0 && shown.hasAdd && shown.hasDel}`).toBe(
@@ -942,7 +929,7 @@ describe("e2e — a dirty buffer is never overwritten by a 409", () => {
     expect(`keep-mine offered: ${shown.keepMine}`).toBe("keep-mine offered: true");
 
     /* THE assertion: the typing is still in the editor, untouched */
-    expect(`the buffer still holds what was typed: ${shown.raw.includes(TYPED)}`).toBe(
+    expect(`the buffer still holds what was typed: ${shown.typed.includes(TYPED)}`).toBe(
       "the buffer still holds what was typed: true"
     );
 
@@ -1032,7 +1019,7 @@ describe("e2e — creation is context-aware and path-aware", () => {
     await escape();
   }, 45000);
 
-  test("a/b/c.md creates the intermediate folders and the doc, and opens it in Source", async () => {
+  test("a/b/c.md creates the intermediate folders and the doc, and opens it ready to type", async () => {
     await openDoc(page, KEEPER);
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     try {
@@ -1050,10 +1037,11 @@ describe("e2e — creation is context-aware and path-aware", () => {
         "the folders are real: true"
       );
       expect(`url: ${await page.evaluate(() => location.pathname)}`).toBe("url: /d/notes/a/b/c.md");
-      /* every human create route opens the new doc in Source (`mintEntry`) */
-      expect(
-        `opens in Source: ${await page.evaluate(() => document.getElementById("doc")!.classList.contains("raw-mode"))}`
-      ).toBe("opens in Source: true");
+      /* every human create route opens the new doc with the caret in Edit (`mintEntry`) */
+      await waitUntil(() => page.evaluate(() => !!document.querySelector("#doc .bn-editor")?.contains(document.activeElement)), {
+        timeout: 20000,
+        label: "the caret in the new doc",
+      });
     } finally {
       await del("notes/a/b/c.md");
     }

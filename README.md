@@ -12,9 +12,9 @@ edit relay and a gated terminal.
 
 - **Markdown vault** — a directory of `.md` files, watched and indexed into
   sqlite. Deleting the index loses nothing; the files are the truth.
-- **Editor + preview** that keep the source's line structure, live-updated
-  across every open browser via SSE. Mermaid diagrams render from a committed,
-  sandboxed bundle — a fence is treated as untrusted input.
+- **A Notion-style block editor** over the Markdown file: untouched bytes stay
+  exactly as written, and every open browser is live-updated via SSE. Mermaid
+  diagrams render under `securityLevel: strict` — a fence is untrusted input.
 - **Secrets** — `age`-encrypted blocks inside your notes, encrypted and
   decrypted **in the browser**. The server never sees a passphrase or a
   plaintext secret; the test suite enforces it.

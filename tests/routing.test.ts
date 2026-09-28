@@ -3,9 +3,8 @@
 
    The app puts one URL per open doc at `/d/<vault path>`. This file measures
    the claims that shape makes: every navigation is a history entry, BACK and
-   FORWARD walk the docs, the URL survives a hard reload and a rename, view
-   state (⌘E) never costs a doc entry, and an open overlay swallows exactly one
-   BACK instead of letting it leave the doc.
+   FORWARD walk the docs, the URL survives a hard reload and a rename, and an
+   open overlay swallows exactly one BACK instead of letting it leave the doc.
 
    Same driver as e2e.test.ts: puppeteer-core over the cached Chromium headless
    shell. Every test gets a FRESH page, so history depth is measured rather than
@@ -510,24 +509,6 @@ describe("routing — the root resumes", () => {
   }, 60000);
 });
 
-/* ---------------- view state ---------------- */
-
-describe("routing — editor MODE is view state, not navigation", () => {
-  test("⌘E five times adds no entries and BACK still lands on the previous DOC", async () => {
-    await boot("/");
-    await clickDoc(B);
-    const len = await histLen();
-    for (let i = 0; i < 5; i++) {
-      await chord("KeyE");
-      await sleep(120);
-    }
-    expect(await histLen()).toBe(len);
-    expect(await urlPath()).toBe(dUrl(B));
-    await backTo(A);
-    expect(await shown()).toBe(A);
-  }, 60000);
-});
-
 /* ---------------- settings is a PLACE, not an overlay ---------------- */
 
 /* on the settings page? the shared predicate — see tests/browser.ts */
@@ -966,13 +947,9 @@ describe("routing — renames and dirty buffers", () => {
   test("BACK with a dirty buffer waits for confirmation, then Save & exit writes before navigating", async () => {
     await boot("/");
     await clickDoc(B);
-    await chord("KeyE");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 6000 });
-    await page.click("#rawArea");
-    await page.keyboard.down("Meta");
-    await page.keyboard.press("ArrowDown"); // end of the textarea
-    await page.keyboard.up("Meta");
-    await page.keyboard.type("\nROUTING-DIRTY-MARKER\n");
+    /* the heading, not a paragraph: a click on a [[link]] pill would navigate */
+    await (await page.waitForSelector('#doc .bn-editor [data-content-type="heading"]', { timeout: 20000 }))!.click();
+    await page.keyboard.type("ROUTING-DIRTY-MARKER");
     await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent !== "Saved", { timeout: 6000 });
 
     await back();
@@ -989,10 +966,12 @@ describe("routing — renames and dirty buffers", () => {
       label: "Save & exit to write the dirty buffer before replaying BACK",
     });
     expect(readVaultText(srv.vault, B)).toContain("ROUTING-DIRTY-MARKER");
-    /* and FORWARD brings the text back — the raw buffer still carries it */
+    /* and FORWARD brings the text back */
     await forward();
     await settled(B);
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 6000 });
-    expect(await page.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value)).toContain("ROUTING-DIRTY-MARKER");
+    await page.waitForFunction(
+      () => (document.querySelector("#doc .bn-editor")?.textContent ?? "").includes("ROUTING-DIRTY-MARKER"),
+      { timeout: 20000 }
+    );
   }, 90000);
 });

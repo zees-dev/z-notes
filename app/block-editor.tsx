@@ -50,7 +50,12 @@ export type { SecretIdentity } from './markdown-source';
 export interface EditorOptions {
   markdown: string;
   onChange(markdown: string): void;
-  onSource(line: number): void;
+  /** A protected block's Markdown was replaced in place; the argument is the whole doc. */
+  onSourceEdit(markdown: string): void;
+  /** A protected block's open draft changed: its text is an unsaved edit. */
+  onDraft(): void;
+  /** The user asked for a new secret (slash menu). The app encrypts and calls insertSecret. */
+  onNewSecret(): void;
   renderSecret(secret: SecretIdentity): HTMLElement;
   copyText?(text: string): void | Promise<void>;
   resolveWikiLink?(target: string): string | undefined;
@@ -71,11 +76,18 @@ export interface EditorController {
   anchorLine(): { line: number; anchor: number } | null;
   getSecrets(): SecretIdentity[];
   replaceSecret(id: string, ciphertext: string): boolean;
+  /** Insert a ```age block holding `ciphertext` after the cursor's top-level
+      block (replacing it if it is an empty paragraph). False if the doc refused it. */
+  insertSecret(ciphertext: string): boolean;
   /** Whether the island's OWN history holds a step. False means ⌘Z/⌘⇧Z is the
       app timeline's again — a file operation is only ever recorded there
       (ADR 0014). */
   canUndo(): boolean;
   canRedo(): boolean;
+  /** Whether a protected block's in-place edit is open: its text is in no buffer. */
+  hasDraft(): boolean;
+  /** Done every open protected-block edit, so its text reaches the buffer. */
+  commitDrafts(): void;
 }
 
 /* `I.copy`, the shell's glyph — restated rather than imported, because the
@@ -166,20 +178,58 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
   let stale = false;
   let replacing = false;
   let destroyed = false;
-  const lineFor = (id: string) => session.range(id, blocks())?.line ?? 1;
+  /* Every armor this mount re-encrypted, oldest first, with its block: a
+     protected block's draft opened before a save still holds the old armor, and
+     Done must not restore it. */
+  const reencrypted: { blockId: string; from: string; to: string }[] = [];
+  const drafts = new Map<string, { draft: string; close(): void }>();
+  /* Every open draft lands in one splice: the app reloads the island from the
+     result, which ends every edit, so a draft left out would be lost. */
+  function commit() {
+    const ranges = session.ranges(blocks());
+    const next = [...drafts].map(([id, { draft }]) => ({
+      range: ranges.get(id)!,
+      text: reencrypted.reduce((text, { blockId, from, to }) => blockId === id ? text.replaceAll(from, to) : text, draft),
+    })).sort((a, b) => b.range.start - a.range.start)
+      .reduce((doc, { range, text }) => doc.slice(0, range.start) + text + doc.slice(range.end), markdown);
+    if (next !== markdown) options.onSourceEdit(next);
+    else for (const { close } of [...drafts.values()]) close();
+  }
   const nodeFor = (id: string) => host.querySelector(`[data-id="${CSS.escape(id)}"]`);
   const scrollPane = () => host.closest<HTMLElement>('.scroll');
   const source = createReactBlockSpec({
-    type: 'source', content: 'none',
-    propSchema: { source: { default: '' }, label: { default: 'Protected Markdown' }, metadata: { default: false } },
+    type: 'source', content: 'none', propSchema: { source: { default: '' }, metadata: { default: false } },
   }, {
-    render: ({ block }) => <div className="z-source-block" contentEditable={false}>
-      <strong>{block.props.label}</strong>
-      {session.sourceParts(block.id, blocks()).map((part, index) => 'secret' in part
-        ? <SecretDOM key={part.secret.id} identity={part.secret} render={options.renderSecret} />
-        : <pre key={index}>{part.source}</pre>)}
-      <button type="button" onClick={() => options.onSource(lineFor(block.id))}>Edit source</button>
-    </div>,
+    render: ({ block }) => {
+      const [draft, setDraft] = useState<string | null>(null);
+      // Every render, so the entry holds the latest draft.
+      useEffect(() => {
+        if (draft === null) return;
+        drafts.set(block.id, { draft, close: () => setDraft(null) });
+        return () => { drafts.delete(block.id); };
+      });
+      return <div className="z-source-block" contentEditable={false}>
+        <strong>{block.props.metadata ? 'Metadata' : 'Protected Markdown'}</strong>
+        {draft === null ? <>
+          {session.sourceParts(block.id, blocks()).map((part, index) => 'secret' in part
+            ? <SecretDOM key={part.secret.id} identity={part.secret} render={options.renderSecret} />
+            : <pre key={index}>{part.source}</pre>)}
+          <button type="button" onClick={() => setDraft(block.props.source)}>Edit</button>
+        </> : <>
+          <textarea className="z-source-edit" spellCheck={false} autoComplete="off" data-gramm="false" autoFocus value={draft}
+            onChange={event => { setDraft(event.target.value); options.onDraft(); }} onKeyDown={event => {
+              if (event.key === 'Escape') setDraft(null);
+              else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) commit();
+              else return;
+              // These two are the draft's, never a shell layer's.
+              event.preventDefault();
+              event.stopPropagation();
+            }} />
+          <button type="button" onClick={commit}>Done</button>
+          <button type="button" onClick={() => setDraft(null)}>Cancel</button>
+        </>}
+      </div>;
+    },
     toExternalHTML: ({ block }) => <pre>{block.props.source}</pre>,
   })();
   const renderSourceView = source.implementation.render;
@@ -456,7 +506,9 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
           have theirs, so the handle is centred on the line it measures. */}
       <SideMenuController floatingUIOptions={{ useFloatingOptions: { middleware: [centreOnFirstLine] } }} />
       <SuggestionMenuController triggerCharacter="/" getItems={async query => filterSuggestionItems([
-        ...getDefaultReactSlashMenuItems(editor), ...getDiagramSlashMenuItems(editor),
+        ...getDefaultReactSlashMenuItems(editor),
+        { title: 'Secret', aliases: ['secret', 'encrypt', 'age'], group: 'Others', onItemClick: () => options.onNewSecret() },
+        ...getDiagramSlashMenuItems(editor),
       ], query)} />
     </BlockNoteView>
     <Toolbar>
@@ -471,7 +523,7 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
   </>));
   return {
     destroy() {
-      destroyed = true; unsubscribe(); unguard(); root.unmount();
+      destroyed = true; unsubscribe(); unguard(); root.unmount(); drafts.clear();
       for (const type of dragEvents) document.removeEventListener(type, dragging, true);
     },
     getMarkdown() { return markdown; },
@@ -498,7 +550,7 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       const pane = anchor === undefined ? null : node && scrollPane();
       if (!pane) node?.scrollIntoView({ block: 'center' });
       if (block.type !== 'source' && block.type !== 'secret') editor.setTextCursorPosition(block.id, 'start');
-      // The carried offset is the contract of a mode switch, so it is applied
+      // The carried offset is the contract of a re-render, so it is applied
       // last: the caret's own scrolling must not win over it.
       if (pane) pane.scrollTop = Math.max(0, Math.min(
         pane.scrollTop + node!.getBoundingClientRect().top - pane.getBoundingClientRect().top - anchor!,
@@ -519,11 +571,14 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
     },
     canUndo,
     canRedo,
+    hasDraft: () => drafts.size > 0,
+    commitDrafts: commit,
     getSecrets() { return session.secrets(blocks()); },
     replaceSecret(id, ciphertext) {
       const next = structuredClone(blocks());
       const identity = session.secrets(next).find(secret => secret.id === id);
       if (!identity) return false;
+      if (identity.ciphertext) reencrypted.push({ blockId: identity.blockId, from: identity.ciphertext, to: ciphertext });
       session.replaceSecret(id, ciphertext, next);
       const block = next.find(block => block.id === identity.blockId)!;
       if (block.type === 'source') sourceValues.get(block.id)?.add(block.props.source);
@@ -538,6 +593,17 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       finally { replacing = false; }
       changed();
       return true;
+    },
+    insertSecret(ciphertext) {
+      // A protected block never nests, so it follows the list the cursor is in.
+      let at = editor.getTextCursorPosition().block;
+      for (let parent = editor.getParentBlock(at); parent; parent = editor.getParentBlock(parent)) at = parent;
+      const secret: EditorBlock = { type: 'secret', props: { ciphertext } };
+      const [inserted] = at.type === 'paragraph' && !at.content.length
+        ? editor.replaceBlocks([at], [secret]).insertedBlocks
+        : editor.insertBlocks([secret], at, 'after');
+      // The guard refuses a block after one that must remain last.
+      return !!editor.getBlock(inserted.id);
     },
   };
 }

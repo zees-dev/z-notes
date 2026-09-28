@@ -4,15 +4,15 @@
 
    Every claim here needs the real island in a real browser: a visual edit
    rewrites only the source group it touched (frontmatter, ciphertext and
-   unsupported HTML keep their bytes), the slash menu / formatting toolbar /
-   drag handles are the native ones, a failed bundle still leaves Source
-   usable — and the round-trip corpus survives Edit → Source → Edit unchanged.
+   unsupported HTML keep their bytes), a protected block edits in place, the
+   slash menu / formatting toolbar / drag handles are the native ones, a failed
+   bundle says so — and the round-trip corpus opens in Edit unchanged.
    ============================================================ */
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, type Page } from "puppeteer-core";
-import { appDriver, ensureMode, launchTestBrowser, newAppPage, pressChord } from "./browser";
+import { appDriver, launchTestBrowser, newAppPage, pressChord, waitForFocusedInput } from "./browser";
 import { readVaultText, sleep, startServer, waitUntil, type TestServer } from "./helpers";
 import { CORPUS } from "./markdown-corpus";
 
@@ -65,10 +65,6 @@ async function currentMarkdown() {
     return state.docs.get(state.active).markdown;
   });
 }
-async function source() {
-  await ensureMode(page, "raw", { via: "chip" });
-  return page.$eval("#rawArea", element => (element as HTMLTextAreaElement).value);
-}
 async function save() {
   const response = page.waitForResponse(response => response.url().endsWith("/api/docs/" + path) && response.request().method() === "PUT");
   await pressChord(page, "KeyS");
@@ -77,9 +73,12 @@ async function save() {
 }
 const blocks = (type: string) => page.$$(`[data-content-type="${type}"]`);
 
+/** The doc's entrance animation offsets every rect until it ends. */
+const entered = () => page.$eval("#doc", async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
+
 /** Settle the entrance animation, hover a block, and take its drag handle. */
 async function grabHandle(selector: string) {
-  await page.$eval("#doc", async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
+  await entered();
   await page.hover(selector);
   const handle = (await page.waitForSelector('[aria-label="Open block menu"]'))!;
   return { handle, start: (await handle.boundingBox())! };
@@ -120,9 +119,7 @@ test("blank paragraphs inserted with Enter survive repeated save/reload and rema
     await page.waitForSelector('.bn-editor[contenteditable="true"]');
     const paragraphs = await blocks("paragraph");
     expect(await Promise.all(paragraphs.map(p => p.evaluate(e => e.textContent)))).toEqual(["Text", "", "Other text"]);
-    expect(await source()).toBe(spaced);
-    await ensureMode(page, "preview", { via: "chip" });
-    await page.waitForSelector('.bn-editor[contenteditable="true"]');
+    expect(await currentMarkdown()).toBe(spaced);
   }
   await (await blocks("paragraph"))[1].click();
   await settled();
@@ -177,16 +174,94 @@ test("native moving unfinished code closes its fence and preserves following pro
   expect(await page.$eval('[data-content-type="paragraph"]', element => element.textContent)).toBe("Prose stays separate");
 }, 35000);
 
-test("visual editing is default; source switches preserve exact original bytes", async () => {
+test("a protected block edits in place: Done replaces only its bytes and keeps every open draft, ⌘Z restores them, Esc and Cancel change nothing", async () => {
   const original = "---\ntitle: Original\n---\n\n# Heading\n\nProse  \nnext line\n\n<div>opaque</div>\n";
+  const changed = original.replace("title: Original", "title: Changed").replace("opaque", "opaque!");
   await boot(original);
-  expect(await page.$eval("#stModeTxt", e => e.textContent)).toBe("Edit");
-  expect(await source()).toBe(original);
-  expect(await page.$eval("#stModeTxt", e => e.textContent)).toBe("Source");
-  await ensureMode(page, "preview", { via: "chip" });
-  expect(await source()).toBe(original);
+  // The frontmatter's Edit is the first button: metadata must remain first.
+  // A draft is its textarea followed by Done and Cancel.
+  async function draft(from = "Original", to = "Changed") {
+    await page.click(".z-source-block button");
+    await waitForFocusedInput(page, ".z-source-edit");
+    await page.$eval(".z-source-edit", (element, from) => {
+      const field = element as HTMLTextAreaElement;
+      const at = field.value.indexOf(from);
+      field.setSelectionRange(at, at + from.length);
+    }, from);
+    await page.keyboard.type(to);
+    expect(await page.$eval(".z-source-edit", e => (e as HTMLTextAreaElement).value)).toBe(`---\ntitle: ${to}\n---`);
+  }
+  for (const leave of ["Escape", "Cancel"]) {
+    await draft();
+    if (leave === "Escape") await page.keyboard.press("Escape");
+    else await page.click(".z-source-edit + button + button");
+    await page.waitForFunction(() => !document.querySelector(".z-source-edit"));
+    expect(await currentMarkdown()).toBe(original);
+  }
+  await draft();
+  // A second open draft must survive the first one's Done.
+  await page.$$eval(".z-source-block button", buttons => (buttons.at(-1) as HTMLButtonElement).click());
+  await page.waitForFunction(() => document.querySelectorAll(".z-source-edit").length === 2 && document.activeElement === document.querySelectorAll(".z-source-edit")[1]);
+  await page.keyboard.press("End");
+  for (const _ of "</div>") await page.keyboard.press("ArrowLeft");
+  await page.keyboard.type("!");
+  await page.click(".z-source-edit + button");
+  await waitUntil(async () => await currentMarkdown() === changed, { label: "the block edit applied" });
+  await save();
+  expect(readVaultText(srv.vault, path)).toBe(changed);
+  await pressChord(page, "KeyZ");
+  await waitUntil(async () => await currentMarkdown() === original, { label: "the block edit undone" });
+  await save();
   expect(readVaultText(srv.vault, path)).toBe(original);
+  // An open draft is an unsaved edit: ⌘S writes it.
+  await draft();
+  await save();
+  expect(readVaultText(srv.vault, path)).toBe(original.replace("title: Original", "title: Changed"));
+  // An agent write over an open draft keeps the draft as its own undo step.
+  await draft("Changed", "Agent");
+  await page.evaluate(async p => { await (await import("/editor.js")).replaceDocText(p, "agent\n"); }, path);
+  await pressChord(page, "KeyZ");
+  await waitUntil(async () => await currentMarkdown() === original.replace("title: Original", "title: Agent"), { label: "the draft kept under the agent write" });
 }, 40000);
+
+test("leaving saves an open protected-block draft, which survives an external write", async () => {
+  const app = appDriver(page, srv.base);
+  const draft = async (text: string) => {
+    await app.clickDoc(path);
+    await page.click(".z-source-block button");
+    await waitForFocusedInput(page, ".z-source-edit");
+    await page.keyboard.type(text);
+  };
+  await boot("<div>opaque</div>\n");
+  await page.click(".z-source-block button");
+  await waitForFocusedInput(page, ".z-source-edit");
+  await page.keyboard.type(" drafted");
+  await page.click('#tree [data-doc="other.md"]');
+  await app.waitVeil("xgVeil", true);
+  expect(await page.$eval("#xgDiff", e => e.textContent)).toContain("protected block");
+  await page.click('[data-act="xg-save"]');
+  await app.settled("other.md");
+  expect(readVaultText(srv.vault, path)).toContain("drafted");
+  /* With the guard off, the automatic save carries the draft too. */
+  expect((await srv.api("PUT", "/api/settings", { editor: { confirmBeforeExit: false } })).status).toBe(200);
+  try {
+    await waitUntil(() => page.evaluate(async () => (await import("/state.js")).state.settings.editor.confirmBeforeExit === false), { label: "guard off" });
+    await draft(" unasked");
+    await page.click('#tree [data-doc="other.md"]');
+    await app.settled("other.md");
+    expect(readVaultText(srv.vault, path)).toContain("unasked");
+  } finally {
+    expect((await srv.api("PUT", "/api/settings", { editor: { confirmBeforeExit: true } })).status).toBe(200);
+  }
+  await draft(" kept");
+  const sse = await srv.sse();
+  const mark = sse.all.length;
+  writeFileSync(join(srv.vault, path), "<div>external</div>\n");
+  await sse.waitFor("doc-changed", { from: mark });
+  sse.close();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(await page.$eval(".z-source-edit", e => (e as HTMLTextAreaElement).value)).toContain("kept");
+}, 45000);
 
 test("native slash menu inserts a heading and floating toolbar formats selection", async () => {
   await boot("");
@@ -400,10 +475,8 @@ test("mobile touch lists, table and Mermaid fit a reduced viewport", async () =>
     }),
   }));
   expect(geometry.overflow).toBeLessThanOrEqual(0);
-  /* ONE SIZE IN BOTH MODES. Edit inherits `.doc`'s body copy — the size Source
-     draws its own lines at, carrying `--doc-zoom` (ADR 0033) — instead of a
-     phone floor of its own: Source has none either (ADR 0032) and the viewport
-     meta pins the scale, so a floor here would make the two modes disagree. */
+  /* Edit inherits `.doc`'s body copy, carrying `--doc-zoom` (ADR 0033), instead
+     of a phone floor of its own: the viewport meta pins the scale. */
   expect(geometry.font).toBe(geometry.doc);
   for (const r of geometry.controls) {
     expect(r.width).toBeGreaterThan(0); expect(r.x).toBeGreaterThanOrEqual(0);
@@ -460,7 +533,7 @@ test("editing during an in-flight save keeps the newer visual input dirty", asyn
   expect(readVaultText(srv.vault, path)).toContain("first newer");
 }, 35000);
 
-test("a failed editor bundle gives a visible error and usable Source editing", async () => {
+test("a failed editor bundle says so, offers a working Reload and leaves nothing editable", async () => {
   await page.setRequestInterception(true);
   /* The shell names the HASHED entry and preloads it (ADR 0038); the
      `/vendor/editor.js` alias is only the fallback. Block both spellings, or
@@ -470,18 +543,16 @@ test("a failed editor bundle gives a visible error and usable Source editing", a
     if (/^\/vendor\/editor(?:\.js|\/editor\.[^/]+\.js)$/.test(path)) void request.abort("failed");
     else void request.continue();
   });
-  await writeDoc("Recoverable source\n");
+  await writeDoc("Unreachable prose\n");
   await appDriver(page, srv.base).boot("/d/" + path);
-  await page.waitForSelector("#rawArea");
-  expect(await page.$eval("#doc", e => e.textContent)).toMatch(/editor.*(unavailable|load|failed)|source.*available/i);
-  await page.click("#rawArea");
-  await pressChord(page, "End", "Control");
-  await page.keyboard.type("Recovered edit\n");
-  await save();
-  expect(readVaultText(srv.vault, path)).toContain("Recovered edit");
+  const reload = '#doc .note.bad [data-act="reload"]';
+  await page.waitForSelector(reload);
+  expect(await page.$eval("#doc", e => e.textContent)).toContain("could not load");
+  expect(await page.$('#doc [contenteditable="true"]')).toBeNull();
+  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), page.click(reload)]);
 }, 35000);
 
-test("the existing preservation corpus survives Edit/Source switches byte for byte", async () => {
+test("the existing preservation corpus opens in Edit byte for byte", async () => {
   for (const fixture of CORPUS) {
     console.log("    preservation: " + fixture.name);
     await page.close();
@@ -489,12 +560,8 @@ test("the existing preservation corpus survives Edit/Source switches byte for by
     path = `corpus-${++sequence}.md`;
     const original = new TextDecoder("utf-8", { ignoreBOM: true }).decode(fixture.bytes);
     await boot(original);
-    await ensureMode(page, "raw", { via: "chip" });
-    // Textarea DOM values normalize CRLF; compare the source buffer owner instead.
+    await settled();
     expect(await currentMarkdown()).toBe(original);
-    await ensureMode(page, "preview", { via: "chip" });
-    expect(await currentMarkdown()).toBe(original);
-    expect(readVaultText(srv.vault, path)).toBe(original);
   }
 }, 120000);
 
@@ -583,6 +650,7 @@ const LINKED = "- Parent\n  - Child\n\n- [ ] Task\n  - [x] Sub task\n\nPlain par
 
 test("nested items draw no guide line and every external link is underlined with one copy button", async () => {
   await boot(LINKED);
+  await entered();
   for (const colorScheme of ["light", "dark"]) {
     expect((await srv.api("PUT", "/api/settings", { colorScheme })).status).toBe(200);
     await page.waitForFunction(scheme => document.documentElement.dataset.scheme === scheme, {}, colorScheme);
@@ -636,12 +704,6 @@ test("the copy button puts the exact href on the clipboard and writes nothing to
     && document.getElementById("toastTxt")!.textContent === "Copied to clipboard");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("a@b.com");
   // A decoration is outside the document: neither the model nor the file moved.
-  expect(await currentMarkdown()).toBe(LINKED);
-  expect(readVaultText(srv.vault, path)).toBe(LINKED);
-  await ensureMode(page, "raw", { via: "chip" });
-  expect(await page.$("#doc .z-link-copy")).toBeNull();
-  await ensureMode(page, "preview", { via: "chip" });
-  await page.waitForSelector(".z-link-copy");
   expect(await currentMarkdown()).toBe(LINKED);
   expect(readVaultText(srv.vault, path)).toBe(LINKED);
 }, 40000);

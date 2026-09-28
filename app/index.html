@@ -278,24 +278,18 @@
         <span class="pip"></span>
         <svg class="tick" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
       </span>
-      <!-- The Edit/Source SEGMENTED CONTROL used to sit here. It is gone: which
-           of two views of the same document you are looking at is *state*, and
-           the statusbar is where this app says state. The replacement is the
-           `#stMode` chip down there — one muted word, the same weight as the
-           line and word counts, clickable, and still ⌘E. -->
-      <!-- Source only: wrap the selection in an ```age fence encrypted to the
-           vault recipient. Works while the vault is LOCKED. -->
-      <button class="iconbtn" id="encBtn" data-act="encrypt-selection" title="Encrypt selection (⌘⇧E)" hidden>
+      <!-- Encrypts text to the vault recipient into a new ```age block at the
+           caret. Works while the vault is LOCKED. `hidden` until a doc renders. -->
+      <button class="iconbtn" id="encBtn" data-act="new-secret" title="New secret (⌘⇧E)" hidden>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>
       </button>
       <!-- The Save BUTTON and the saved/unsaved PILL used to sit here. Both are
-           gone from the desktop topbar, and for the same reason the mode
-           control left it: whether the buffer is on disk is *state*, and the
-           statusbar is where this app says state. Autosave writes it anyway —
-           a 90px primary button beside a pill that repeats what the button is
-           for was two pieces of chrome for a fact the eye only needs to
-           glance at. Both are now the `#saveInd` pip down in the statusbar,
-           which is also the manual-save affordance (still ⌘S).
+           gone from the desktop topbar: whether the buffer is on disk is
+           *state*, and the statusbar is where this app says state. Autosave
+           writes it anyway — a 90px primary button beside a pill that repeats
+           what the button is for was two pieces of chrome for a fact the eye
+           only needs to glance at. Both are now the `#saveInd` pip down in the
+           statusbar, which is also the manual-save affordance (still ⌘S).
 
            The PHONE keeps its button: below 768px there is no ⌘S to fall back
            on, so this icon is the only way to force a write by hand. -->
@@ -414,7 +408,7 @@
               </div>
             </div>
             <div class="field">
-              <div class="lab"><b>Tab width</b><span>Spaces inserted by Tab in Raw, and the display width of literal tabs.</span></div>
+              <div class="lab"><b>Tab width in code blocks</b></div>
               <div class="ctl num">
                 <input class="inp w-sm mono" data-num="editor.tabSize" value="" aria-label="Tab width">
                 <span class="unit"></span>
@@ -429,7 +423,7 @@
               <div class="ctl"><input class="inp mono" id="homeDoc" data-draft="editor.homeDoc" aria-label="Home doc"></div>
             </div>
             <div class="field">
-              <div class="lab"><b>Keyboard shortcuts</b><span>⌘E raw · ⌘S save · ⌘K search · Esc dismiss.</span></div>
+              <div class="lab"><b>Keyboard shortcuts</b><span>⌘S save · ⌘K search · Esc dismiss.</span></div>
               <div class="ctl"><button class="btn" data-act="shortcuts">Show all <kbd>?</kbd></button></div>
             </div>
           </section>
@@ -762,26 +756,9 @@
       <span class="sb-i" id="stLines">— lines</span>
       <span class="divider-v hide-sm sb-wide"></span>
       <span class="sb-i hide-sm sb-wide" id="stWords">— words</span>
-      <!-- EDITOR MODE — the segmented control that used to live in the topbar.
-           It reads as state ("Edit", beside "9 lines"), it is a button, and
-           `data-mode` is what everything else addresses it by: editor.js paints
-           it in syncModeUI(), the tests assert on it, and the title says both
-           ways to change it. It is NEVER shed at any width — below 768px there
-           is no ⌘E to fall back on, so this chip is the only way to reach Source
-           on a phone; only its divider goes. -->
-      <span class="divider-v sb-mode-div"></span>
-      <button class="sb-i mode" id="stMode" data-act="toggle-mode" data-mode="preview" aria-label="Editor mode" title="Visual editing — click (or ⌘E) for Source">
-        <span id="stModeTxt">Edit</span>
-      </button>
-      <button class="sb-i wrap" id="stWrap" data-act="toggle-wrap" data-wrap="on" aria-label="Word wrapping" title="Disable Source word wrapping (⌥Z)" hidden>
-        <span id="stWrapTxt">Wrap</span>
-      </button>
       <span class="spacer"></span>
       <span class="sb-i hintset hide-sm" title="Keyboard shortcuts (?)">
         <span><kbd>⌘K</kbd> search</span>
-        <!-- ⌘E's hint moved out: the mode chip three items to the left now says
-             the mode outright and carries the chord in its tooltip, so the slot
-             goes to the shortcut with no on-screen affordance of its own. -->
         <span class="sb-xnarrow"><kbd>⌘/</kbd> settings</span>
         <span class="sb-narrow"><kbd>⌘S</kbd> save</span>
         <span class="sb-narrow"><kbd>?</kbd> keys</span>
@@ -828,31 +805,6 @@
       <span class="divider-v"></span>
       <button class="sb-i conn" id="stConn" title="Live SSE connection to the z-notes backend"><span class="dot"></span><span class="cw" id="stConnTxt">connecting…</span></button>
     </footer>
-
-    <!-- THE SOFT KEYBOARD'S EDITING BAR (ADR 0034). Four verbs a phone has no
-         key for — Tab, ⇧Tab, ⌘Z/⌘⇧Z and the ⌘E that leaves Raw — on a bar
-         pinned to the keyboard's own top edge. It appears only while a soft
-         keyboard is really covering the viewport AND the caret is in the Raw
-         editor (`.app.kb-up.raw-focus`, base.css §8a).
-
-         `tabindex="-1"` on every button: this is a thumb's affordance, and a
-         keyboard that could tab to it already has the chords. `hidden` is the
-         pre-boot state — keybar.js drops it, and the stylesheet owns
-         visibility from there. -->
-    <div class="keybar" id="keybar" role="toolbar" aria-label="Editing" hidden>
-      <button type="button" tabindex="-1" data-kb="outdent" aria-label="Outdent" title="Outdent (⇧Tab)">⇤</button>
-      <button type="button" tabindex="-1" data-kb="indent" aria-label="Indent" title="Indent (Tab)">⇥</button>
-      <span class="gap"></span>
-      <button type="button" tabindex="-1" data-kb="undo" aria-label="Undo" title="Undo (⌘Z)">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h11a5 5 0 0 1 0 10h-4"/><path d="m7 6-4 4 4 4"/></svg>
-      </button>
-      <!-- the same glyph, mirrored about x=12: one arrow going the other way -->
-      <button type="button" tabindex="-1" data-kb="redo" aria-label="Redo" title="Redo (⌘⇧Z)">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10H10a5 5 0 0 0 0 10h4"/><path d="m17 6 4 4-4 4"/></svg>
-      </button>
-      <span class="spring"></span>
-      <button type="button" tabindex="-1" data-kb="done" class="done" title="Back to Edit">Done</button>
-    </div>
   </div>
 
   <!-- ================= CHAT ================= -->
@@ -1000,6 +952,7 @@
     </div>
     <div class="modal-body">
       <p class="note" id="cfBody" style="margin:0;line-height:1.55"></p>
+      <textarea id="cfField" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-gramm="false" data-enable-grammarly="false" hidden></textarea>
     </div>
     <div class="modal-foot">
       <span class="note" id="cfNote">Recoverable only from git history.</span>
@@ -1046,7 +999,7 @@
 </div>
 
 <!-- ================= UNSAVED EXIT =================
-     Leaving an unsaved doc buffer, in either mode, reaches this one dialog. It
+     Leaving an unsaved doc buffer reaches this one dialog. It
      contains only the changed lines against the last server-confirmed document;
      the full note is never duplicated into a modal just to ask whether it may be
      discarded. -->
@@ -1115,20 +1068,7 @@
         <!-- app.js binds BOTH; ⌘P is the one VS Code muscle memory
              reaches for, and this overlay claims to list everything -->
         <div class="sc-row">Search vault<span class="k"><kbd>⌘K</kbd><kbd>⌘P</kbd></span></div>
-        <!-- the same toggle the statusbar's mode word is; there is no longer a
-             segmented control in the topbar -->
-        <div class="sc-row">Toggle Edit / Source — or click the mode in the statusbar<span class="k"><kbd>⌘E</kbd></span></div>
-        <div class="sc-row">Toggle Source word wrapping — or click Wrap in the statusbar<span class="k"><kbd>⌥Z</kbd></span></div>
-        <!-- ADR 0013. A COLLAPSED caret only: with a selection all three are
-             the browser's, untouched. ⌘V is listed with them because the line
-             it puts back lands ABOVE the caret's line, which is the half a
-             person would not predict. -->
-        <div class="sc-row">Cut / copy the whole line (Source, nothing selected) — ⌘V puts it back above<span class="k"><kbd>⌘X</kbd><kbd>⌘C</kbd><kbd>⌘V</kbd></span></div>
-        <!-- ADR 0013 + 0014. One chord, two stacks, decided by where the caret
-             is: inside a text surface it is the textarea's own history, and
-             the app never touches it. Outside one it is the last FILE
-             operation, and that one asks before it acts. -->
-        <div class="sc-row">Undo / redo — the text in Source, the last file delete or create elsewhere (asks first)<span class="k"><kbd>⌘Z</kbd><kbd>⇧⌘Z</kbd></span></div>
+        <div class="sc-row">Undo / redo — typing, then the app's last step (a file delete or create asks first)<span class="k"><kbd>⌘Z</kbd><kbd>⇧⌘Z</kbd></span></div>
         <!-- one chord, one meaning: "save what is in front of me". On the
              settings page that is the settings draft, because there is no
              document there — the topbar's Save is hidden for the same reason. -->
@@ -1157,17 +1097,15 @@
              ⌘P is above: this overlay claims to list everything. -->
         <div class="sc-row">Sidebar context menu<span class="k"><kbd>⇧F10</kbd><kbd>Menu</kbd></span></div>
         <div class="sc-row">Menu: move / choose<span class="k"><kbd>↑</kbd><kbd>↓</kbd><kbd>Home</kbd><kbd>End</kbd><kbd>⏎</kbd></span></div>
-        <!-- both are global bindings (app.js); this overlay claims to list
-             everything, and encrypt-selection's only other affordance is a
-             Raw-mode-only icon button -->
-        <div class="sc-row">Encrypt selection<span class="k"><kbd>⇧⌘E</kbd></span></div>
+        <!-- both are global bindings (app.js); this overlay claims to list everything -->
+        <div class="sc-row">New secret — or type /secret<span class="k"><kbd>⇧⌘E</kbd></span></div>
         <div class="sc-row">Lock vault<span class="k"><kbd>⇧⌘L</kbd></span></div>
         <div class="sc-row">Palette: move<span class="k"><kbd>↑</kbd><kbd>↓</kbd></span></div>
         <div class="sc-row">Palette: open doc<span class="k"><kbd>⏎</kbd></span></div>
       </div>
     </div>
     <div class="modal-foot">
-      <span class="note">Edit formatted text directly, or use Source for Markdown.</span>
+      <span class="note">Edit formatted text directly.</span>
       <div class="spacer"></div>
       <button class="btn primary" data-act="close-shortcuts">Got it</button>
     </div>

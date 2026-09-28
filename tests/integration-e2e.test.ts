@@ -40,7 +40,6 @@ import {
   type TestServer,
 } from "./helpers";
 import {
-  BASE_HISTORY_LEN,
   appDriver,
   launchTestBrowser,
   newAppPage,
@@ -58,8 +57,6 @@ const KEY = "sk-mock-integration-000000000004321";
    sorts first, so this is deterministic (same constant routing.test.ts uses) */
 const A = "architecture/event-pipeline.md";
 const B = "architecture/z-notes-design.md";
-
-const BASE_LEN = BASE_HISTORY_LEN;
 
 let srv: TestServer;
 let mock: MockUpstream;
@@ -120,11 +117,8 @@ const shown = () => ui.shown();
 const urlPath = () => ui.urlPath();
 const histLen = () => ui.histLen();
 const back = () => ui.back();
-const settled = (p: string) => ui.settled(p);
 const clickDoc = (p: string) => ui.clickDoc(p);
 const chord = (code: string) => ui.chord(code);
-const veilUp = (id: string) => ui.veilUp(id);
-const waitVeil = (id: string, want: boolean) => ui.waitVeil(id, want);
 
 /* the shared settings predicate and its wait — see tests/browser.ts */
 const onSettings = () => isOnSettings(page);
@@ -276,12 +270,10 @@ describe("settings live-apply — the browser really adopts the new value", () =
     await page.evaluate(() => history.back());
     await waitSettings(false);
 
-    /* type into the raw editor and time the write, measured on DISK */
-    await chord("KeyE");
-    await page.waitForSelector("#rawArea", { visible: true, timeout: 8000 });
+    /* type into the editor and time the write, measured on DISK */
     const marker = "autosave-probe-" + Date.now();
-    await page.click("#rawArea");
-    await page.keyboard.type("\n" + marker + "\n");
+    await (await page.waitForSelector('#doc .bn-editor [data-content-type="paragraph"]', { timeout: 20000 }))!.click();
+    await page.keyboard.type(marker);
 
     const started = Date.now();
     await waitUntil(async () => readVaultText(srv.vault, A).includes(marker), {

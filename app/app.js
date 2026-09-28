@@ -21,14 +21,13 @@ import { pendingHistory, stepHistory, wireHistory } from "./history.js";
 import { LONGPRESS_MS, applyFileHistory, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
 import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, wireDialogs } from "./dialogs.js";
 import { refreshTrash, toggleTrash } from "./trash.js";
-import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, flushTextRun, initWordWrap, keepRawCaretVisible, openDoc, saveDoc, setMode, startHeaderRename, syncModeUI, toggleWordWrap, renderDoc, setBaseline, setSaveIndicator, visualCanStep } from "./editor.js";
-import { changeVaultPassphrase, closePP, doPassphraseOk, encryptSelection, initSecrets, keyHint, lockVault, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
+import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, openDoc, saveDoc, startHeaderRename, renderDoc, setBaseline, setSaveIndicator, visualCanStep } from "./editor.js";
+import { changeVaultPassphrase, closePP, doPassphraseOk, initSecrets, keyHint, lockVault, newSecret, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, palSetMode, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
 import { CLOSERS, VEILS, app, bootDoc, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
 import { initZoom } from "./zoom.js";
-import { initKeybar, refreshKeybar } from "./keybar.js";
 import { registerWebMcpTools } from "./webmcp.js";
 
 /* ============================================================
@@ -69,11 +68,6 @@ function wire() {
       if (a === "discard-settings") discardSettingsDraft();
       if (a === "toggle-chat") toggleChat();
       if (a === "toggle-sidebar") app.classList.toggle("sidebar-collapsed");
-      /* the statusbar mode chip — the topbar segmented control's replacement.
-         Silent: the chip you just clicked already shows the outcome, and a
-         toast on top of it would be the app reading its own statusbar back. */
-      if (a === "toggle-mode") setMode(state.mode === "raw" ? "preview" : "raw", { silent: true });
-      if (a === "toggle-wrap") toggleWordWrap();
       if (a === "nav-open") openNav();
       if (a === "nav-close") closeNav();
       if (a === "pp-cancel") closePP();
@@ -84,7 +78,8 @@ function wire() {
         $("#ppConfirm").value = p;
         ppHint("Generated. Write it down now — there is no recovery.", false);
       }
-      if (a === "encrypt-selection") encryptSelection();
+      if (a === "new-secret") newSecret();
+      if (a === "reload") location.reload();
       if (a === "lock-vault") lockVault("manual");
       if (a === "palette") openPal();
       if (a === "shortcuts") $("#scVeil").classList.add("show");
@@ -312,9 +307,6 @@ function wire() {
       if (!btn) return;
       const kind = seg.dataset.seg;
       const v = btn.dataset.v;
-      /* `kind === "mode"` used to be handled here. The editor mode is no longer
-         a segmented control — it is the statusbar chip, wired through the
-         `toggle-mode` data-act like every other statusbar affordance. */
       markSeg(seg, v);
       /* Appearance PREVIEWS live and persists on Save — you cannot judge a
          theme from its name. Everything else is draft-only.
@@ -438,7 +430,7 @@ function wire() {
   $("#termClearBtn").addEventListener("click", termClear);
   $("#termStopBtn").addEventListener("click", terminalStop);
   $("#termInput").addEventListener("keydown", (e) => {
-    /* the terminal owns its own keys: ⌘K/⌘S/⌘E must not fire from a shell
+    /* the terminal owns its own keys: ⌘K/⌘S must not fire from a shell
        prompt, and Esc must close Settings exactly as it does everywhere else */
     if (e.key === "Escape") return;
     e.stopPropagation();
@@ -504,7 +496,7 @@ function wire() {
 
   /* composer */
   /* THE COMPOSER GROWS, like every other textarea in this app.
-     `autoGrow` was wired to #rawArea and .secret-edit only, so the composer's
+     `autoGrow` was wired to .secret-edit only, so the composer's
      `max-height: 110px` was unreachable text and the field was a fixed two-row
      box. Harmless while ⇧⏎ was the only way to make a newline; not harmless
      once bare ⏎ became one below W_SHEET and the hint beside Send started
@@ -571,13 +563,6 @@ function wire() {
     connect();
   });
 
-  /* `[contenteditable]:not([contenteditable=false])`, not
-     `[contenteditable=true]`: the Raw editor carries `plaintext-only`
-     (ADR 0032), and a conflict veil can open on its own while the caret is
-     still in it — under the narrower selector that Enter pressed Overwrite
-     instead of starting a line. */
-  const EDITABLE = '[contenteditable]:not([contenteditable="false"])';
-
   const typing = () => {
     const a = document.activeElement;
     return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable);
@@ -590,10 +575,10 @@ function wire() {
        editor's own history (ADR 0014 as amended) — except the ones that are
        about the app rather than the text. A veil over the editor takes them all
        back: a dialog is not typing. The last line is the same rule for anything
-       else that has already claimed a key (the Raw surface, a field, a menu).
+       else that has already claimed a key (a field, a menu).
 
        THE ALT CHORDS ARE THE APP'S EVERYWHERE, Edit included: ⌥C is the
-       assistant (ADR 0025), ⌥Z word wrap and ⌥N / ⌥⇧N the create row, and each
+       assistant (ADR 0025) and ⌥N / ⌥⇧N the create row, and each
        already pays for itself by swallowing a dead key wherever a note is being
        written — a chord that dies in the document is not a chord. `e.code`
        first, for the reason their own handlers read it: macOS resolves ⌥C and
@@ -602,19 +587,21 @@ function wire() {
        ⌘Z / ⌘⇧Z is BlockNote's while the island's history HOLDS a step and the
        app's the moment it does not — a create or a rename is only ever on the
        app timeline (ADR 0014/0020), and asking for it should not cost a click
-       outside the editor first. The two are exclusive: with nothing to undo
-       ProseMirror's own keymap declines the key. */
+       outside the editor first. The two are exclusive: ProseMirror's keymap
+       runs first and prevents the press it took — its LAST step included, after
+       which `visualCanStep` already reads false. */
     const key = e.key.toLowerCase();
     const inEditor = e.target.closest?.(".bn-container, .bn-portal");
-    const altChord = e.altKey && !mod && (["KeyC", "KeyZ", "KeyN"].includes(e.code) || ["c", "z", "n"].includes(key));
-    const undoChord = !!inEditor && mod && !e.altKey && key === "z" && !visualCanStep(e.shiftKey);
+    const altChord = e.altKey && !mod && (["KeyC", "KeyN"].includes(e.code) || ["c", "n"].includes(key));
+    const undoChord = !!inEditor && mod && !e.altKey && key === "z" && !e.defaultPrevented && !visualCanStep(e.shiftKey);
+    /* bare ⌘E is BlockNote's inline code; ⌘⇧E is the app's new secret */
     const appChord =
-      altChord || undoChord || (mod && (["s", "e", "j", "k", "p", ",", "/", "n"].includes(key) || (e.shiftKey && key === "l")));
+      altChord || undoChord || (mod && (["s", "j", "k", "p", ",", "/", "n"].includes(key) || (e.shiftKey && ["e", "l"].includes(key))));
     /* ESCAPE IS THE ONE KEY THE ISLAND SHARES. BlockNote claims it in place when
        it has something of its own to close — a slash menu, a drag menu, the
        caret it blurs — and every one of those arrives here `defaultPrevented`,
        so that press is spent. An Escape the island did NOT claim (focus on a
-       protected block's Edit source button, a portalled surface with no menu
+       protected block's Edit button, a portalled surface with no menu
        up) is the app's layer key, as it is on every other surface: it was
        swallowed here instead, and no number of presses reached the chat panel
        or the context menu, which are not veils. */
@@ -632,7 +619,7 @@ function wire() {
        surface keeps its newline. */
     if (e.key === "Enter" && !e.defaultPrevented && !e.isComposing && !e.repeat) {
       const target = e.target;
-      if (target && target.closest && !target.closest("button, textarea, " + EDITABLE)) {
+      if (target && target.closest && !target.closest("button, textarea, [contenteditable=true]")) {
         const sel = VEILS.find(isOpen);
         const primary = sel && $$("[data-default]", $(sel)).find((b) => !b.hidden && !b.disabled && b.offsetParent !== null);
         if (primary) {
@@ -654,12 +641,6 @@ function wire() {
       openCtxFrom(row || $("#tree"));
       return;
     }
-    if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && (e.code === "KeyZ" || e.key === "z" || e.key === "Z")) {
-      if (state.view !== "doc" || state.mode !== "raw") return;
-      e.preventDefault();
-      toggleWordWrap();
-      return;
-    }
     if (mod && (e.key === "k" || e.key === "K" || e.key === "p" || e.key === "P")) {
       if (e.key.toLowerCase() === "p" && e.shiftKey) return;
       e.preventDefault();
@@ -676,22 +657,16 @@ function wire() {
       else saveDoc(state.active);
       return;
     }
-    /* ⌘⇧E before ⌘E: with shift held, e.key is already "E", so the mode
-       toggle would otherwise swallow the encrypt shortcut */
     if (mod && e.shiftKey && (e.key === "e" || e.key === "E")) {
       e.preventDefault();
-      encryptSelection();
+      // its question would replace one already being asked
+      if (!overlayOpen()) newSecret();
       return;
     }
     if (mod && e.shiftKey && (e.key === "l" || e.key === "L")) {
       e.preventDefault();
       if (vault.unlocked) lockVault("manual");
       else toast("The vault is already locked");
-      return;
-    }
-    if (mod && (e.key === "e" || e.key === "E")) {
-      e.preventDefault();
-      setMode(state.mode === "raw" ? "preview" : "raw");
       return;
     }
     /* Settings answers to BOTH chords. ⌘/ is the conventional one and what the
@@ -704,38 +679,21 @@ function wire() {
       return;
     }
     /* ⌘Z / ⌘⇧Z ARE UNDO. This app only gets them where the browser has no
-       text to undo — which is everywhere outside a text surface, and is
-       exactly where the last thing that happened was a FILE operation (a
-       delete from the tree, a create from ⌥N or a broken link). Inside the raw
-       editor, a field or the composer, `typing()` hands them straight back:
-       those edits are on the textarea's own undo stack (ADR 0013) and this
-       must never shadow them.
+       text to undo: outside a text surface, and in Edit once the island's own
+       history is spent (`undoChord`). A FIELD — the settings inputs, the
+       composer, an inline rename, a textarea inside the island — keeps its own
+       native undo, and this must never shadow it.
 
        Not swallowed when there is nothing to undo, either — with an empty
        timeline the chord goes to the browser untouched, rather than being
        taken away to do nothing with. The FILE half asks before it acts; see
        `applyFileHistory` in tree.js. */
     if (mod && !e.altKey && (e.key === "z" || e.key === "Z")) {
-      /* THE APP OWNS ⌘Z IN THE DOCUMENT, and nowhere else.
-
-         Inside the Raw textarea it is the app's timeline rather than the
-         browser's, because the browser's is per-TEXTAREA: `renderDoc` builds a
-         new one for every doc, so the native history dies at each doc switch
-         and can never reach an edit in another file (ADR 0014). Every OTHER
-         text surface — the settings fields, the composer, the terminal line,
-         an inline rename — keeps its own native undo, which is the right one
-         for a field.
-
-         Outside a text surface the timeline is still the answer; the entry it
-         lands on is simply more likely to be a file operation. */
-      if (typing() && !inEditor && document.activeElement && document.activeElement.id !== "rawArea") return;
+      if (typing() && !(inEditor && document.activeElement.isContentEditable)) return;
       /* A dialog is already asking a question — including, often, the one THIS
          chord raised. Stepping the timeline underneath it would swap the
          question out from under a pointer already on its way to Confirm. */
       if (overlayOpen()) return;
-      /* Pressing ⌘Z ENDS the run you were typing, so the step that follows
-         takes back what you just typed rather than whatever came before it. */
-      flushTextRun();
       const redo = e.shiftKey;
       if (!pendingHistory(redo)) return;
       e.preventDefault();
@@ -776,13 +734,12 @@ function wire() {
 
        `e.code`, not `e.key` — on macOS ⌥N is a DEAD KEY (it opens the ñ/ã/õ
        composition), so `e.key` arrives as "Dead" and the physical key is the
-       only thing left to match on. ⌥Z above reads `e.code` for the same
-       reason. `e.key` is accepted too, for the layouts where Alt composes
-       nothing and the letter comes through intact.
+       only thing left to match on. `e.key` is accepted too, for the layouts
+       where Alt composes nothing and the letter comes through intact.
 
        The cost is real and taken deliberately: swallowing the keydown means
        ⌥N no longer starts an ñ composition anywhere in the app, including the
-       raw editor. Reaching the chord only outside text fields was the
+       editor. Reaching the chord only outside text fields was the
        alternative, and it would have made the shortcut dead in the one place
        a note is usually being written. */
     if (e.altKey && !e.metaKey && !e.ctrlKey && (e.code === "KeyN" || e.key === "n" || e.key === "N")) {
@@ -809,8 +766,6 @@ function wire() {
        had just been removed underneath it. */
     if (!isDrawer()) closeNav();
     syncScrim();
-    const ta = $("#rawArea");
-    if (ta) autoGrow(ta);
   });
 
   /* ---------- routing (see the ROUTING section) ----------
@@ -952,9 +907,6 @@ export async function start() {
   const wantSettings = urlSettings();
   const first = bootDoc(wanted);
   wire();
-  initWordWrap();
-  initKeybar();
-  syncModeUI();
   seedHistory();
   /* replace: the entry the browser gave us IS this doc's entry — pushing would
      leave a bare-shell entry underneath that Back could fall into */
@@ -970,13 +922,7 @@ export async function start() {
 
   /* the remembered assistant state, and the width rules that override it */
   initChatOpen();
-  /* one publish, two readers: the editing bar re-measures itself against the
-     keyboard that just moved (ADR 0034), and only then is the caret put back
-     above whatever viewport is left — `revealRawCaret` reads the bar's height. */
-  wireVisualViewport(() => {
-    refreshKeybar();
-    keepRawCaretVisible();
-  });
+  wireVisualViewport();
   connect();
 
   /* The terminal's real state, off the critical path for the same reason the

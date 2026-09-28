@@ -2,8 +2,8 @@
    base.css — structure, layout, behaviour, and the design-token contract.
 
    This file owns EVERYTHING a theme must not have an opinion about: the grid,
-   the scroll containers, the raw/preview container parity rules, the blank-line
-   spacer, the responsive breakpoints, the click zones. It also declares every
+   the scroll containers, the blank-line spacer, the responsive breakpoints,
+   the click zones. It also declares every
    token a theme is allowed to set, with neutral defaults, so the app is fully
    usable with base.css alone.
 
@@ -77,7 +77,6 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --font-doc: var(--font);             /* rendered markdown body */
   --font-heading: var(--font);
-  --font-raw: var(--mono);             /* the Raw line editor (ADR 0032) — a theme may opt into the document font */
   --font-kbd: var(--font);
   --tracking-tight: -.01em;
   --tracking-wide: .06em;
@@ -942,12 +941,12 @@ kbd {
 }
 
 /* ============================================================
-   7 · EDITOR — one container, two modes (amendment 11)
+   7 · EDITOR
    ============================================================ */
 /* min-height:0 is load-bearing: a flex child defaults to min-height:auto, so
    without it .scroll refuses to shrink below its content, the app shell grows
    past 100dvh, the statusbar falls off-screen and — because .scroll then has
-   nothing to scroll — focusing the Raw editor scrolls the *document*, yanking
+   nothing to scroll — focusing the editor scrolls the *document*, yanking
    the whole UI upward.
 
    `touch-action` is restated here because this is the pane the pinch is wired
@@ -955,9 +954,6 @@ kbd {
    the gesture before the handler saw it. */
 .scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; position: relative; touch-action: pan-x pan-y; }
 
-/* Edit and Source render into this exact element with byte-identical box
-   metrics and the same scroll container. `.raw-mode` is a state hook only:
-   it must never change chrome or layout. */
 .doc {
   max-width: var(--doc-max-w); margin: 0 auto;
   /* WHERE THE RUNG LANDS (ADR 0033). The pinch ladder publishes a multiplier on
@@ -966,65 +962,20 @@ kbd {
      statusbar, sidebar, chat, `.doc-meta` — sets its own size and stays put.
      Only the px tokens in §7 have to multiply by hand. */
   font-size: calc(var(--d-font) * var(--doc-zoom, 1));
-  /* Both modes keep a useful document measure: a short note ends with its own
-     content and the remainder belongs to `.doc`, on the shared container so the
-     two modes cannot differ by it. */
+  /* a short note ends with its own content; the rest of the measure is `.doc` */
   min-height: min(46vh, 480px);
   padding: var(--d-doc-pad) var(--doc-pad-x) var(--doc-pad-bottom) var(--doc-pad-x);
   border: 0; background: transparent; border-radius: 0; box-shadow: none;
   font-family: var(--font-doc);
-  transition: padding var(--dur-2) var(--ease);   /* density only — never mode */
+  transition: padding var(--dur-2) var(--ease);   /* density */
 }
 .doc.fade-in { animation: docin .3s var(--ease); }
 @keyframes docin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-/* ONE LINE, in both modes: a row allowed to reflow is a row taller in one mode
-   than the other, and everything below it — the document itself — then shifts on
-   every ⌘E while `#doc` never moves (measured at 720px in the mono theme when
-   this row still carried a per-mode note: dy=13px, invisible to a parity gate
-   that only measures the container). `white-space: nowrap` is what holds it to
-   one line, because the PATH can be long enough to wrap it on its own. */
+/* ONE LINE: `white-space: nowrap` holds it there, because the PATH can be long
+   enough to wrap it on its own. */
 .doc-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 11.5px; color: var(--muted-2); font-weight: 500; font-family: var(--font); white-space: nowrap; }
 .doc-meta .tag { font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: var(--r-pill); background: var(--panel-3); color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-
-/* `.seg.mode` — the topbar Edit|Source segmented control — is gone. The mode is
-   the statusbar's `#stMode` chip now; see §8. `.seg` itself stays: settings
-   still uses it for theme, density and colour scheme. */
-
-/* the Source surface — chromeless inside the shared container.
-
-   A LINE IS THE SIZE OF THE BLOCK IT WOULD RENDER AS (ADR 0032). The editor is
-   a contenteditable with one `.ln` per source line, so `font-size` INHERITS the
-   document size, which is what stops ⌘E resizing the note; a `#`/`##`/`###`
-   line takes the size, weight, tracking and leading its heading takes. The
-   FAMILY stays mono, and `--font-raw` is the one knob a theme needs to opt
-   out. */
-.raw {
-  display: block; width: 100%; min-height: 0; position: relative;
-  border: 0; border-radius: 0; background: transparent; box-shadow: none;
-  padding: 0; margin: 0; outline: none; overflow: visible;
-  font-family: var(--font-raw); font-size: inherit; line-height: var(--d-lh);
-  color: var(--text-2); tab-size: 2; caret-color: var(--accent);
-  white-space: pre-wrap; overflow-wrap: break-word;
-}
-/* an empty line keeps its row, whatever else happens to the `<br>` inside it */
-.raw .ln { min-height: 1lh; }
-.raw .ln.h1 { font-size: var(--h1-size); line-height: 1.2;  font-weight: var(--h1-weight); letter-spacing: var(--h1-tracking); color: var(--text); }
-.raw .ln.h2 { font-size: var(--h2-size); line-height: 1.32; font-weight: var(--h2-weight); letter-spacing: var(--h2-tracking); color: var(--text); }
-.raw .ln.h3 { font-size: var(--h3-size); line-height: 1.4;  font-weight: var(--h3-weight); letter-spacing: var(--h3-tracking); color: var(--text); }
-/* `--h*-transform` is deliberately NOT copied from the heading rules in Edit: a
-   theme that uppercases a rendered heading must not uppercase the SOURCE, which
-   would show the file saying something it does not say. */
-.raw.no-wrap { white-space: pre; overflow-x: auto; overflow-y: hidden; }
-/* the placeholder is drawn, not typed: `data-placeholder` is a real attribute
-   on a real element, so nothing in the buffer says it is there */
-.raw.is-empty::before { content: attr(data-placeholder); position: absolute; left: 0; top: 0; color: var(--muted-2); pointer-events: none; }
-.raw:focus, .raw:focus-visible { background: transparent; border: 0; box-shadow: none; outline: none; }
-/* LINKS ARE COLOURED WITHOUT A SINGLE NODE UNDER THE CARET. A `<span>` around a
-   URL would appear and disappear while somebody types into it, which is how an
-   editor loses an IME composition; a highlight paints the text node instead. A
-   browser without `CSS.highlights` shows plain text. */
-::highlight(raw-link) { color: var(--accent); text-decoration: underline; text-decoration-color: var(--accent); }
 
 /* ---------- inline Markdown in chat ---------- */
 /* `inline()` (ui.js) renders assistant messages, so the document's inline
@@ -1112,7 +1063,7 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
    fixed row of blanks that cannot be mistaken for content — a constant count
    and constant widths, so nothing here tracks the payload. It carries no text
    node either (app.js `maskedBody`), so neither innerText nor textContent can
-   leak a byte. ⌘E (Raw) is the way to see the source. */
+   leak a byte. */
 .secret-mask { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 9px; padding: 11px 13px; }
 .secret-mask > i {
   height: 9px; width: 46px; border-radius: 3px; flex: 0 0 auto;
@@ -1175,27 +1126,10 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .statusbar kbd { font-size: 9.5px; padding: 0 4px; border-bottom-width: 1px; }
 .statusbar .hintset { display: inline-flex; align-items: center; gap: 8px; }
 .statusbar .hintset span { display: inline-flex; align-items: center; gap: 3px; }
-/* EDITOR MODE — the ex-topbar segmented control, at statusbar weight. It reads
-   as one of this bar's facts (same size, same --muted, same 500) and earns its
-   clickability on hover only, which is the whole point of the move: the mode is
-   something you glance at, not something that needs 100px of chrome. `-2px`
-   inset padding keeps the hover fill off the neighbouring dividers without
-   changing where the word sits. Never shed at any width — below 768px there is
-   no ⌘E, so this is the ONLY way to reach Raw on a phone. */
-#stMode, #stWrap {
-  border: 0; background: none; padding: 0 4px; margin: 0 -4px; font: inherit; color: inherit;
-  font-weight: 500; cursor: pointer; border-radius: var(--r-sm); flex: 0 0 auto;
-  transition: color var(--dur-1, .12s) var(--ease), background var(--dur-1, .12s) var(--ease);
-}
-#stMode:hover, #stWrap:hover { color: var(--text-2); background: var(--panel-3); }
-#stMode:focus-visible, #stWrap:focus-visible { outline: none; box-shadow: var(--sh-focus); }
-#stWrap { margin-left: 6px; }
-#stWrap[data-wrap="off"] { color: var(--warn); }
 /* DISK STATE — the ex-topbar Save button and its saved/unsaved pill, reduced
    to one 6px pip in the bar that already says everything else about this
-   document. Same button treatment as the mode chip (inset padding so the
-   hover well clears its neighbours, clickability earned on hover), because it
-   is the same kind of thing: a fact you glance at that happens to be
+   document. Inset padding so the hover well clears its neighbours, and
+   clickability earned on hover: a fact you glance at that happens to be
    actionable. Colour carries the whole message — muted = on disk, amber =
    unwritten keystrokes, a green blink = a write just landed — so it costs the
    narrowest statusbar 12px and reads without being read. */
@@ -1230,8 +1164,6 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
   position: absolute; width: 1px; height: 1px; margin: 0; padding: 0;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
-/* Both words are typeset identically on purpose: the chip must not resize as it
-   toggles, or the whole left cluster of the bar twitches on every ⌘E. */
 /* The bar sheds its least important items before it squeezes the doc path.
 
    Each threshold is the MEASURED width the tier above it needs, in the WIDEST
@@ -1308,53 +1240,6 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 .ep-degraded { color: var(--warn); }
 .ep-unreachable { color: var(--danger); }
 .ep-unconfigured, .ep-unknown { color: var(--muted); }
-
-/* ============================================================
-   8a · THE SOFT KEYBOARD'S EDITING BAR (ADR 0034)
-
-   Four verbs a phone has no key for, on a slim bar standing on the soft
-   keyboard's top edge. It is drawn ONLY when both halves of one measured
-   condition hold: `kb-up`, `wireVisualViewport` saying the visual viewport is
-   really covered, and `raw-focus`, keybar.js saying the caret is in the Raw
-   editor. There is deliberately no `pointer:` or width query in it, so §11's
-   one axis is untouched: the question this bar asks is about the KEYBOARD, and
-   a tablet with a hardware keyboard is on the wrong side of it at every width.
-
-   `bottom: var(--kb)` is the keyboard's own height, published by the same
-   listener. The bar's rendered height goes back the other way as `--keybar`,
-   which `revealRawCaret` subtracts so the line being typed is never under the
-   bar it is being typed with. z-index sits above the phone's chat overlay (80)
-   and below the veils (200): a modal is the one thing that outranks the caret.
-
-   44px tall, and the buttons take the bar's whole height rather than sitting in
-   it as chips: this bar is reachable only by thumb, so §13's touch-target floor
-   is the entire audience. Borderless, with a well on press, the same treatment
-   #stMode gets in §8.
-   ============================================================ */
-.keybar {
-  display: none; position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); z-index: 85;
-  height: 44px; padding: 0 6px; align-items: stretch; gap: 2px;
-  background: var(--panel); border-top: var(--bd);
-}
-.app.kb-up.raw-focus .keybar { display: flex; }
-/* …except over the chat sheet, whose composer stands on the same bottom edge
-   with the same keyboard under it (§11, z-index 80): the bar would cover the
-   field being typed into. Four classes, so it outranks the rule above. */
-.app.kb-up.raw-focus.chat-open .keybar { display: none; }
-.keybar button {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 44px; padding: 0 10px; border-radius: var(--r-sm);
-  color: var(--text-2); font-size: 15px; line-height: 1;
-}
-.keybar button:active { background: var(--panel-3); color: var(--text); }
-/* Not the usual dimming alone: a DISABLED control dispatches no pointer event,
-   and the pointer event is what holds the focus in the editor — so a tap on a
-   dead Undo would blur the caret and drop the keyboard. Let the tap fall
-   through to the bar, whose own handler is the one doing the holding. */
-.keybar button:disabled { opacity: .4; pointer-events: none; }
-.keybar .gap { width: 8px; }
-.keybar .spring { flex: 1; }
-.keybar .done { font-size: 14px; font-weight: var(--w-semi); color: var(--accent); }
 
 /* ============================================================
    9 · CHAT
@@ -1551,7 +1436,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .modal-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 18px; border-top: var(--bd-2); background: var(--panel-2); }
 .modal-foot .note { font-size: 11.5px; color: var(--muted); flex: 1 0 100%; order: -1; min-width: 0; }
 .modal-foot .note.bad { color: var(--danger); }
-/* The Raw-exit question has exactly two outcomes. Dismissing the scrim is how
+/* The exit question has exactly two outcomes. Dismissing the scrim is how
    the user keeps editing; the two verbs that remain share one row and one hit
    area so neither is presented as a cramped afterthought. */
 .xg-foot { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1569,12 +1454,10 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 
    The topbar's doc controls go with it. Save is about a document; on a page
    with no document it would be a live button that either does nothing or acts
-   on a doc you cannot see. The Edit/Source control used to be listed here too
-   — it now lives in the STATUSBAR, and the rule followed it down (`#stMode`
-   below) for exactly the same reason; the save pip (`#saveInd`) is a control
-   as much as a state and follows both. The statusbar items that stay are facts
-   about the doc you were reading (path, counts, sync, connection), not
-   controls acting on it.
+   on a doc you cannot see. The save pip (`#saveInd`) is a control as much as
+   a state and follows it. The statusbar items that stay are facts about the
+   doc you were reading (path, counts, sync, connection), not controls acting
+   on it.
    ------------------------------------------------------------ */
 .settings-view { display: none; min-height: 0; }
 .app.route-settings #scroll { display: none; }
@@ -1584,9 +1467,6 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    and a document control that survives onto a page with no document is exactly
    the dead affordance this rule exists to remove. */
 .app.route-settings .topbar .crumbs,
-.app.route-settings .statusbar #stMode,
-.app.route-settings .statusbar #stWrap,
-.app.route-settings .statusbar .sb-mode-div,
 .app.route-settings .statusbar #saveInd,
 .app.route-settings .topbar .tb-save,
 .app.route-settings .topbar #encBtn,
@@ -2004,9 +1884,6 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      control twice. Detents are a later change, and this is not a stand-in. */
   .chat-head { padding-top: 8px; height: calc(var(--d-topbar) + 8px); }
 
-  /* identical in both modes — the parity gate measures exactly this. The extra
-     bottom room is on the SHARED container and never on #rawArea: a mobile-only
-     inset on the textarea is the specific break tests/e2e.test.ts names. */
   /* Keyboard room must land in the same frame as --kb. The desktop density
      transition also animated this padding accidentally, leaving the caret with
      nowhere to scroll while the keyboard was already covering it. */
@@ -2020,9 +1897,6 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   .crumbs .cr-dir { display: none; }
   .crumbs b { font-size: 12.5px; min-width: 4.5em; }
   .topbar { gap: 6px; padding: 0 8px 0 10px; }
-  /* the mode chip survives the phone intact — it is the only way to reach Raw
-     without a keyboard — but it drops its divider with the rest of them */
-  .statusbar .sb-mode-div { display: none; }
   .modal { border-radius: var(--r-lg); }
   /* the settings page keeps the document's own mobile gutter, and its head
      tightens the same way the topbar does */
@@ -2132,9 +2006,8 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    and font here is an existing token, the rows are the same `.field`/`.btn`
    chrome as the rest of Settings, and the scrollback borrows the code-block
    surface the preview already uses. All three themes therefore restyle it for
-   free, and the two densities drive it through `--d-ctl-h` and `--d-raw-fs`.
-   Since Raw became a line editor at the DOCUMENT size (ADR 0032), this
-   scrollback is the only thing `--d-raw-fs` still sizes.
+   free, and the two densities drive it through `--d-ctl-h` and `--d-raw-fs`
+   (this scrollback is the only thing `--d-raw-fs` sizes).
    ============================================================ */
 
 .term-state, .key-state { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: var(--r); border: var(--bd); background: var(--panel-2); font-size: 12.5px; font-weight: var(--w-med); color: var(--muted); margin-bottom: 4px; }
@@ -2247,13 +2120,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
         theme's width instead of its own (see §11).
 
    16px is a floor, not a size: it applies only below the phone breakpoint, and
-   `--d-raw-fs` still drives the terminal scrollback everywhere else.
-
-   `.raw` IS NOT ON THIS LIST any more (ADR 0032). It is not a form field: it is
-   a contenteditable at the DOCUMENT size, and Safari zooms on focus into form
-   fields, not into those. The viewport meta answers the rest of that zoom (spec
-   0013). It was the worst offender the floor ever caused: 16px mono against a
-   13.4px document was the biggest size jump in the app. */
+   `--d-raw-fs` still drives the terminal scrollback everywhere else. */
 @media (max-width: 767px) {
   .composer textarea,
   .pal-in input,
@@ -2279,11 +2146,10 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    too, and nothing else was given one. MEASURED at 390x844 (comfy / minimal):
    `.menu-item` and `#tree .row` 19px tall (18 in compact — both are
    `--d-row-h`), `.iconbtn` 25x25 — which on a phone is EVERY topbar control —
-   `.rowact` 21x21, the confirm dialog's buttons 65x25 and 67x25 eight pixels
-   apart, and `#stMode` 30x13, the only way to reach Raw without a keyboard.
-   Apple's floor is 44pt and Android's 48dp. The sharpest case is the row
-   context menu, where item centres are 19px apart and "Rename / move" sits
-   directly above "Delete".
+   `.rowact` 21x21, and the confirm dialog's buttons 65x25 and 67x25 eight
+   pixels apart. Apple's floor is 44pt and Android's 48dp. The sharpest case
+   is the row context menu, where item centres are 19px apart and "Rename /
+   move" sits directly above "Delete".
 
    THE TOKENS ARE NOT TOUCHED, for the reason §12 gives: themes-tokens.test.ts
    reads `--d-ctl-h` / `--d-row-h` as density floors and the rest of the tree
@@ -2342,8 +2208,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   }
   /* The statusbar is 19–25px depending on theme and density, and it carries
      `overflow: hidden` — which clips HIT TESTING, not just paint, so no ::after
-     can reach past it. `#stMode` is "the only way to reach Raw on a phone" (§8)
-     and was measured at 30x13. The bar itself therefore takes a phone floor,
+     can reach past it. The bar itself therefore takes a phone floor,
      as an ELEMENT height so a theme's own `--d-status` cannot out-declare it,
      and the buttons on it fill it. 36px is not 44: the bar sits under the
      document on every screen and doubling it to reach the guideline would cost
@@ -2403,10 +2268,9 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 /* ============================================================
    15 · THE VISUAL EDITOR (Edit) — the BlockNote island
 
-   The island renders into `.doc`, the container Source renders into, and takes
-   its type, colour and measure from this file rather than from BlockNote's own
-   theme: the document must read the same in both modes at every breakpoint
-   (the parity gate), and a theme switch must reach it without a remount.
+   The island renders into `.doc` and takes its type, colour and measure from
+   this file rather than from BlockNote's own theme, so a theme switch reaches
+   it without a remount.
    ============================================================ */
 .block-editor-host { min-width: 0; overflow-wrap: anywhere; }
 /* BlockNote's menu roots reset inherited colour, so the theme is handed to it as
@@ -2437,8 +2301,8 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    item's text at the top of a taller box, off its checkbox and handle, and
    spaced it wider than an item that wrapped. Gaps are PADDING, never margin:
    the side menu picks its block by the pointer, and a margin belongs to
-   neither neighbour. They sit BELOW a block so the first line keeps Source's
-   pixel row (the parity gate). `--d-list-gap` must exceed a line's leading,
+   neither neighbour. They sit BELOW a block, so the first line starts the
+   document. `--d-list-gap` must exceed a line's leading,
    or one wrapped item runs into the next. */
 .doc .bn-block-content { padding: 0 0 var(--d-blk-gap); overflow-wrap: anywhere; }
 .doc .bn-block-content[data-content-type$="ListItem"] { padding-bottom: var(--d-list-gap); }
@@ -2454,7 +2318,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    sizes a heading from that full path plus `[data-content-type]` — five classes
    and attributes against the two a `.doc .bn-block-content[…]` rule has, so the
    theme's own tokens lost and every heading came out at BlockNote's `--level`
-   (h1 3em = 39px against the 22.36px Source draws) at weight 700. The extra
+   (h1 3em = 39px against the theme's 22.36px) at weight 700. The extra
    ancestors below are SPECIFICITY, not structure: what each rule selects is
    unchanged. Level 1 carries no `data-level` — BlockNote omits a prop still at
    its default — so it is matched both ways, and 4–6 are left to `--level`
@@ -2468,13 +2332,12 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
    outrank a declaration on the element itself. */
 .doc .bn-block-content[data-content-type="heading"] .bn-inline-content { font-weight: inherit; }
 /* `.bn-block-outer` declares `line-height: 1.5` on itself, so the editor root's
-   `--d-lh` above was inherited by nothing. Body copy measures the same in both
-   modes only if the block wrappers take it too. */
+   `--d-lh` above was inherited by nothing until the block wrappers took it too. */
 .doc .bn-block-outer { line-height: inherit; }
 /* NO GUIDE LINE BESIDE A NESTED ITEM. `@blocknote/react`'s styles.css draws one
    as `border-left: 1px solid var(--bn-colors-side-menu)` on the `::before` that
    core's Block.css positions at `left: -20px`; a nested bullet or task in this
-   app is read by its 24px indent, as it is in Source. `display` is the property
+   app is read by its 24px indent. `display` is the property
    contested — core's own `display: inline` is the same specificity as the rule
    below and loses on order, while react's border rule has nothing left to paint
    on. The indent is `.bn-block-group .bn-block-group`'s margin and is untouched. */
@@ -2508,9 +2371,16 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 /* the secret block's own DOM, injected into a non-editable node view */
 .z-secret-host { width: 100%; min-width: 0; font-family: var(--font); }
 /* a protected source group — frontmatter, or syntax the adapter will not
-   round-trip — shown as the bytes it is, with an "Edit source" door */
+   round-trip — shown as the bytes it is, with an Edit button */
 .z-source-block { width: 100%; border: var(--bd); border-radius: var(--r); background: var(--panel-2); padding: 10px; color: var(--muted); font: 12px var(--mono); }
 .z-source-block pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12em; overflow-y: auto; }
+/* that block's Markdown in place, and the confirm dialog's text field
+   (`confirmDialog` opts.field): plain text, grown to fit */
+.z-source-edit, #cfField {
+  display: block; width: 100%; min-height: 5lh; field-sizing: content; resize: none; margin: 8px 0; padding: 7px 9px;
+  border: var(--input-bd); border-radius: var(--r-sm); outline: none; background: var(--input-bg); color: var(--input-fg); font: 12px/1.5 var(--mono);
+}
+.z-source-edit:focus, #cfField:focus { border-color: var(--accent); box-shadow: var(--sh-focus); }
 
 /* ---- the block toolbar (ADR 0034's Edit half) ----
    A phone's only (ADR 0037): it DOCKS on the soft keyboard's top edge, which
@@ -2525,14 +2395,14 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .z-block-toolbar button:disabled { opacity: .45; cursor: default; }
 
 @media (max-width: 767px) {
-  /* No 16px floor on the document text: Source has none (ADR 0032 — the
-     viewport meta pins the scale, so iOS cannot zoom on focus) and the two
-     surfaces must read at one size. BlockNote's own fields keep the floor. */
-  .bn-root.bn-mantine :is(input, textarea) { font-size: max(16px, 1em); }
+  /* No 16px floor on the document text: the viewport meta pins the scale, so
+     iOS cannot zoom on focus. Fields keep §12's floor — `#cfField` here, after
+     the rule that sets its size. */
+  .bn-root.bn-mantine :is(input, textarea), #cfField { font-size: max(16px, 1em); }
   /* a thumb's target on the link copy button, the way spec 0016 gave it one */
   .z-link-copy { padding: .25em; }
   /* Calibration may cross the reported keyboard edge and the statusbar. The
-     fixed viewport bounds keep Reset reachable; zero offset leaves the mode chip
+     fixed viewport bounds keep Reset reachable; zero offset leaves the statusbar
      uncovered. */
   .z-block-toolbar { --toolbar-floor: calc(100dvh - 36px - env(safe-area-inset-bottom, 0px)); --toolbar-motion: calc((var(--dur-1) + var(--dur-2)) / 2); position: fixed; left: 0; right: 0; top: clamp(100px, calc(min(var(--visual-bottom, 100dvh), var(--toolbar-floor)) + var(--toolbar-offset, 0px)), 100%); bottom: auto; transform: translateY(-100%); margin: 0; z-index: 5; transition: top var(--toolbar-motion) var(--ease); }
   .z-toolbar-actions { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; }
@@ -2545,7 +2415,7 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
   .z-toolbar-position button { display: grid; place-items: center; min-width: 36px; }
   .z-block-toolbar button { flex: 0 0 auto; min-height: 36px; }
   /* the dock belongs to a focused document, not to the page. Focus is what
-     raises the soft keyboard; `kb-up` cannot stand in for it because Android
+     raises the soft keyboard; `--kb` cannot stand in for it because Android
      resizes the layout viewport and the overlap reads 0. */
   .block-editor-host:focus-within .z-block-toolbar { display: flex; }
   /* a fixed dock cannot live under a transformed ancestor: it would scroll with

@@ -11,6 +11,9 @@ the line of [ADR 0007](0007-installable-web-app.md) and
 new doors, and reaches an agent through
 [ADR 0031](0031-the-agent-gets-the-same-doors.md).
 
+**Superseded by [0039](0039-edit-is-the-only-doc-surface.md)**, 2026-09-29:
+the keybar went with Source. Edit's own phone toolbar (ADR 0037) is unchanged.
+
 ## Context
 
 On a phone this editor is missing four verbs, and they are not small ones.

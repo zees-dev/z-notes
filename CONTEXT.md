@@ -46,20 +46,18 @@ has happened or is likely, because agents invent synonyms.
 
 ## The document pane
 
-- **Edit / Source** — the two surfaces of the open doc, toggled by ⌘E and by
-  the statusbar mode chip (ADR 0037). **Edit** is the BlockNote island
-  (`app/block-editor.tsx`): formatted blocks edited in place. **Source** is
-  the *line editor* (ADR 0032): one `contenteditable` with one block per
-  source line, each drawn at the size its Edit block would be. The persisted
-  mode ids and the WebMCP enum stay `preview` (Edit) and `raw` (Source) —
-  identifiers, never words for a person. *Banned:* "Preview" for the visual
-  editor, "Raw mode" in UI text, "the raw textarea".
+- **Edit** — the doc editor and the only surface of the open doc (ADR 0039):
+  the BlockNote island (`app/block-editor.tsx`, ADR 0037), formatted blocks
+  edited in place. *Retired:* "Source", "Raw view"/"Raw mode" and "the raw
+  textarea" — the line editor is gone and they name nothing. *Banned:*
+  "Preview" for the editor.
 - **source group** — one top-level Markdown node with its byte range, the
   unit `app/markdown-source.ts` preserves: an untouched group keeps its
   bytes, an edited one is re-serialised. A **protected block** is a group the
   adapter cannot edit visually (frontmatter, nested secrets, unsupported
-  syntax); it shows its source and an "Edit source" door. *Banned:* "chunk",
-  "segment".
+  syntax); its **Edit** button opens exactly that block's Markdown in a
+  textarea in place, and Done splices it back into the block's byte range.
+  *Banned:* "chunk", "segment".
 
 ## Text size
 

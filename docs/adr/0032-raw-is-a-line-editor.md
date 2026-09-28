@@ -12,6 +12,9 @@ still measured, but on the real DOM rather than on a mirror of it. Rests on
 [ADR 0014](0014-file-operations-undo-but-they-ask.md), which is what made the
 browser's own undo stack dispensable.
 
+**Superseded by [0039](0039-edit-is-the-only-doc-surface.md)**, 2026-09-29:
+Source is gone, and this line editor (`app/rawedit.js`) with it.
+
 ## Context
 
 Switching from Preview to Raw changed the size of every line. Preview body copy

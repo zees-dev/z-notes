@@ -496,7 +496,7 @@ async function buildVendor(): Promise<void> {
    direct hit and as the fallback when the build failed.
 
    A failed browser build must never take the API, the shell or the age bundle
-   with it: the editor paths answer 503 and the app degrades to Source editing.
+   with it: the editor paths answer 503 and the pane says the editor could not load.
    ============================================================ */
 
 const editorAssets = new Map<string, Representation>();
@@ -550,7 +550,7 @@ async function buildEditor(): Promise<void> {
 function serveEditor(pathname: string, req: Request): Response {
   if (editorError) {
     return fail(503, "vendor-unavailable", {
-      message: "The editor bundle could not be built; use Source editing.",
+      message: "The editor bundle is unavailable; reload once the server has rebuilt it.",
       detail: editorError,
     });
   }
@@ -621,7 +621,7 @@ const EDITOR_LINK = /<link\b[^>]*\bid="editor-css"[^>]*>/;
 function withHashedEditor(html: string): string {
   const css = editorAliases.get("/vendor/editor.css");
   const js = editorAliases.get("/vendor/editor.js");
-  // the build failed: leave the aliases in place, they answer 503 and the app degrades to Source
+  // the build failed: leave the aliases in place, they answer 503 and the pane offers a reload
   if (!css || !js) return html;
   return html.replace(
     EDITOR_LINK,

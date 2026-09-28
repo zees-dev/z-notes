@@ -9,6 +9,11 @@ Raw text edit on the textarea's own undo stack and deliberately bound nothing.
 mutates a textarea, and still what fires the `input` event the app listens to —
 but the *history* is now the app's, not the browser's.
 
+Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: with
+Source gone, the app timeline holds file operations, agent writes and
+protected-block edits; typing in Edit stays the island's own history
+(ADR 0037).
+
 ## Context
 
 A session is one ordered list of things a person did: edited a.md, edited b.md,

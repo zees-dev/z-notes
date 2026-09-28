@@ -22,9 +22,7 @@
        `appDriver` members because four of those seven never build a driver;
      - and the round after that: `pressChord` (five copies in four shapes),
        `gotoSettings` / `leaveSettings` (three copies, already drifted across
-       three settle pauses), `clickWhenHittable` (two byte-identical copies) and
-       `ensureMode` / `docMode` (four copies in four dialects, two of whose
-       differences turned out to be load-bearing and survive as options).
+       three settle pauses) and `clickWhenHittable` (two byte-identical copies).
 
    `encPath` is NOT re-implemented here. tests/helpers.ts exports it and app.js
    uses the same rule — a doc URL and the request that fetches that doc have to
@@ -336,41 +334,6 @@ export async function clickWhenHittable(p: Page, sel: string, timeout = 8000): P
     sel
   );
   await p.click(sel);
-}
-
-/** which of the two views of the document is up — `#doc.raw-mode` is the
-    contract everything addresses the editor mode by. */
-export const docMode = (p: Page): Promise<"raw" | "preview"> =>
-  p.evaluate(() => (document.getElementById("doc")!.classList.contains("raw-mode") ? "raw" : "preview"));
-
-/**
- * Put the editor in `want`, whatever it is showing now.
- *
- * The control is a TOGGLE, so the read-first guard is the load-bearing part: an
- * unguarded call undoes the mode it was asked for. Four suites had written this
- * out in four dialects, and the drift had become load-bearing in two of them —
- * both survive as options rather than as copies:
- *
- *   · `via: "chip"` clicks the statusbar mode chip instead of pressing ⌘E, for
- *     a suite whose subject is the chat panel: a keyboard chord that lands on a
- *     chat control is noise, doubly so now that ⌘C is one of them.
- *   · `settle` is the pause a caller needs before it measures COMPUTED STYLE
- *     rather than a class — the stylesheet swap is not done when the class is.
- */
-export async function ensureMode(
-  p: Page,
-  want: "raw" | "preview",
-  opts: { via?: "chord" | "chip"; settle?: number } = {}
-): Promise<void> {
-  if ((await docMode(p)) === want) return;
-  if (opts.via === "chip") await p.click("#stMode");
-  else await pressChord(p, "KeyE");
-  await p.waitForFunction(
-    (w) => (document.getElementById("doc")!.classList.contains("raw-mode") ? "raw" : "preview") === w,
-    { timeout: 8000 },
-    want
-  );
-  if (opts.settle) await pause(opts.settle);
 }
 
 /**

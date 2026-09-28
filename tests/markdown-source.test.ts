@@ -19,8 +19,8 @@ test('top-level blank paragraphs retain their gaps through reload, edits and rem
   const raw = '\uFEFF\r\nText\r\n \r\n\r\n\r\n\r\n  # Second\r\n';
   const session = new SourceSession(raw);
   const [first, blank, secondBlank, heading] = session.blocks;
-  expect(session.range(blank.id)).toEqual({ start: raw.indexOf('\r\n\r\n\r\n  #'), end: raw.indexOf('\r\n\r\n\r\n  #'), line: 4 });
-  expect(session.range(heading.id)?.start).toBe(raw.indexOf('# Second'));
+  expect(session.ranges().get(blank.id)).toEqual({ start: raw.indexOf('\r\n\r\n\r\n  #'), end: raw.indexOf('\r\n\r\n\r\n  #'), line: 4 });
+  expect(session.ranges().get(heading.id)?.start).toBe(raw.indexOf('# Second'));
   const nearby = clone(session.blocks);
   prose(nearby.at(-1)!, 'Changed');
   expect(session.serialize(nearby)).toBe(raw.replace('Second', 'Changed'));
@@ -52,7 +52,7 @@ test('literal Markdown punctuation is escaped by standard serializer', () => { c
 test('edited nested task list keeps hierarchy and contiguous siblings', () => { const s = new SourceSession('- [ ] first\n  - nested\n- [x] second\n\nAfter\n'); const b = clone(s.blocks); b[0].props.checked = true; const out = s.serialize(b); expect(out).toContain('- [x] first'); expect(out).toContain('  - nested'); expect(out).toEndWith('\n\nAfter\n'); });
 test('wiki atoms are excluded from code and links', () => { const s = new SourceSession('[[a]] `[[b]]` [x [[c]]](https://example.com)'); const content = s.blocks[0].content as Array<{type: string}>; expect(content.filter(x => x.type === 'wikiLink')).toHaveLength(1); });
 test('metadata movement and protected transformations are rejected', () => { const s = new SourceSession('---\na: b\n---\n\ntext'); expect(() => s.serialize([...s.blocks].reverse())).toThrow(); const b = clone(s.blocks); b[0].type = 'paragraph'; expect(() => s.serialize(b)).toThrow(); });
-test('duplicate secret edits target stable IDs after reorder', () => { const s = new SourceSession('```age\nSAME\n```\n\n```age\nSAME\n```\n'); const b = clone(s.blocks).reverse(); const id = b[0].id; const out = s.replaceSecret(id, 'NEW', b); expect(out).toBe('```age\nNEW\n```\n\n```age\nSAME\n```\n'); expect(s.range(id, b)?.line).toBe(1); });
+test('duplicate secret edits target stable IDs after reorder', () => { const s = new SourceSession('```age\nSAME\n```\n\n```age\nSAME\n```\n'); const b = clone(s.blocks).reverse(); const id = b[0].id; const out = s.replaceSecret(id, 'NEW', b); expect(out).toBe('```age\nNEW\n```\n\n```age\nSAME\n```\n'); expect(s.ranges(b).get(id)?.line).toBe(1); });
 test('wiki syntax survives edits in its paragraph', () => { const s = new SourceSession('[[a]] before'); const b = clone(s.blocks); (b[0].content as import('../app/markdown-source').Inline[]).push({ type: 'text', text: ' after', styles: {} }); expect(s.serialize(b)).toBe('[[a]] before after'); });
 test('editing preserves native CRLF separators and final newline', () => { const s = new SourceSession('one\r\n\r\n\r\ntwo\r\n'); const b = clone(s.blocks); prose(b[0], 'new'); expect(s.serialize(b)).toBe('new\r\n\r\n\r\ntwo\r\n'); });
 test('split and join do not reintroduce deleted list items', () => { const s = new SourceSession('- first\n- second\n- third\n\nAfter'); const b = clone(s.blocks); b[1].type = 'paragraph'; expect(s.serialize(b)).toBe('- first\n\nsecond\n\n- third\n\nAfter'); expect(s.serialize([b[0], b[2], b[3]])).toBe('- first\n- third\n\nAfter'); });
@@ -105,7 +105,7 @@ test('EOF-dependent groups cannot move before prose and consume it', () => {
   for (const tail of ['<!-- unfinished', '```age\nARMOR']) {
     const raw = `Before\n\n${tail}`;
     const session = new SourceSession(raw);
-    expect(() => session.serialize([...session.blocks].reverse())).toThrow('Source');
+    expect(() => session.serialize([...session.blocks].reverse())).toThrow('must remain last');
     expect(session.serialize(session.blocks)).toBe(raw);
   }
 });
@@ -146,7 +146,7 @@ test('automatic trailing empty paragraphs do not close or move EOF-dependent blo
     expect(session.sourceParts(blocks[1].id, blocks).length).toBeGreaterThan(0);
     if (blocks[1].type !== 'codeBlock') {
       prose(blocks[2], 'Following prose');
-      expect(() => session.serialize(blocks)).toThrow('Source');
+      expect(() => session.serialize(blocks)).toThrow('must remain last');
     }
   }
 });
@@ -233,7 +233,7 @@ test('a list item may not carry a non-list child out to Markdown', () => {
   const session = new SourceSession('- item\n- second\n');
   const blocks = clone(session.blocks);
   blocks[0].children = [{ id: 'child-paragraph', type: 'paragraph', props: {}, content: [{ type: 'text', text: 'A paragraph', styles: {} }], children: [] }];
-  expect(() => session.serialize(blocks)).toThrow('nesting requires Source');
+  expect(() => session.serialize(blocks)).toThrow('Only list items can nest');
 });
 test('an edited list leaves its neighbour list, its separators and its looseness alone', () => {
   const session = new SourceSession('1. a\n\n* b\n* c\n\n\nafter\n');

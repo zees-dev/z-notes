@@ -13,6 +13,9 @@ direction the mode control went (ADR-less at the time, recorded in
 `0001` §"Two modes"): a fact about the document belongs in the bar this app
 uses to say facts, not in the bar it uses to hold controls.
 
+Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: the
+statusbar has no mode chip.
+
 ## Context
 
 The topbar carried three things for one idea:

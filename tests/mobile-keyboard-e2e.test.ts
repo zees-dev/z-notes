@@ -9,8 +9,8 @@
    ============================================================ */
 import { afterAll, beforeAll, test, expect } from "bun:test";
 import type { Browser, Page } from "puppeteer-core";
-import { startServer, sleep, type TestServer } from "./helpers";
-import { launchTestBrowser, newAppPage, appDriver, ensureMode, pressChord } from "./browser";
+import { readVaultText, startServer, sleep, type TestServer } from "./helpers";
+import { launchTestBrowser, newAppPage, appDriver, pressChord } from "./browser";
 
 async function tapToolbar(page: Page, label: string) {
   await page.tap(`[aria-label="${label}"]`);
@@ -185,8 +185,6 @@ for (const path of ["short.md", "long.md"]) test(`${path}: editing toolbar meets
         expect(Math.abs(m.edge - m.bottom)).toBeLessThanOrEqual(2);
       }
     }
-    await ensureMode(page, 'raw');
-    expect(await page.$eval('.z-block-toolbar', e => e.getBoundingClientRect().height).catch(() => 0)).toBe(0);
     await page.evaluate(() => document.getElementById('chatBtn')!.click());
     await viewport(page, 500);
     await page.focus('#composer');
@@ -216,7 +214,7 @@ test('reported innerHeight mismatch leaves no keyboard gap and window resize rep
   } finally { await page.close(); }
 }, 90000);
 
-test('touch indent keeps the caret, keyboard dismissal leaves Mode reachable, a desktop has no toolbar', async () => {
+test('touch indent keeps the caret, keyboard dismissal leaves the statusbar reachable, a desktop has no toolbar', async () => {
   const page = await phone('short.md');
   try {
     await viewport(page, 500);
@@ -231,18 +229,15 @@ test('touch indent keeps the caret, keyboard dismissal leaves Mode reachable, a 
     expect(await page.$('.bn-block-group .bn-block-group')).toBeNull();
     expect(await page.$eval('.bn-editor', e => e.textContent)).toContain('Child retained');
     await viewport(page, 844);
-    expect(await hittable(page, '#stMode')).toBe(true);
+    expect(await hittable(page, '#saveInd')).toBe(true);
+    await page.tap('#saveInd');
+    await page.waitForFunction(() => document.getElementById('saveTxt')!.textContent === 'Saved');
+    expect(readVaultText(srv.vault, 'short.md')).toMatch(/[-*] Parent\n[-*] Child retained/);
     await page.setViewport({ width: 1440, height: 900 });
     await page.waitForSelector('.z-block-toolbar');
     await viewport(page, 900);
     await page.focus('.bn-editor');
     expect(await page.$eval('.z-block-toolbar', e => e.getClientRects().length)).toBe(0);
-    await touchViewport(page, 390);
-    await page.waitForSelector('.z-block-toolbar');
-    await viewport(page, 844);
-    await page.tap('#stMode');
-    await page.waitForSelector('#doc.raw-mode');
-    expect(await page.$eval('#rawArea', e => (e as HTMLTextAreaElement).value)).toMatch(/[-*] Parent\n[-*] Child retained/);
   } finally { await page.close(); }
 }, 90000);
 
@@ -297,7 +292,6 @@ test('toolbar calibration preserves the caret, animates, persists and keeps the 
       }
     }
     await page.keyboard.press('Escape');
-    expect(await page.$eval('#doc', e => e.classList.contains('raw-mode'))).toBe(false);
     expect(await page.$eval('[aria-label="Toolbar options"]', e => e.getAttribute('aria-expanded'))).toBe('false');
     await page.focus('.bn-editor');
     await tapToolbar(page, 'Toolbar options');
@@ -315,7 +309,7 @@ test('toolbar calibration preserves the caret, animates, persists and keeps the 
     await viewport(page, 500);
     expect(await bottom()).toBeCloseTo(508, 0);
     await viewport(page, 844);
-    expect(await hittable(page, '#stMode')).toBe(true);
+    expect(await hittable(page, '#saveInd')).toBe(true);
     await tapToolbar(page, 'Toolbar options');
     await page.tap('[aria-label="Reset toolbar position"]');
     expect(await page.evaluate(() => localStorage.getItem('znotes.toolbarOffset'))).toBe('0');
@@ -345,7 +339,7 @@ test('toolbar offset tolerates corrupt or blocked storage and bounds extreme val
         expect(await page.$eval('.z-block-toolbar', e => e.getBoundingClientRect().bottom)).toBeCloseTo(844, 0);
         await tapToolbar(page, 'Toolbar options');
         await tapToolbar(page, 'Reset toolbar position');
-        expect(await hittable(page, '#stMode')).toBe(true);
+        expect(await hittable(page, '#saveInd')).toBe(true);
       }
     }
     await viewport(page, 180);

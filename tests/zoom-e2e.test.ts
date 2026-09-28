@@ -1,7 +1,7 @@
 /* ============================================================
    zoom-e2e.test.ts — the pinch is the app's now, and it steps TEXT (spec 0013).
 
-   Six claims, each measured on the thing that actually moves rather than on a
+   Five claims, each measured on the thing that actually moves rather than on a
    class or a stored string:
 
      · A two-finger spread over the document pane walks the ladder UP one rung
@@ -17,9 +17,6 @@
        a browser that honours the other still fighting the app for the gesture.
      · `set_text_zoom` is the same choice without a hand (ADR 0031), and an
        off-ladder percent comes back as data in the API's error shape.
-     · Source is zoomed exactly as Edit is — the parity ADR 0032 buys by making
-       the source a line editor rather than a textarea, measured now against
-       the island's own paragraph text (ADR 0037).
 
    Touch is dispatched over CDP: puppeteer's mouse cannot produce a second
    finger. Prior art for the transport is tests/mobile-e2e.test.ts.
@@ -28,7 +25,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { type Browser, type Page } from "puppeteer-core";
 import { sleep, startServer, type SeedMap, type TestServer } from "./helpers";
-import { callTool, ensureMode, launchTestBrowser, newAppPage, waitForApp } from "./browser";
+import { callTool, launchTestBrowser, newAppPage, waitForApp } from "./browser";
 
 const PHONE = { width: 390, height: 844, hasTouch: true, isMobile: true };
 
@@ -74,18 +71,6 @@ async function load(page: Page): Promise<void> {
   await page.goto(srv.base + "/", { waitUntil: "domcontentloaded" });
   await waitForApp(page);
   await page.waitForSelector("#doc .bn-editor", { timeout: 20000 });
-}
-
-/** The text the reader actually reads, in Edit: the island's paragraph content.
-    `.bn-block-content` carries `transition: font-size .2s`, so a size read
-    straight after a zoom change would be an intermediate frame — wait the
-    animations out first. */
-const PROSE = '#doc .bn-block-content[data-content-type="paragraph"] .bn-inline-content';
-async function proseSize(p: Page): Promise<number> {
-  await p.$eval("#doc", async (el) => {
-    await Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished));
-  });
-  return p.$eval(PROSE, (n) => parseFloat(getComputedStyle(n).fontSize));
 }
 
 /** The multiplier the app published on `<html>`. */
@@ -269,33 +254,5 @@ describe("set_text_zoom", () => {
     /* the app's own state answers with the percent, not the multiplier */
     const state = await callTool(p, "get_app_state");
     expect(`get_app_state.textZoom: ${state.textZoom}`).toBe("get_app_state.textZoom: 150");
-  }, 90000);
-});
-
-/* ------------------------------------------------------------------
-   6 — Source is zoomed exactly as Edit is (spec 0014's parity)
-   ------------------------------------------------------------------ */
-
-describe("Source at zoom", () => {
-  /* FAILING AS WRITTEN, and it is the app that is wrong, not the measurement.
-     base.css's phone rule floors the island at 16px
-     (`@media (max-width:767px) { .doc .bn-editor, .doc .bn-inline-content …
-     { font-size: max(16px, 1em) } }`, the iOS focus-zoom guard) and `.raw` —
-     a contenteditable with the same iOS problem — carries no such floor. So at
-     390px the two modes disagree below the rung where the floor stops biting:
-     rung 100 % Edit 16px / Source 13px, rung 115 % Edit 16px / Source 14.95px,
-     rung 130 % Edit 16.9px / Source 16.9px (agreeing again). Either the floor
-     belongs on `.raw` too or it does not belong on the island; both are the
-     CSS owner's call, and the parity claim is not ours to soften. */
-  test("the source reads at the size Edit does", async () => {
-    const p = await phone();
-    await pinch(p, 80, 120);
-
-    const prose = await proseSize(p);
-    await ensureMode(p, "raw", { settle: 200 });
-    const raw = await p.evaluate(() =>
-      parseFloat(getComputedStyle(document.getElementById("rawArea")!).fontSize)
-    );
-    expect(`Source ${raw}px = Edit ${prose}px`).toBe(`Source ${prose}px = Edit ${prose}px`);
   }, 90000);
 });

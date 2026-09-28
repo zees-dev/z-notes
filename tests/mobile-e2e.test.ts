@@ -26,6 +26,7 @@
      · THE TREE LONG-PRESS. The only route a phone has to rename or delete a
        FILE opens the same menu the right-click opens, does not open the doc
        under it, and does not fire on a scroll.
+     · THE HEADER RENAME. The open doc's name edits in place, drawer shut.
    ============================================================ */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
@@ -58,7 +59,7 @@ let app: AppDriver;
 const pageErrors: string[] = [];
 
 beforeAll(async () => {
-  srv = await startServer({ seed: { ...SEED_VAULT, ...WRAP_DOCS } });
+  srv = await startServer({ seed: { ...SEED_VAULT, ...WRAP_DOCS, "rename-me.md": "# Rename me\n" } });
   browser = await launchTestBrowser();
 }, 90000);
 
@@ -122,21 +123,14 @@ describe("phone — the document pane never scrolls sideways", () => {
     }
   }, 180000);
 
-  test("…in all three themes, and in Source as well as Edit", async () => {
+  test("…in all three themes", async () => {
     await page.setViewport({ width: 360, height: 800 });
     for (const theme of ["minimal", "modern", "terminal"]) {
       await app.boot("/d/wrap/all.md?theme=" + theme);
       await themeReady(theme);
       await sleep(280);
-      const preview = await scrollOverflow();
-      expect(`${theme} preview: #scroll overflows by ${preview.scroll}px`).toBe(
-        `${theme} preview: #scroll overflows by 0px`
-      );
-      await page.evaluate(() => (document.getElementById("stMode") as HTMLElement).click());
-      await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
-      await sleep(180);
-      const raw = await scrollOverflow();
-      expect(`${theme} raw: #scroll overflows by ${raw.scroll}px`).toBe(`${theme} raw: #scroll overflows by 0px`);
+      const m = await scrollOverflow();
+      expect(`${theme}: #scroll overflows by ${m.scroll}px`).toBe(`${theme}: #scroll overflows by 0px`);
     }
   }, 180000);
 });
@@ -299,6 +293,20 @@ describe("phone — the bottom sheet is keyboard-aware", () => {
       `and it starts ${m.top}px down, below the topbar: true`
     );
   }, 90000);
+
+  test("a closed assistant stays completely off-screen when the soft keyboard raises --kb", async () => {
+    await app.boot("/d/projects/homelab.md");
+    const m = await page.evaluate(() => {
+      document.documentElement.style.setProperty("--kb", "336px");
+      const r = document.getElementById("chat")!.getBoundingClientRect();
+      return { open: document.getElementById("app")!.classList.contains("chat-open"), top: Math.round(r.top), viewport: innerHeight };
+    });
+    expect(m.open).toBe(false);
+    expect(`closed chat top ${m.top} >= viewport ${m.viewport}`).toBe(
+      `closed chat top ${Math.max(m.top, m.viewport)} >= viewport ${m.viewport}`
+    );
+    expect(pageErrors).toEqual([]);
+  }, 30000);
 });
 
 const openDrawer = async () => {
@@ -408,30 +416,11 @@ describe("phone — the sheet is a layer", () => {
     expect(await page.evaluate(() => (history.state || {}).z)).toBe("doc");
   }, 90000);
 
-  /* A phone has no ⌘E, and `#stMode` is a 30px chip in a 36px bar — so Back is
-     the gesture that actually exists for "stop editing". It leaves Raw one
-     press before it leaves the note. */
-  test("Back leaves Source for Edit before it leaves the note", async () => {
-    await app.boot("/");
-    const before = await page.evaluate(() => location.pathname);
-    await page.evaluate(() => (document.getElementById("stMode") as HTMLElement).click());
-    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "raw", { timeout: 8000 });
-
-    await page.evaluate(() => history.back());
-    await sleep(500);
-    expect(`the mode after Back: ${await page.evaluate(() => document.getElementById("stMode")!.dataset.mode)}`).toBe(
-      "the mode after Back: preview"
-    );
-    expect(`and the note is still open: ${await page.evaluate(() => location.pathname)}`).toBe(
-      `and the note is still open: ${before}`
-    );
-  }, 90000);
-
   /* REGRESSION — the press held in reserve, and given back.
      A phone launches at the BOTTOM of the stack, where `history.back()` pops
      nothing and no popstate fires at all, so opening a layer there pushes a
      marker for Back to be intercepted at. Closing it by any OTHER gesture — the
-     ✕, the chip, a tap on the document, Esc — left that marker standing with the
+     ✕, a tap on the document, Esc — left that marker standing with the
      user on it, and the next Back was spent walking off it: a press that
      visibly did nothing, on the two things anyone does first after launching.
 
@@ -453,21 +442,6 @@ describe("phone — the sheet is a layer", () => {
     await page.waitForFunction(() => !document.getElementById("app")!.classList.contains("chat-open"), { timeout: 8000 });
     await sleep(420);
     expect(`and closing gave it back: ${await standingOn()}`).toBe("and closing gave it back: doc");
-  }, 90000);
-
-  test("leaving Raw by the statusbar chip gives its reserved press back too", async () => {
-    await app.boot("/");
-    expect(`a fresh launch stands on: ${await standingOn()}`).toBe("a fresh launch stands on: doc");
-
-    await page.evaluate(() => (document.getElementById("stMode") as HTMLElement).click());
-    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "raw", { timeout: 8000 });
-    await sleep(300);
-    expect(`Raw reserved a press: ${await standingOn()}`).toBe("Raw reserved a press: veil");
-
-    await page.evaluate(() => (document.getElementById("stMode") as HTMLElement).click());
-    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", { timeout: 8000 });
-    await sleep(420);
-    expect(`and Edit gave it back: ${await standingOn()}`).toBe("and Edit gave it back: doc");
   }, 90000);
 
   /* Opening a modal OVER the sheet pushes a second marker, which truncates the
@@ -584,7 +558,7 @@ describe("phone — touch targets", () => {
        horizontal centre. (`overflow: hidden` on the bar clips hit testing too,
        which is why the bar itself carries the floor.) */
     /* the drawer is a fixed overlay across the left 300px — with it open,
-       elementFromPoint over the statusbar returns the drawer, not the chip */
+       elementFromPoint over the statusbar returns the drawer, not the control */
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.getElementById("app")!.classList.contains("nav-open"), { timeout: 4000 });
     await sleep(400);
@@ -603,7 +577,7 @@ describe("phone — touch targets", () => {
         };
         return { sel, top: hits(br.top + 2), bottom: hits(br.bottom - 2), barH: Math.round(br.height) };
       };
-      return [probe("#stMode", ".statusbar"), probe('.topbar [data-act="nav-open"]', ".topbar")].filter(Boolean);
+      return [probe("#saveInd", ".statusbar"), probe('.topbar [data-act="nav-open"]', ".topbar")].filter(Boolean);
     });
     expect(`both bar controls were probed: ${bars.length}`).toBe("both bar controls were probed: 2");
     for (const b of bars as Array<{ sel: string; top: boolean; bottom: boolean; barH: number }>) {
@@ -697,4 +671,29 @@ describe("phone — the tree long-press", () => {
     await sleep(250);
     expect(`a drag opened a menu: ${await menuOpen()}`).toBe("a drag opened a menu: false");
   }, 90000);
+});
+
+describe("phone — the header rename", () => {
+  test("clicking the filename edits it in the header and Enter commits it", async () => {
+    await app.boot("/d/rename-me.md");
+    await page.click('#crumbs [data-act="rename-active"]');
+    await page.waitForFunction(() => document.activeElement?.matches("#crumbs .crumb-rename"), { timeout: 8000 });
+    const surface = await page.evaluate(() => ({
+      drawer: document.getElementById("app")!.classList.contains("nav-open"),
+      treeEditors: document.querySelectorAll("#tree .newrow.renaming input").length,
+      topbarOverflow: Math.max(0, document.querySelector<HTMLElement>(".topbar")!.scrollWidth - document.querySelector<HTMLElement>(".topbar")!.clientWidth),
+    }));
+    expect(surface).toEqual({ drawer: false, treeEditors: 0, topbarOverflow: 0 });
+    const selected = await page.$eval("#crumbs .crumb-rename", (n) => {
+      const i = n as HTMLInputElement;
+      return i.value.slice(i.selectionStart ?? 0, i.selectionEnd ?? 0);
+    });
+    expect(selected).toBe("rename-me");
+    await page.keyboard.type("renamed");
+    await page.keyboard.press("Enter");
+    await app.settled("renamed.md");
+    expect((await srv.doc("rename-me.md")).status).toBe(404);
+    expect((await srv.doc("renamed.md")).status).toBe(200);
+    expect(pageErrors).toEqual([]);
+  }, 45000);
 });

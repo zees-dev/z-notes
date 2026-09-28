@@ -2,18 +2,13 @@
    history.js — ONE undo timeline for the whole app.
 
    Not one per document, and not one per kind of thing. A person's session is a
-   single ordered list of things they did — edited a.md, edited b.md, deleted
-   a.md — and ⌘Z walks back up that list whatever the next step turns out to
-   be, taking them to the document it is about.
+   single ordered list of things they did — rewrote a.md, deleted b.md — and ⌘Z
+   walks back up that list whatever the next step turns out to be, taking them
+   to the document it is about. It holds file operations, agent writes and
+   protected-block edits; typing in Edit is the island's own history, and ⌘Z
+   reaches this timeline once that has nothing left (ADR 0014, amended by 0039).
 
-   WHY THE BROWSER'S OWN UNDO COULD NOT DO THIS. ADR 0013 put every Raw edit on
-   the textarea's native stack, which is the right stack for one textarea and
-   the wrong one for a vault: `renderDoc` builds a NEW textarea for every doc
-   you open, so the native history dies at each doc switch, and it cannot
-   interleave with anything that is not a text edit. "Undo my change to b.md
-   while I am looking at a.md" is not expressible in it at all.
-
-   So the app owns the timeline. This module owns nothing else: it is a leaf
+   The app owns the timeline. This module owns nothing else: it is a leaf
    (state and ui only), it holds the two stacks, and the actual work of putting
    a document or a file back is INJECTED by the composition root — the same
    `wireDialogs` shape dialogs.js uses, and the reason a leaf can drive

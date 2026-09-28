@@ -158,15 +158,9 @@ export function clearStickyToast() {
 /** Put text on the system clipboard. The app's ONLY clipboard writer — the
     async API where it exists, the select-and-execCommand shim where it does
     not, and best-effort either way (a clipboard manager is outside this
-    boundary; see secrets.js).
-
-    `quiet` suppresses the confirmation toast, for the callers where the
-    clipboard is not the point of the gesture: a whole-line ⌘X/⌘C in Raw is an
-    EDIT, taken twenty times a minute, and a toast on each one would narrate
-    the editing rather than confirm anything. The copy BUTTONS keep the toast —
-    there the clipboard is the entire outcome, and nothing else on screen
-    changes to show it happened. */
-export function copyText(t, opts) {
+    boundary; see secrets.js). The toast is the confirmation: the clipboard is
+    the entire outcome, and nothing else on screen changes to show it. */
+export function copyText(t) {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).catch(() => {});
     else {
@@ -178,7 +172,7 @@ export function copyText(t, opts) {
       ta.remove();
     }
   } catch (e) {}
-  if (!(opts && opts.quiet)) toast("Copied to clipboard");
+  toast("Copied to clipboard");
 }
 
 export function apiFail(err, what) {
@@ -392,11 +386,8 @@ const extLink = (href, label) =>
    matched up to the dot. Trailing punctuation is peeled off — entities first,
    since the text is escaped and a quote arrives five characters wide — and a
    `)` only when the URL does not own it (a Wikipedia "…_(disambiguation)" keeps
-   its close-paren because the URL also carries the open).
-
-   Exported for rawedit.js (ADR 0032), which asks the same of the UNESCAPED
-   source line, where the entity branch never matches. */
-export function trimUrlTail(u) {
+   its close-paren because the URL also carries the open). */
+function trimUrlTail(u) {
   for (;;) {
     const ent = /&(amp|lt|gt|quot|#39);$/.exec(u);
     if (ent) {

@@ -28,6 +28,8 @@ beforeEach(async () => {
   page = await newAppPage(browser);
   path = `refresh-${++sequence}.md`;
   writeFileSync(join(srv.vault, path), "Original paragraph\n");
+  // `/d/{path}` resolves through the listing; booting before the watcher lists it opens other.md.
+  await waitUntil(async () => JSON.stringify((await srv.api("GET", "/api/docs")).body).includes(path), { label: path + " listed" });
 });
 async function boot() {
   await appDriver(page, srv.base).boot("/d/" + path);
@@ -118,7 +120,7 @@ test("gap refresh finishing after navigation preserves the new editor and select
   expect(await page.$eval(".bn-editor", e => e.textContent)).toContain("editing here still focused");
 }, 35000);
 
-test("CSS-only editor load failure exposes usable Source and saves", async () => {
+test("CSS-only editor load failure says so, offers Reload and leaves nothing editable", async () => {
   await page.setRequestInterception(true);
   let cssRequests = 0;
   // hashed href in the shell, alias as the fallback — ADR 0038
@@ -128,13 +130,9 @@ test("CSS-only editor load failure exposes usable Source and saves", async () =>
     else void request.continue();
   });
   await appDriver(page, srv.base).boot("/d/" + path);
-  await page.waitForSelector("#rawArea", { timeout: 5000 });
-  expect(await page.$eval("#doc", e => e.textContent)).toContain("keep editing in Source");
-  await page.click("#rawArea");
-  await pressChord(page, "End", "Control");
-  await page.keyboard.type("Recovered CSS failure\n");
-  await pressChord(page, "KeyS");
-  await waitUntil(() => readVaultText(srv.vault, path).includes("Recovered CSS failure"), { label: "Source fallback saved" });
+  await page.waitForSelector('#doc .note.bad [data-act="reload"]', { timeout: 5000 });
+  expect(await page.$eval("#doc", e => e.textContent)).toContain("could not load");
+  expect(await page.$('#doc [contenteditable="true"]')).toBeNull();
   expect(cssRequests).toBe(1);
 }, 35000);
 
@@ -150,23 +148,16 @@ test("an older refresh cannot replace a newer external revision", async () => {
   expect(await page.$eval(".bn-editor", e => e.textContent)).toContain("Newest external revision");
 }, 35000);
 
-for (const mode of ["preview", "raw"]) {
-  test(`a real tree refresh retains the ${mode} buffer owner for subsequent typing and save`, async () => {
-    await boot();
-    if (mode === "raw") await page.click("#stMode");
-    const added = `added-${sequence}.md`;
-    await srv.api("POST", "/api/docs", { type: "doc", path: added, markdown: "New sibling\n" });
-    await page.waitForSelector(`#tree [data-doc="${added}"]`);
-    if (mode === "raw") {
-      await page.click("#rawArea");
-      await pressChord(page, "End", "Control");
-      await page.keyboard.type("Saved after tree refresh\n");
-    } else await append(" Saved after tree refresh");
-    expect((await snapshot()).markdown).toContain("Saved after tree refresh");
-    await pressChord(page, "KeyS");
-    await waitUntil(() => readVaultText(srv.vault, path).includes("Saved after tree refresh"), { label: "buffer saved after tree refresh" });
-  }, 35000);
-}
+test("a real tree refresh retains the buffer owner for subsequent typing and save", async () => {
+  await boot();
+  const added = `added-${sequence}.md`;
+  await srv.api("POST", "/api/docs", { type: "doc", path: added, markdown: "New sibling\n" });
+  await page.waitForSelector(`#tree [data-doc="${added}"]`);
+  await append(" Saved after tree refresh");
+  expect((await snapshot()).markdown).toContain("Saved after tree refresh");
+  await pressChord(page, "KeyS");
+  await waitUntil(() => readVaultText(srv.vault, path).includes("Saved after tree refresh"), { label: "buffer saved after tree refresh" });
+}, 35000);
 
 for (const next of ["typing", "navigation", "initially clean typing"]) {
   test(`an external move completes retargeting before tree I/O and preserves ${next}`, async () => {
@@ -365,15 +356,12 @@ test("a clean moved doc adopts the server's rewritten self-link and baseline", a
   expect(final.dirty).toBe(false);
 }, 35000);
 
-for (const mode of ["preview", "raw"]) {
-  test(`external deletion unmounts the clean ${mode} editor before further typing`, async () => {
-    await boot();
-    if (mode === "raw") await page.click("#stMode");
-    const editor = await page.$(mode === "raw" ? "#rawArea" : ".bn-editor");
-    expect(editor).not.toBeNull();
-    expect((await srv.api("DELETE", "/api/docs/" + path)).status).toBe(204);
-    await page.waitForFunction(() => !document.querySelector("#rawArea, #doc [contenteditable=true]"), { timeout: 3000 });
-    expect(await editor!.evaluate(element => element.isConnected)).toBe(false);
-    expect(await page.$eval("#doc", element => element.childElementCount)).toBe(0);
-  }, 35000);
-}
+test("external deletion unmounts the clean editor before further typing", async () => {
+  await boot();
+  const editor = await page.$(".bn-editor");
+  expect(editor).not.toBeNull();
+  expect((await srv.api("DELETE", "/api/docs/" + path)).status).toBe(204);
+  await page.waitForFunction(() => !document.querySelector("#doc [contenteditable=true]"), { timeout: 3000 });
+  expect(await editor!.evaluate(element => element.isConnected)).toBe(false);
+  expect(await page.$eval("#doc", element => element.childElementCount)).toBe(0);
+}, 35000);

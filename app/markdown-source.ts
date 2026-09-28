@@ -37,19 +37,19 @@ function inlines(nodes: Node[], source: string, styles: Record<string, boolean |
         // MDAST decodes escapes and entities. Ambiguous mixtures stay protected.
         const rawLinks = Array.from(raw.matchAll(/(?<!\\)(?:\\\\)*(\[\[[^\]\\\n]+\]\])/g), match => match[1]);
         if (!rawLinks.length) return [text(node.value || '', styles)];
-        if (JSON.stringify(rawLinks) !== JSON.stringify(node.value?.match(/\[\[[^\]\n]+\]\]/g))) throw new Error('Mixed escaped wiki-links require Source');
+        if (JSON.stringify(rawLinks) !== JSON.stringify(node.value?.match(/\[\[[^\]\n]+\]\]/g))) throw new Error('Mixed escaped wiki-links are edited as protected Markdown');
       }
-      if (Object.keys(styles).length && /\[\[[^\]\n]+\]\]/.test(node.value || '')) throw new Error('Styled wiki-links require Source');
+      if (Object.keys(styles).length && /\[\[[^\]\n]+\]\]/.test(node.value || '')) throw new Error('Styled wiki-links are edited as protected Markdown');
       return (node.value || '').split(/(\[\[[^\]\n]+\]\])/).filter(Boolean).map(value => value.startsWith('[[') && value.endsWith(']]') ? { type: 'wikiLink', props: { target: value.slice(2, -2) } } : text(value, styles));
     }
     if (node.type === 'inlineCode') return [text(node.value || '', { ...styles, code: true })];
-    if (node.type === 'break') throw new Error('Hard breaks require Source');
+    if (node.type === 'break') throw new Error('Hard breaks are edited as protected Markdown');
     const style = ({ strong: 'bold', emphasis: 'italic', delete: 'strike' } as Record<string, string>)[node.type];
     if (style) return inlines(node.children || [], source, { ...styles, [style]: true }, wiki);
     // A scheme the editor may not make actionable is still the file's bytes: the
     // group stays protected rather than losing its destination on the next edit.
     if (node.type === 'link' && !node.title) {
-      if (!safeUrl(node.url || '')) throw new Error('This link scheme requires Source');
+      if (!safeUrl(node.url || '')) throw new Error('This link scheme is edited as protected Markdown');
       return [{ type: 'link', href: node.url || '', content: inlines(node.children || [], source, styles, false) }];
     }
     throw new Error(`Unsupported inline ${node.type}`);
@@ -68,7 +68,7 @@ function importNode(node: Node, source: string, spread: Map<string, boolean>, ne
   if (node.type === 'blockquote' && children.length === 1 && children[0].type === 'paragraph') return [block('quote', inlines(children[0].children || [], source))];
   if (node.type === 'list') return children.map((item, index) => {
     const parts = item.children || [];
-    if (node.ordered && typeof item.checked === 'boolean') throw new Error('Ordered tasks require Source');
+    if (node.ordered && typeof item.checked === 'boolean') throw new Error('Ordered tasks are edited as protected Markdown');
     if (!parts.length || parts[0].type !== 'paragraph' || parts.slice(1).some(n => n.type !== 'list')) throw new Error('Complex list');
     const imported = block(typeof item.checked === 'boolean' ? 'checkListItem' : node.ordered ? 'numberedListItem' : 'bulletListItem', inlines(parts[0].children || [], source), typeof item.checked === 'boolean' ? { checked: item.checked } : node.ordered ? { start: (node.start ?? 1) + index } : {}, parts.slice(1).flatMap(n => importNode(n, source, spread, true)));
     // Looseness is the source list's, not the editor's: BlockNote has no prop
@@ -87,7 +87,7 @@ function inlineNodes(content: SourceBlock['content']): Node[] {
     if (item.type === 'wikiLink') return [{ type: 'wikiLink', value: `[[${item.props.target}]]` }];
     if (item.type === 'link') return safeUrl(item.href) ? [{ type: 'link', url: item.href, children: inlineNodes(item.content) }] : inlineNodes(item.content);
     if (item.type !== 'text') throw new Error('Unsupported inline content');
-    if (Object.entries(item.styles).some(([key, value]) => value && !['bold', 'italic', 'strike', 'code'].includes(key))) throw new Error('This formatting requires Source');
+    if (Object.entries(item.styles).some(([key, value]) => value && !['bold', 'italic', 'strike', 'code'].includes(key))) throw new Error('This formatting has no Markdown form');
     let node: Node = { type: item.styles.code ? 'inlineCode' : 'text', value: item.text };
     for (const [style, type] of [['bold', 'strong'], ['italic', 'emphasis'], ['strike', 'delete']]) if (item.styles[style]) node = { type, children: [node] };
     return [node];
@@ -108,7 +108,7 @@ function exportNodes(blocks: readonly SourceBlock[], loose: (block: SourceBlock)
         const item = blocks[i];
         // Only list items nest under a list item: any other child comes back from
         // Markdown as an unimportable group ('Complex list'), so it never goes out.
-        if (item.children.some(child => !listType(child))) throw new Error('This nesting requires Source');
+        if (item.children.some(child => !listType(child))) throw new Error('Only list items can nest');
         spread = spread || loose(item);
         items.push({ type: 'listItem', spread: false, checked: item.type === 'checkListItem' ? !!item.props.checked : null, children: [{ type: 'paragraph', children: inlineNodes(item.content) }, ...exportNodes(item.children, loose)] });
         i++;
@@ -117,7 +117,7 @@ function exportNodes(blocks: readonly SourceBlock[], loose: (block: SourceBlock)
       nodes.push({ type: 'list', spread, ordered, start: ordered ? Number(b.props.start ?? 1) : undefined, children: items });
       continue;
     }
-    if (b.children.length) throw new Error('This nesting requires Source');
+    if (b.children.length) throw new Error('Only list items can nest');
     switch (b.type) {
       case 'paragraph': nodes.push({ type: 'paragraph', children: inlineNodes(b.content) }); break;
       case 'heading': nodes.push({ type: 'heading', depth: Number(b.props.level || 1), children: inlineNodes(b.content) }); break;
@@ -129,7 +129,7 @@ function exportNodes(blocks: readonly SourceBlock[], loose: (block: SourceBlock)
         const table = b.content as TableContent;
         nodes.push({ type: 'table', children: table.rows.map(row => ({ type: 'tableRow', children: row.cells.map(cell => ({ type: 'tableCell', children: inlineNodes(Array.isArray(cell) ? cell : cell.content) })) })) }); break;
       }
-      default: throw new Error(`Edit ${b.type} in Source`);
+      default: throw new Error(`${b.type} blocks cannot be written as Markdown`);
     }
   }
   return nodes;
@@ -205,7 +205,7 @@ export class SourceSession {
       }
       const metadata = node.type === 'yaml' || node.type === 'toml';
       let blocks: SourceBlock[];
-      try { blocks = importNode(node, body, this.listSpread); } catch { blocks = [block('source', undefined, { source: body.slice(start, end), label: metadata ? 'Metadata' : 'Source', metadata })]; }
+      try { blocks = importNode(node, body, this.listSpread); } catch { blocks = [block('source', undefined, { source: body.slice(start, end), metadata })]; }
       if (blocks[0].type === 'source') this.allowedSource.set(blocks[0].id, new Set([semantic(blocks)]));
       if (blocks[0].type === 'secret') {
         const raw = body.slice(start, end);
@@ -244,10 +244,10 @@ export class SourceSession {
     const validate = (items: readonly SourceBlock[], depth: number) => { for (const b of items) {
       if (seen.has(b.id)) throw new Error('Duplicate block identity'); seen.add(b.id);
       const original = known.get(b.id)?.g;
-      if (b.props.textAlignment && b.props.textAlignment !== 'left') throw new Error('Alignment requires Source');
-      if (['textColor', 'backgroundColor'].some(key => b.props[key] && b.props[key] !== 'default')) throw new Error('Colors require Source');
-      if (this.allowedSource.has(b.id) && !this.allowedSource.get(b.id)!.has(semantic([b]))) throw new Error('Protected source requires Source editing');
-      if (original?.blocks[0].type === 'secret' && b.type !== 'secret') throw new Error('Secret conversion requires Source');
+      if (b.props.textAlignment && b.props.textAlignment !== 'left') throw new Error('Alignment has no Markdown form');
+      if (['textColor', 'backgroundColor'].some(key => b.props[key] && b.props[key] !== 'default')) throw new Error('Colors have no Markdown form');
+      if (this.allowedSource.has(b.id) && !this.allowedSource.get(b.id)!.has(semantic([b]))) throw new Error('Protected source changes only through its Edit button');
+      if (original?.blocks[0].type === 'secret' && b.type !== 'secret') throw new Error('A secret block cannot change type');
       if (['source', 'secret'].includes(b.type) && depth) throw new Error('Protected blocks cannot be nested');
       if (b.type === 'source' && b.props.metadata && blocks[0]?.id !== b.id) throw new Error('Metadata must remain first');
       validate(b.children || [], depth + 1);
@@ -315,7 +315,7 @@ export class SourceSession {
         if (entry && entry.g.blocks.every((x, n) => blocks[i + n]?.id === x.id) && count === entry.g.blocks.length) groupIndex = entry.index;
       }
       if (retained && i + count < blocks.length && ['source', 'secret', 'codeBlock', 'diagram'].includes(b.type) && this.requiresEnd(source)) {
-        if (b.type === 'source' || b.type === 'secret') throw new Error('This block must remain last; edit it in Source');
+        if (b.type === 'source' || b.type === 'secret') throw new Error('This block must remain last');
         source = emit(blocks.slice(i, i + count)); unchanged = false;
       }
       if (i === 0 && normalizeLeading) {
@@ -350,7 +350,6 @@ export class SourceSession {
     }
     return { markdown, ranges };
   }
-  range(id: string, blocks: readonly SourceBlock[] = this.blocks) { return this.render(blocks).ranges.get(id); }
   ranges(blocks: readonly SourceBlock[] = this.blocks) { return this.render(blocks).ranges; }
   secrets(blocks: readonly SourceBlock[] = this.blocks, rendered = this.render(blocks)): SecretIdentity[] {
     return blocks.flatMap(b => {

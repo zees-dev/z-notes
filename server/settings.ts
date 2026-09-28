@@ -1303,7 +1303,7 @@ const KEY_DOC: Record<string, string> = {
   density: "comfy | compact. Comfy is the everyday scale; compact is tighter still.",
   colorScheme: "system | dark | light. `system` follows the OS and repaints live.",
   "editor.autosaveSeconds": "Write to disk this long after you stop typing.",
-  "editor.tabSize": "Spaces inserted by Tab in Raw mode, and the width used to display literal tab bytes.",
+  "editor.tabSize": "Tab width in code blocks.",
   "editor.confirmBeforeExit": "Ask before leaving edits that have not reached disk; off saves them first.",
   "editor.homeDoc":
     "Doc the vault button (top left) opens. Vault-relative path; empty means the first doc.",

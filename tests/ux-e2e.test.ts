@@ -5,9 +5,6 @@
    are different claims, so each is measured against the expectation rather than
    against the implementation:
 
-     · THE MODE AFFORDANCE. It is statusbar text, not topbar chrome: one muted
-       word that names the mode, clicks to toggle, and still answers to ⌘E,
-       while Edit is still what a doc opens in.
      · THE CHORDS THAT SHARE A KEY WITH THE BROWSER. Settings answers to ⌘/ and
        to ⌘,; the chat panel answers to ⌘J and — only when the copy it would
        shadow is a no-op — to ⌘C. The ⌘C block below is the one that matters:
@@ -38,6 +35,7 @@ import {
   type TestServer,
 } from "./helpers";
 import {
+  callTool,
   clickWhenHittable,
   launchTestBrowser,
   newAppPage,
@@ -164,31 +162,6 @@ async function inlineField() {
   );
 }
 
-/* hit-testable clicking — see tests/browser.ts */
-const clickSettings = (sel: string) => clickWhenHittable(page, sel);
-
-/** drive the density through the real control — the shell listens to the
-    Settings panel, not to a PUT made behind its back */
-async function setDensity(id: "comfy" | "compact") {
-  if ((await page.evaluate(() => document.documentElement.getAttribute("data-density"))) === id) return;
-  await goSettings();
-  await clickSettings(`#densitySeg button[data-v="${id}"]`);
-  await page.waitForFunction(
-    (d) => document.documentElement.getAttribute("data-density") === d,
-    { timeout: 8000 },
-    id
-  );
-  /* SAVE it. Appearance is a draft until Save, and exitSettings reverts an
-     unsaved preview on the way out — without this the helper returned to comfy
-     and every "compact" measurement was a comfy one with the wrong label. Save
-     is inert when the pick matches what is stored, so the click is conditional. */
-  await saveSettings(page);
-  await leaveSettings();
-  await sleep(360);
-  const got = await page.evaluate(() => document.documentElement.getAttribute("data-density"));
-  expect(`density after leaving Settings: ${got}`).toBe(`density after leaving Settings: ${id}`);
-}
-
 async function clickMenuItem(label: string) {
   const ok = await page.evaluate((want) => {
     const b = [...document.querySelectorAll<HTMLElement>("#ctxMenu .menu-item")].find(
@@ -202,110 +175,7 @@ async function clickMenuItem(label: string) {
 }
 
 /* ============================================================
-   1. THE MODE LIVES IN THE STATUSBAR, AND EDIT IS STILL THE DEFAULT
-
-   This block used to assert that the topbar's Raw|Preview segmented control
-   read left-to-right. That control is GONE: the mode is one muted, clickable
-   word in the statusbar (`#stMode`), because which of two views of a document
-   you are looking at is state and this bar is where state is said. What the
-   block asserts about the MODE itself is unchanged and is if anything stricter
-   — Edit is still the default, ⌘E still toggles, and the affordance must
-   name the mode in words (ADR 0037 renamed the two views Edit and Source; the
-   persisted ids stay `preview` and `raw`). Only WHERE it looks has moved.
-   ============================================================ */
-
-describe("ux — the mode affordance is statusbar text", () => {
-  test("the topbar carries no mode control, and the statusbar chip survives every width and density", async () => {
-    for (const [w, h] of [
-      [1440, 900],
-      [720, 900],
-      [420, 800],
-    ] as const) {
-      await page.setViewport({ width: w, height: h });
-      await sleep(240);
-      for (const density of ["comfy", "compact"] as const) {
-        await setDensity(density);
-
-        const m = await page.evaluate(() => {
-          const chip = document.getElementById("stMode");
-          const r = chip ? chip.getBoundingClientRect() : null;
-          const bar = document.querySelector(".statusbar")!.getBoundingClientRect();
-          const words = document.getElementById("stLines")!;
-          const cs = chip ? getComputedStyle(chip) : null;
-          const cw = getComputedStyle(words);
-          return {
-            /* the segmented control is not merely hidden — it is not there */
-            topbarSeg: !!document.querySelector(".topbar #modeSeg, .topbar .seg.mode"),
-            inStatusbar: !!chip && !!chip.closest(".statusbar"),
-            text: chip ? chip.textContent!.trim() : null,
-            painted: !!r && r.width > 0 && r.height > 0,
-            /* inside the bar it belongs to, at every width — a chip that has
-               been pushed off the end is not an affordance */
-            withinBar: !!r && r.left >= bar.left - 0.5 && r.right <= bar.right + 0.5,
-            /* "styled like its neighbours": same size and weight as the line
-               count sitting next to it, not a button pretending to be one */
-            sameSize: !!cs && cs.fontSize === cw.fontSize,
-            sameWeight: !!cs && cs.fontWeight === cw.fontWeight,
-            clickable: !!cs && cs.cursor === "pointer",
-          };
-        });
-        const at = `${w}px/${density}`;
-        expect(`${at} topbar still has a mode segment: ${m.topbarSeg}`).toBe(`${at} topbar still has a mode segment: false`);
-        expect(`${at} chip is in the statusbar: ${m.inStatusbar}`).toBe(`${at} chip is in the statusbar: true`);
-        expect(`${at} chip is painted: ${m.painted}`).toBe(`${at} chip is painted: true`);
-        expect(`${at} chip stays inside the bar: ${m.withinBar}`).toBe(`${at} chip stays inside the bar: true`);
-        expect(`${at} chip says: ${m.text}`).toBe(`${at} chip says: Edit`);
-        expect(`${at} chip matches its neighbours (size/weight/cursor): ${m.sameSize}/${m.sameWeight}/${m.clickable}`).toBe(
-          `${at} chip matches its neighbours (size/weight/cursor): true/true/true`
-        );
-      }
-    }
-    await page.setViewport({ width: 1440, height: 900 });
-    await sleep(240);
-    await setDensity("comfy");
-  }, 120000);
-
-  test("Edit is still what a doc opens in; ⌘E toggles and so does clicking the chip", async () => {
-    await app.clickDoc(NAV_DOC);
-    const read = () =>
-      page.evaluate(() => ({
-        raw: document.getElementById("doc")!.classList.contains("raw-mode"),
-        mode: document.getElementById("stMode")!.getAttribute("data-mode"),
-        text: document.getElementById("stModeTxt")!.textContent,
-        title: document.getElementById("stMode")!.getAttribute("title"),
-      }));
-
-    const opened = await read();
-    expect(`opened in raw-mode: ${opened.raw}`).toBe("opened in raw-mode: false");
-    expect(`chip data-mode: ${opened.mode}`).toBe("chip data-mode: preview");
-    expect(`chip words: ${opened.text}`).toBe("chip words: Edit");
-    /* a single word cannot say both what you are in and what a click does, so
-       the title has to — and it has to name the chord as well */
-    expect(`title names the chord: ${opened.title!.includes("⌘E")}`).toBe("title names the chord: true");
-    expect(`title names the destination: ${opened.title!.includes("Source")}`).toBe("title names the destination: true");
-
-    await app.chord("KeyE");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
-    const afterChord = await read();
-    expect(`after ⌘E: ${afterChord.mode} / ${afterChord.text}`).toBe("after ⌘E: raw / Source");
-
-    await app.chord("KeyE");
-    await page.waitForFunction(() => !document.getElementById("doc")!.classList.contains("raw-mode"), { timeout: 5000 });
-    expect(`back to: ${(await read()).mode}`).toBe("back to: preview");
-
-    /* …and the chip is a control, not a readout */
-    await page.click("#stMode");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
-    const afterClick = await read();
-    expect(`after clicking the chip: ${afterClick.mode} / ${afterClick.text}`).toBe("after clicking the chip: raw / Source");
-    await page.click("#stMode");
-    await page.waitForFunction(() => !document.getElementById("doc")!.classList.contains("raw-mode"), { timeout: 5000 });
-    expect(`after clicking it again: ${(await read()).mode}`).toBe("after clicking it again: preview");
-  }, 60000);
-});
-
-/* ============================================================
-   1b. THE CHORDS THAT SHARE A KEY WITH SOMETHING ELSE
+   1. THE CHORDS THAT SHARE A KEY WITH SOMETHING ELSE
 
    ⌘/ and ⌘, are two doors to one routed page. ⌘C is the interesting one: it is
    COPY, and the app no longer takes it in any state (ADR 0025 moved the chat
@@ -515,34 +385,8 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
     expect(`chat stayed put: ${await chatOpenNow()}`).toBe(`chat stayed put: ${before}`);
   }, 60000);
 
-  test("⌘C inside the raw editor and inside the chat composer copies, and never toggles", async () => {
+  test("⌘C inside the chat composer copies, and never toggles", async () => {
     const cdp = await clipboardSession();
-    await app.clickDoc(NAV_DOC);
-
-    /* ---- the RAW editor ---- */
-    await app.chord("KeyE");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
-    await setClip("UNTOUCHED");
-    const rawWant = await page.evaluate(() => {
-      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-      ta.focus();
-      ta.setSelectionRange(0, 24);
-      return ta.value.slice(0, 24);
-    });
-    let before = await chatOpenNow();
-    await cmdC(cdp);
-    expect(`raw: focused element is still the editor: ${await page.evaluate(() => document.activeElement!.id)}`).toBe(
-      "raw: focused element is still the editor: rawArea"
-    );
-    expect(`raw: clipboard === the selected source: ${(await clip()) === rawWant}`).toBe(
-      "raw: clipboard === the selected source: true"
-    );
-    expect(`raw: chat stayed put: ${await chatOpenNow()}`).toBe(`raw: chat stayed put: ${before}`);
-
-    await app.chord("KeyE");
-    await page.waitForFunction(() => !document.getElementById("doc")!.classList.contains("raw-mode"), { timeout: 5000 });
-
-    /* ---- the CHAT COMPOSER ---- */
     await page.evaluate(() => {
       const app = document.getElementById("app")!;
       if (!app.classList.contains("chat-open")) (document.querySelector("#chatBtn") as HTMLElement).click();
@@ -555,7 +399,7 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
       c.focus();
       c.setSelectionRange(0, t.length);
     }, draft);
-    before = await chatOpenNow();
+    const before = await chatOpenNow();
     await cmdC(cdp);
     expect(`composer: clipboard === the draft: ${(await clip()) === draft}`).toBe("composer: clipboard === the draft: true");
     expect(`composer: chat stayed open: ${await chatOpenNow()}`).toBe(`composer: chat stayed open: ${before}`);
@@ -597,297 +441,7 @@ describe("ux — ⌘/ and ⌘, open Settings; ⌥C toggles chat and ⌘C stays C
 });
 
 /* ============================================================
-   1b. THE WHOLE-LINE CLIPBOARD
-
-   With nothing selected, ⌘X takes the line — the convention every code editor
-   has kept since `dd`. It belongs beside the ⌘C block above because it claims
-   the same two chords, in the one place they were previously dead: inside the
-   Raw editor with a COLLAPSED caret, where the browser has nothing to copy
-   and `typing()` has already kept the chat toggle off them.
-
-   Measured on the document, the caret and the real clipboard rather than on
-   the handler, and each case is one a person actually meets: a line in the
-   middle, the last line of a file with no trailing newline, the only line, a
-   live selection (which must stay the browser's), and the round trip back
-   through ⌘V.
-
-   The clipboard here is the SYSTEM one — same grant, same realness probe as
-   the ⌘C block — because "we called copyText" is not the claim. The claim is
-   that the line is on the clipboard.
-   ============================================================ */
-
-describe("ux — ⌘X and ⌘C take the whole line when nothing is selected", () => {
-  const LINES = "alpha\nbravo\ncharlie";
-  /* Its OWN doc, not the shared seed: every test here leaves a mutilated
-     buffer behind, and the autosave debounce is live — a slow run would put
-     one of them on disk under a doc the suites after this read. */
-  const LINE_DOC = "architecture/line-clipboard.md";
-
-  async function realClipboard() {
-    const cdp = await page.createCDPSession();
-    await cdp.send("Browser.grantPermissions" as any, {
-      origin: srv.base,
-      permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
-    } as any);
-    const real = await page.evaluate(async () => {
-      try {
-        await navigator.clipboard.writeText("znotes-line-probe");
-        return (await navigator.clipboard.readText()) === "znotes-line-probe";
-      } catch {
-        return false;
-      }
-    });
-    expect(`this browser hands over a real clipboard: ${real}`).toBe("this browser hands over a real clipboard: true");
-  }
-
-  /** Put known source in the editor with the caret at `pos`, bypassing the
-      keyboard: what is being measured is the chord, not how the text got there.
-
-      The `input` event is dispatched and then waited out, because the app's
-      undo timeline (ADR 0014) learns a document's text from that event — a
-      value assigned behind its back would leave ⌘Z pointing at the text this
-      doc had before the fixture ran. */
-  const seed = async (value: string, pos: number) => {
-    await page.evaluate(
-      ({ value, pos }) => {
-        const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-        ta.value = value;
-        ta.focus();
-        ta.setSelectionRange(pos, pos);
-        ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
-      },
-      { value, pos }
-    );
-    await sleep(850); // past the run's idle window, so the fixture is its own entry
-  };
-
-  const read = async () => ({
-    ...(await page.evaluate(() => {
-      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-      return { value: ta.value, caret: ta.selectionStart };
-    })),
-    clip: await page.evaluate(() => navigator.clipboard.readText().catch(() => "<unreadable>")),
-  });
-
-  const cut = () => app.chord("KeyX");
-
-  /* UNDO AND REDO, as Chrome actually delivers them.
-
-     `page.keyboard.press` cannot test these for the same reason it cannot test
-     ⌘C (see the block above): Chrome resolves the chord to an editing COMMAND
-     and hands the renderer that, and puppeteer's plain key event carries no
-     command, so ⌘Z through it is a no-op whatever the page does. Dispatched
-     over CDP with `commands`, the way the browser itself produces them. */
-  async function editingCommand(name: "undo" | "redo") {
-    const cdp = await page.createCDPSession();
-    const key = { modifiers: name === "redo" ? 12 : 4, key: "z", code: "KeyZ", windowsVirtualKeyCode: 90, nativeVirtualKeyCode: 90 };
-    await cdp.send("Input.dispatchKeyEvent" as any, { type: "rawKeyDown", commands: [name], ...key } as any);
-    await cdp.send("Input.dispatchKeyEvent" as any, { type: "keyUp", ...key } as any);
-    await sleep(180);
-    await cdp.detach().catch(() => {});
-  }
-
-  beforeAll(async () => {
-    await srv.api("POST", "/api/docs", { path: LINE_DOC, type: "doc", markdown: LINES + "\n" });
-  });
-
-  beforeEach(async () => {
-    await app.clickDoc(LINE_DOC);
-    await page.waitForSelector("#rawArea, #doc", { timeout: 5000 });
-    if (await page.evaluate(() => document.getElementById("stMode")!.dataset.mode !== "raw")) await app.chord("KeyE");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
-  });
-
-  test("⌘X on a line in the middle takes the line and its newline, and parks at column 0", async () => {
-    await realClipboard();
-    await seed(LINES, 7); // column 1 of "bravo"
-    await cut();
-
-    const got = await read();
-    expect(`the line left the document: ${JSON.stringify(got.value)}`).toBe(
-      'the line left the document: "alpha\\ncharlie"'
-    );
-    /* terminated on the clipboard even though what was cut is one line: it is
-       what makes ⌘V put a LINE back rather than fusing with its landing site */
-    expect(`the clipboard holds the terminated line: ${JSON.stringify(got.clip)}`).toBe(
-      'the clipboard holds the terminated line: "bravo\\n"'
-    );
-    /* the START of whatever moved up into that row — "charlie" — not the
-       column the caret held, which in an outline drops you inside the next
-       bullet's text */
-    expect(`the caret is at the start of the line below: ${got.caret}`).toBe(
-      "the caret is at the start of the line below: 6"
-    );
-    /* and it went through the ordinary edit path, so the buffer is dirty */
-    await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Unsaved changes", {
-      timeout: 5000,
-    });
-  }, 60000);
-
-  test("⌘X on the LAST line takes the newline before it, leaving no blank behind", async () => {
-    await realClipboard();
-    await seed(LINES, 13); // column 1 of "charlie", which has no newline of its own
-    await cut();
-
-    const got = await read();
-    expect(`no trailing blank line: ${JSON.stringify(got.value)}`).toBe('no trailing blank line: "alpha\\nbravo"');
-    expect(`the clipboard is still a terminated line: ${JSON.stringify(got.clip)}`).toBe(
-      'the clipboard is still a terminated line: "charlie\\n"'
-    );
-    expect(`the caret fell to the start of the line above: ${got.caret}`).toBe(
-      "the caret fell to the start of the line above: 6"
-    );
-  }, 60000);
-
-  test("⌘X on the only line empties the document rather than half-deleting it", async () => {
-    await realClipboard();
-    await seed("solo", 2);
-    await cut();
-
-    const got = await read();
-    expect(`document: ${JSON.stringify(got.value)} caret: ${got.caret}`).toBe('document: "" caret: 0');
-    expect(`clipboard: ${JSON.stringify(got.clip)}`).toBe('clipboard: "solo\\n"');
-  }, 60000);
-
-  test("⌘C takes the line without touching the document or the caret", async () => {
-    await realClipboard();
-    await seed(LINES, 7);
-    await page.evaluate(() => navigator.clipboard.writeText("UNTOUCHED"));
-    await app.chord("KeyC");
-    await sleep(200);
-
-    const got = await read();
-    expect(`the document is untouched: ${JSON.stringify(got.value)}`).toBe(
-      'the document is untouched: "alpha\\nbravo\\ncharlie"'
-    );
-    expect(`the caret is untouched: ${got.caret}`).toBe("the caret is untouched: 7");
-    expect(`the clipboard holds the line: ${JSON.stringify(got.clip)}`).toBe(
-      'the clipboard holds the line: "bravo\\n"'
-    );
-  }, 60000);
-
-  test("a live SELECTION is still the browser's ⌘X — we never intercept it", async () => {
-    await seed(LINES, 0);
-    const prevented = await page.evaluate(() => {
-      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-      ta.setSelectionRange(6, 11); // "bravo", selected
-      const ev = new KeyboardEvent("keydown", { key: "x", code: "KeyX", metaKey: true, bubbles: true, cancelable: true });
-      ta.dispatchEvent(ev);
-      return { defaultPrevented: ev.defaultPrevented, value: ta.value };
-    });
-    expect(`the app prevented the browser's cut: ${prevented.defaultPrevented}`).toBe(
-      "the app prevented the browser's cut: false"
-    );
-    expect(`and changed the document behind it: ${prevented.value !== LINES}`).toBe(
-      "and changed the document behind it: false"
-    );
-  }, 60000);
-
-  test("⌘V of a cut line puts a LINE back — above the caret's line, caret riding with its own text", async () => {
-    await realClipboard();
-    await seed(LINES, 7);
-    await cut(); // "alpha\ncharlie", clipboard "bravo\n", caret at column 1 of "charlie"
-
-    const back = await page.evaluate(async () => {
-      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-      const text = await navigator.clipboard.readText();
-      const dt = new DataTransfer();
-      dt.setData("text/plain", text);
-      /* the browser's own paste event, carrying the browser's own clipboard —
-         the app decides from the DATA whether this is a line paste */
-      ta.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
-      return { value: ta.value, caret: ta.selectionStart };
-    });
-    expect(`the line went back where it came from: ${JSON.stringify(back.value)}`).toBe(
-      'the line went back where it came from: "alpha\\nbravo\\ncharlie"'
-    );
-    expect(`the caret rode down with its own line: ${back.caret}`).toBe("the caret rode down with its own line: 12");
-  }, 60000);
-
-  test("⌘V of anything ELSE is an ordinary paste", async () => {
-    await seed(LINES, 7);
-    const ordinary = await page.evaluate(() => {
-      const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-      const dt = new DataTransfer();
-      dt.setData("text/plain", "from another app");
-      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
-      ta.dispatchEvent(ev);
-      return { defaultPrevented: ev.defaultPrevented, value: ta.value };
-    });
-    expect(`the app took the paste: ${ordinary.defaultPrevented}`).toBe("the app took the paste: false");
-    expect(`the document is the browser's to change: ${JSON.stringify(ordinary.value)}`).toBe(
-      'the document is the browser\'s to change: "alpha\\nbravo\\ncharlie"'
-    );
-  }, 60000);
-
-  test("⌘Z gets the cut line back and ⌘⇧Z takes it away again", async () => {
-    await seed(LINES, 7);
-    await cut();
-    expect(`cut: ${JSON.stringify((await read()).value)}`).toBe('cut: "alpha\\ncharlie"');
-
-    await editingCommand("undo");
-    expect(`⌘Z: ${JSON.stringify((await read()).value)}`).toBe('⌘Z: "alpha\\nbravo\\ncharlie"');
-
-    await editingCommand("redo");
-    expect(`⌘⇧Z: ${JSON.stringify((await read()).value)}`).toBe('⌘⇧Z: "alpha\\ncharlie"');
-  }, 60000);
-
-  test("the app follows the undo — ⌘S after ⌘Z writes the text that is on screen", async () => {
-    /* The failure this exists for: the app caches the buffer in `doc.markdown`
-       and saves THAT. An undo the app never heard about would leave the cache
-       holding text the user rewound away from, and ⌘S would put it back on
-       disk under them. The undo's native `input` event (`historyUndo`) is what
-       keeps the two in step; this asserts the outcome, on disk. */
-    await seed(LINES, 7);
-    await cut();
-    await editingCommand("undo");
-    await app.chord("KeyS");
-
-    const onDisk = await waitUntil(
-      () => {
-        const t = readVaultText(srv.vault, LINE_DOC);
-        return t.includes("bravo") ? t : null;
-      },
-      { timeout: 8000, label: "⌘S after ⌘Z to reach disk" }
-    );
-    const inBuffer = (await read()).value;
-    expect(`what reached disk is what is on screen: ${onDisk === inBuffer}`).toBe(
-      "what reached disk is what is on screen: true"
-    );
-    expect(`and the line the undo restored is in it: ${onDisk.includes("bravo")}`).toBe(
-      "and the line the undo restored is in it: true"
-    );
-  }, 60000);
-
-  test("the other structural edits are on the same stack — Tab and the list continuation both undo", async () => {
-    /* Not incidental to the cut: every edit this pane makes goes through the
-       browser's editing command for exactly this reason, so one of the older
-       ones is asserted here too. A regression that reached for `setRangeText`
-       again would take ⌘Z away from all of them at once. */
-    await seed("- alpha\n- bravo\n", 3);
-    await page.keyboard.press("Tab");
-    await sleep(150);
-    expect(`Tab indented: ${JSON.stringify((await read()).value)}`).toBe('Tab indented: "  - alpha\\n- bravo\\n"');
-    await editingCommand("undo");
-    expect(`⌘Z: ${JSON.stringify((await read()).value)}`).toBe('⌘Z: "- alpha\\n- bravo\\n"');
-
-    await seed("- alpha\n", 7);
-    await page.keyboard.press("Enter");
-    await sleep(150);
-    expect(`Enter continued the list: ${JSON.stringify((await read()).value)}`).toBe(
-      'Enter continued the list: "- alpha\\n- \\n"'
-    );
-    await editingCommand("undo");
-    expect(`⌘Z: ${JSON.stringify((await read()).value)}`).toBe('⌘Z: "- alpha\\n"');
-  }, 60000);
-
-  afterAll(async () => {
-    await srv.api("DELETE", "/api/docs/" + encPath(LINE_DOC)).catch(() => {});
-  });
-});
-
-/* ============================================================
-   1c. FILE-OPERATION UNDO
+   1b. FILE-OPERATION UNDO
 
    ⌘Z outside a text surface takes back the last FILE operation — a delete
    undoes to a restore, a create undoes to a delete — and ⌘⇧Z puts it forward
@@ -896,7 +450,7 @@ describe("ux — ⌘X and ⌘C take the whole line when nothing is selected", ()
    at, and the chord is one keystroke from one people press reflexively.
 
    The three things that could go wrong are each a test here: it must not
-   shadow the editor's own ⌘Z (the app timeline's, ADR 0014) even when a
+   shadow the editor's own ⌘Z (the island's history, ADR 0014) even when a
    file undo is pending; it must not swallow the chord when it has nothing to
    do with it; and a prompt the user declines must leave the undo still on
    offer rather than spending it.
@@ -936,11 +490,7 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     await page.click('[data-act="cf-cancel"]');
     await sleep(200);
   };
-  async function ensureRaw() {
-    await page.waitForSelector("#stMode", { timeout: 5000 });
-    if (await page.evaluate(() => document.getElementById("stMode")!.dataset.mode !== "raw")) await app.chord("KeyE");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
-  }
+  const inEditor = () => !!document.querySelector("#doc .bn-editor")?.contains(document.activeElement);
 
   /** delete it the way a person does: the row's own trash affordance */
   async function deleteFromTree(path: string) {
@@ -1302,22 +852,18 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
 
   test("the editor keeps its own ⌘Z, even with a file undo pending", async () => {
     /* THE COLLISION THIS FEATURE COULD HAVE CAUSED. A pending file undo plus a
-       caret in the Raw editor is the state where a greedy binding would eat
+       caret in the editor is the state where a greedy binding would eat
        the text undo — and the user would get a dialog about a file they were
        not thinking about instead of their last keystroke back. */
     await deleteFromTree(UNDO_DOC);
-    await app.clickDoc(NAV_DOC);
-    await ensureRaw();
-    await page.click("#rawArea");
+    await (await page.waitForSelector(PROSE, { timeout: 8000 }))!.click();
     await page.keyboard.type("ZZZ");
-
-    await page.keyboard.down("Meta");
-    await page.keyboard.press("KeyZ");
-    await page.keyboard.up("Meta");
+    await app.chord("KeyZ");
     await sleep(300);
 
-    expect(`focus is still the editor: ${await page.evaluate(() => document.activeElement!.id)}`).toBe(
-      "focus is still the editor: rawArea"
+    expect(`focus is still the editor: ${await page.evaluate(inEditor)}`).toBe("focus is still the editor: true");
+    expect(`the typing was taken back: ${!(await page.$eval("#doc .bn-editor", (n) => n.textContent!)).includes("ZZZ")}`).toBe(
+      "the typing was taken back: true"
     );
     expect(`a file dialog was raised: ${await confirmUp()}`).toBe("a file dialog was raised: false");
     expect(`the file history was not touched: ${!(await docsInTree()).includes(UNDO_DOC)}`).toBe(
@@ -1336,7 +882,7 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
 
   test("Keep editing at the exit guard leaves the undo on offer; Save & exit really spends it", async () => {
     /* THE PATH THAT WEDGES A NAIVE IMPLEMENTATION. Undoing a create is a
-       delete, and a delete of the doc you are looking at goes behind the Raw
+       delete, and a delete of the doc you are looking at goes behind the
        exit guard when the buffer differs from disk. `doDelete` returns false
        there to say "not now" — which is NOT the same as "no" — so the timeline
        cannot settle on the return value alone. Keep editing has to report the
@@ -1353,17 +899,17 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     await page.keyboard.press("Enter");
     await page.waitForFunction((m) => !!document.querySelector(`#tree .row.file[data-doc="${m}"]`), { timeout: 8000 }, made);
 
-    /* type, SAVE, then undo the text — which leaves the buffer differing from
-       disk, which is what arms the guard for the step after it */
-    await ensureRaw();
-    await page.click("#rawArea");
+    /* type, SAVE, then undo the typing — which leaves the buffer differing
+       from disk, which is what arms the guard for the step after it. A new
+       doc opens with the caret already in it. */
+    await page.waitForFunction(inEditor, { timeout: 8000 });
     await page.keyboard.type("saved words");
-    await sleep(850);
     await app.chord("KeyS");
     await sleep(800);
-    await fileZ();
-    expect(`the buffer now differs from disk: ${await page.evaluate(() => (document.getElementById("rawArea") as HTMLTextAreaElement).value === "")}`).toBe(
-      "the buffer now differs from disk: true"
+    await app.chord("KeyZ");
+    await sleep(300);
+    expect(`the buffer now differs from disk: ${await page.evaluate(() => document.getElementById("saveTxt")!.textContent)}`).toBe(
+      "the buffer now differs from disk: Unsaved changes"
     );
 
     /* ---- KEEP EDITING ---- */
@@ -1391,7 +937,7 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     await srv.api("DELETE", "/api/docs/" + encPath(made)).catch(() => {});
   }, 120000);
 
-  test("the ? overlay says both chords exist — the binding and the list cannot drift apart", async () => {
+  test("the ? overlay lists undo and redo — the binding and the list cannot drift apart", async () => {
     /* The overlay claims to enumerate every global chord, and a binding nobody
        can discover is a binding that does not exist. Asserted here rather than
        trusted, for the same reason ⌘P is asserted where it is. */
@@ -1401,10 +947,7 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
       await page.$$eval("#scVeil .sc-row", (ns) => ns.map((n) => (n.textContent ?? "").replace(/\s+/g, " ").trim()))
     ).join(" | ");
     await page.keyboard.press("Escape");
-    expect(`the overlay lists the whole-line clipboard: ${/whole line.*⌘X.*⌘C/i.test(joined)}`).toBe(
-      "the overlay lists the whole-line clipboard: true"
-    );
-    expect(`…and undo / redo: ${/undo \/ redo.*⌘Z.*⇧⌘Z/i.test(joined)}`).toBe("…and undo / redo: true");
+    expect(`the overlay lists undo / redo: ${/undo \/ redo.*⌘Z.*⇧⌘Z/i.test(joined)}`).toBe("the overlay lists undo / redo: true");
   }, 60000);
 
   afterAll(async () => {
@@ -1414,11 +957,12 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
 });
 
 /* ============================================================
-   1d. THE TIMELINE IS ONE LIST, ACROSS DOCUMENTS
+   1c. THE TIMELINE IS ONE LIST, ACROSS DOCUMENTS
 
-   The scenario this exists for, in the order a person does it:
+   The scenario this exists for, in the order it happens — an agent's write is
+   the text step, since typing in Edit is the island's own history:
 
-     edit a.md and save · edit b.md and save · delete a.md
+     an agent rewrites a.md · then b.md · delete a.md
      ⌘Z → a.md comes back (asked)
      ⌘Z → b.md's edit comes back, AND the pane goes to b.md
      ⌘Z → a.md's edit comes back, AND the pane goes to a.md
@@ -1439,32 +983,19 @@ describe("ux — one undo timeline across documents and file operations", () => 
   const B0 = "# B\n\nbravo body\n";
 
   const at = () => page.evaluate(() => document.getElementById("stPath")!.textContent);
-  const buffer = () => page.evaluate(() => (document.getElementById("rawArea") as HTMLTextAreaElement | null)?.value ?? "(not raw)");
+  const buffer = () =>
+    page.evaluate(async () => {
+      const { state } = await import("/state.js");
+      return state.docs.get(state.active)?.markdown ?? "(no doc)";
+    });
   const inTree = (t: string) => page.evaluate((x) => !!document.querySelector(`#tree .row.file[data-doc="${x}"]`), t);
   const confirmUp = () => page.evaluate(() => document.getElementById("cfVeil")!.classList.contains("show"));
   const accept = async () => {
     await page.click('[data-act="cf-ok"]');
     await sleep(1200);
   };
-
-  async function openRaw(path: string) {
-    await page.evaluate((t) => (document.querySelector(`#tree .row.file[data-doc="${t}"]`) as HTMLElement)?.click(), path);
-    await page.waitForFunction((t) => document.getElementById("stPath")!.textContent === t, { timeout: 8000 }, path);
-    if (await page.evaluate(() => document.getElementById("stMode")!.dataset.mode !== "raw")) await app.chord("KeyE");
-    await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 5000 });
-  }
-  /** type at the very end, then wait past the run's idle window */
-  async function appendAndSave(text: string) {
-    await page.click("#rawArea");
-    await page.evaluate(() => {
-      const t = document.getElementById("rawArea") as HTMLTextAreaElement;
-      t.setSelectionRange(t.value.length, t.value.length);
-    });
-    await page.keyboard.type(text);
-    await sleep(850);
-    await app.chord("KeyS");
-    await sleep(800);
-  }
+  /** the agent's door: one text step on the timeline, saved to disk */
+  const write = (path: string, markdown: string) => callTool(page, "write_doc", { path, markdown });
   /** ⌘Z / ⌘⇧Z from outside any text surface */
   async function step(redo = false) {
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -1490,10 +1021,8 @@ describe("ux — one undo timeline across documents and file operations", () => 
   });
 
   test("edit a, edit b, delete a — then three ⌘Z walk back through all three, each in its own doc", async () => {
-    await openRaw(A);
-    await appendAndSave("MARK-A\n");
-    await openRaw(B);
-    await appendAndSave("MARK-B\n");
+    await write(A, A0 + "MARK-A\n");
+    await write(B, B0 + "MARK-B\n");
 
     /* delete a.md the way a person does — the row's own affordance */
     await page.evaluate((t) => {
@@ -1524,10 +1053,8 @@ describe("ux — one undo timeline across documents and file operations", () => 
   }, 180000);
 
   test("⌘⇧Z walks the same list forward again, doc by doc", async () => {
-    await openRaw(A);
-    await appendAndSave("MARK-A\n");
-    await openRaw(B);
-    await appendAndSave("MARK-B\n");
+    await write(A, A0 + "MARK-A\n");
+    await write(B, B0 + "MARK-B\n");
     await step();
     await step();
     expect(`wound back to: ${await at()} ${(await buffer()) === A0}`).toBe(`wound back to: ${A} true`);
@@ -1541,22 +1068,6 @@ describe("ux — one undo timeline across documents and file operations", () => 
       `…then b.md, in b.md: ${B} true`
     );
   }, 180000);
-
-  test("a run of typing is one step, not one per keystroke", async () => {
-    /* The granularity a person means by "what I just typed". Without it ⌘Z is
-       useless on a sentence and the timeline never reaches the step before. */
-    await openRaw(A);
-    await page.click("#rawArea");
-    await page.evaluate(() => {
-      const t = document.getElementById("rawArea") as HTMLTextAreaElement;
-      t.setSelectionRange(t.value.length, t.value.length);
-    });
-    await page.keyboard.type("one two three four");
-    await sleep(850);
-
-    await step();
-    expect(`one ⌘Z took the whole run: ${(await buffer()) === A0}`).toBe("one ⌘Z took the whole run: true");
-  }, 120000);
 
   afterAll(async () => {
     for (const p of [A, B]) await srv.api("DELETE", "/api/docs/" + encPath(p)).catch(() => {});
@@ -1598,7 +1109,7 @@ describe("ux — Esc unwinds one layer at a time", () => {
     expect(`after Esc #2 — chat: ${await chatOpen()}`).toBe("after Esc #2 — chat: false");
   }, 60000);
 
-  test("the palette, the context menu and Source-to-Edit each take a press first", async () => {
+  test("the palette and the context menu each take a press first", async () => {
     await app.clickDoc(NAV_DOC);
 
     /* the palette */
@@ -1614,17 +1125,6 @@ describe("ux — Esc unwinds one layer at a time", () => {
     await page.waitForFunction(() => (document.getElementById("ctxMenu") as HTMLElement).hidden, { timeout: 5000 });
     expect(`menu closed, chat still open: ${await chatOpen()}`).toBe("menu closed, chat still open: true");
 
-    /* Source: a clean buffer exits directly to Edit. */
-    await app.chord("KeyE");
-    await page.waitForSelector("#rawArea", { timeout: 5000 });
-    await page.click("#rawArea");
-    expect(`rawArea focused: ${await page.evaluate(() => document.activeElement?.id)}`).toBe(
-      "rawArea focused: rawArea"
-    );
-    await page.keyboard.press("Escape");
-    await page.waitForFunction(() => document.getElementById("stMode")!.dataset.mode === "preview", { timeout: 5000 });
-    expect(`Edit active, chat still open: ${await chatOpen()}`).toBe("Edit active, chat still open: true");
-
     /* only now does the panel go */
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.getElementById("app")!.classList.contains("chat-open"), {
@@ -1637,7 +1137,7 @@ describe("ux — Esc unwinds one layer at a time", () => {
      has something of its own to close — a slash menu, the caret it blurs — and
      every one of those presses arrives at the app already handled. The presses
      it does NOT claim are the app's, and they were being swallowed: focus on a
-     protected block's "Edit source" button is inside `.bn-container`, so no
+     protected block's Edit button is inside `.bn-container`, so no
      number of presses reached the chat panel (which is not a veil). */
   test("Edit hands back the Escape it has not claimed", async () => {
     const PROTECTED_DOC = "esc-protected.md";

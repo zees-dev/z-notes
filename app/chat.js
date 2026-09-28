@@ -11,7 +11,7 @@ import * as api from "./api.js";
 import { state } from "./state.js";
 import { $, $$, I, apiFail, cap, el, esc, inline, toast, vaultOf } from "./ui.js";
 import { renderDiff } from "./dialogs.js";
-import { autoGrow, openDoc, renderDoc, saveDoc, setBaseline, syncRaw } from "./editor.js";
+import { autoGrow, openDoc, renderDoc, saveDoc, setBaseline } from "./editor.js";
 import { closeSess, isOpen } from "./shell.js";
 import { commandCard, upsertCommand } from "./terminal.js";
 
@@ -290,7 +290,7 @@ function absorbProposalResult(r) {
   if (r.doc) {
     const prev = state.docs.get(r.doc.path) || {};
     // setBaseline like every other adopt: an accept/revert rewrote the file on
-    // disk, and a stale diskText made the Raw-exit guard diff against bytes
+    // disk, and a stale diskText made the exit guard diff against bytes
     // that no longer exist
     state.docs.set(r.doc.path, setBaseline(Object.assign({}, prev, r.doc, { loaded: true }), r.doc.markdown));
   }
@@ -310,7 +310,6 @@ function absorbProposalResult(r) {
  * `AI.revert()` can answer with that code.
  */
 async function applyProposal(id, undo) {
-  syncRaw();
   if (state.dirty) await saveDoc(state.active, { silent: true });
   try {
     const n = state.stack.length;

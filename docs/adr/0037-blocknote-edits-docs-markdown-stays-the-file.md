@@ -26,6 +26,11 @@ surface, unchanged); [ADR 0034](0034-the-soft-keyboard-carries-an-editing-bar.md
 keyboard); [ADR 0022](0022-asking-before-leaving-edits-is-a-preference.md)
 (the guard now covers both surfaces).
 
+Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: Source is
+gone. A protected block's door is "Edit", in place; a failed bundle load shows
+a Reload note, not Source; the persisted `preview`/`raw` ids and the WebMCP
+mode enum are gone.
+
 ## Context
 
 The user wants Notion-style editing — bullets that look like bullets while

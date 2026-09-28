@@ -9,6 +9,10 @@ pair instead of going through the alias) and the caching paragraphs of
 [spec 0002](../specs/done/0002-http-api-v0.md), which is where the contract
 lives.
 
+Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: a failed
+bundle still answers 503, but the pane shows a Reload note rather than
+degrading to Source.
+
 ## Context
 
 Measured on the deployed Pi, phone-sized headless Chromium, three loads: the app

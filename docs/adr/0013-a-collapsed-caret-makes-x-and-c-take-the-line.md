@@ -6,6 +6,10 @@ Accepted, 2026-08-10. Extends the Raw editing surface described in
 [the product spec](../specs/done/0001-z-notes-v1.md) §"Two modes", alongside
 the Tab/Shift-Tab and list-continuation behaviours already in `editor.js`.
 
+**Superseded by [0039](0039-edit-is-the-only-doc-surface.md)**, 2026-09-29:
+Source is gone, and the whole-line clipboard with it; ⌘X, ⌘C and ⌘V in Edit
+are BlockNote's.
+
 ## Context
 
 Raw is a source pane, and the source-pane convention for a collapsed caret is

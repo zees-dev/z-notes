@@ -57,7 +57,7 @@ const CANARY = "CANARY-" + Math.random().toString(36).slice(2, 10);
 
 /* Comfortably over the 64KiB keepalive allowance and over the 60KiB the client
    budgets for it, so the fallback is what is being measured and not a boundary
-   rounding. One long line keeps the raw textarea cheap to render. */
+   rounding. One long paragraph keeps the editor cheap to render. */
 const BIG_BODY = "# Big\n\n" + "x".repeat(90 * 1024) + "\n";
 
 /**
@@ -112,7 +112,7 @@ afterAll(async () => {
 });
 
 /* Every case starts from a fresh client state. This became load-bearing once
-   leaving a dirty Raw buffer correctly started asking for confirmation: a
+   leaving a dirty buffer correctly started asking for confirmation: a
    late save continuation or an orphan veil from one case must not turn the
    next case's first tree click into an answer about the previous document. */
 afterEach(async () => {
@@ -158,21 +158,13 @@ async function openDoc(path: string) {
   await page.waitForFunction((x) => document.getElementById("stPath")!.textContent === x, { timeout: 15000 }, path);
 }
 
-/** Raw is the byte-faithful surface, so it is the one the save actually sends. */
-async function toRaw() {
-  const mode = await page.$eval("#stMode", (b) => b.getAttribute("data-mode"));
-  if (mode !== "raw") await page.click("#stMode");
-  await page.waitForSelector("#doc.raw-mode #rawArea", { timeout: 8000 });
-}
-
-/** Append text the way a person would, so `input` → `markDirty` really runs. */
-async function typeAtEnd(text: string) {
-  await page.focus("#rawArea");
-  await page.evaluate(() => {
-    const ta = document.getElementById("rawArea") as HTMLTextAreaElement;
-    ta.setSelectionRange(ta.value.length, ta.value.length);
-  });
-  await page.type("#rawArea", text);
+/** Type into the doc's first line the way a person would, so the editor's
+    change → `markDirty` really runs. */
+async function typeInDoc(text: string) {
+  await (await page.waitForSelector("#doc .bn-inline-content", { timeout: 15000 }))!.click();
+  await new Promise((r) => setTimeout(r, 80)); // ProseMirror ignores a caret move for 50 ms after a view update
+  await page.keyboard.press("End");
+  await page.keyboard.type(text);
   await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Unsaved changes", {
     timeout: 8000,
   });
@@ -220,8 +212,7 @@ const encode = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 describe("visibilitychange flushes the buffer", () => {
   test("hiding the tab writes unsaved text to disk; the debounce never runs", async () => {
     await openDoc(FLUSH_DOC);
-    await toRaw();
-    await typeAtEnd("\n" + CANARY + "\n");
+    await typeInDoc(" " + CANARY);
 
     /* THE PRE-CONDITION. Without this the test could pass on a file that was
        already written, and the whole measurement would be vacuous. */
@@ -243,15 +234,16 @@ describe("visibilitychange flushes the buffer", () => {
 
   test("a body over the keepalive allowance still lands (it drops keepalive, not the bytes)", async () => {
     await openDoc(BIG_DOC);
-    await toRaw();
+    const big = CANARY + "-BIG";
+    await typeInDoc(" " + big);
 
-    const bytes = await page.$eval("#rawArea", (t) => new TextEncoder().encode((t as HTMLTextAreaElement).value).length);
+    const bytes = await page.evaluate(async (p) => {
+      const { state } = await import("/state.js");
+      return new TextEncoder().encode(state.docs.get(p).markdown).length;
+    }, BIG_DOC);
     expect(`the buffer is over the 64KiB keepalive cap: ${bytes > 65536}`).toBe(
       "the buffer is over the 64KiB keepalive cap: true"
     );
-
-    const big = CANARY + "-BIG";
-    await typeAtEnd("\n" + big + "\n");
     expect(`the canary is on disk BEFORE hiding: ${(diskText(BIG_DOC) ?? "").includes(big)}`).toBe(
       "the canary is on disk BEFORE hiding: false"
     );
@@ -264,7 +256,7 @@ describe("visibilitychange flushes the buffer", () => {
     await showPage();
     /* Disk visibility can win the poll just before the fetch continuation
        adopts its new baseline. Do not carry that transient dirty state into
-       the next test, where the Raw-exit guard would correctly stop navigation. */
+       the next test, where the exit guard would correctly stop navigation. */
     await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent !== "Unsaved changes", {
       timeout: 8000,
     });
@@ -282,9 +274,8 @@ describe("visibilitychange flushes the buffer", () => {
      timer winning a race: the only thing that can write the file is the heal. */
   test("coming back online retries the write that failed while it was down", async () => {
     await openDoc(HEAL_DOC);
-    await toRaw();
     const canary = CANARY + "-HEAL";
-    await typeAtEnd("\n" + canary + "\n");
+    await typeInDoc(" " + canary);
 
     await page.setOfflineMode(true);
     try {
@@ -322,9 +313,8 @@ describe("visibilitychange flushes the buffer", () => {
 describe("a deletion elsewhere never takes an unsaved buffer with it", () => {
   test("dirty buffer survives, the notice is sticky, and ⌘S offers Recreate", async () => {
     await openDoc(ORPHAN_DOC);
-    await toRaw();
     const typed = CANARY + "-ORPHAN";
-    await typeAtEnd("\n" + typed + "\n");
+    await typeInDoc(" " + typed);
 
     /* the other client */
     const del = await srv.api("DELETE", "/api/docs/" + encode(ORPHAN_DOC));
@@ -335,7 +325,7 @@ describe("a deletion elsewhere never takes an unsaved buffer with it", () => {
     await page.waitForFunction(() => document.getElementById("toast")!.classList.contains("sticky"), { timeout: 10000 });
 
     /* THE FIRST ASSERTION: the text is still on screen. */
-    const stillThere = await page.$eval("#rawArea", (t) => (t as HTMLTextAreaElement).value);
+    const stillThere = await page.$eval("#doc .bn-editor", (n) => n.textContent ?? "");
     expect(`the buffer still holds what was typed: ${stillThere.includes(typed)}`).toBe(
       "the buffer still holds what was typed: true"
     );
@@ -401,8 +391,7 @@ describe("a deletion elsewhere never takes an unsaved buffer with it", () => {
 
   test("Discard lets the deletion stand", async () => {
     await openDoc(DISCARD_DOC);
-    await toRaw();
-    await typeAtEnd("\n" + CANARY + "-DISCARD\n");
+    await typeInDoc(" " + CANARY + "-DISCARD");
 
     const del = await srv.api("DELETE", "/api/docs/" + encode(DISCARD_DOC));
     expect(`deleted elsewhere: ${del.status}`).toBe("deleted elsewhere: 204");
@@ -425,7 +414,6 @@ describe("a deletion elsewhere never takes an unsaved buffer with it", () => {
 
   test("a CLEAN buffer still evaporates — retention is scoped to unsaved work", async () => {
     await openDoc(CLEAN_DOC);
-    await toRaw();
     expect(await page.evaluate(() => document.getElementById("saveTxt")!.textContent)).not.toBe("Unsaved changes");
 
     const del = await srv.api("DELETE", "/api/docs/" + encode(CLEAN_DOC));
@@ -453,8 +441,7 @@ describe("a deletion elsewhere never takes an unsaved buffer with it", () => {
      ------------------------------------------------------------------ */
   test("an autosave-raised veil does not put a destructive default under the caret", async () => {
     await openDoc(AUTO_DOC);
-    await toRaw();
-    await typeAtEnd("\n" + CANARY + "-AUTO");
+    await typeInDoc(" " + CANARY + "-AUTO");
 
     /* the other client, while the buffer is dirty */
     const del = await srv.api("DELETE", "/api/docs/" + encode(AUTO_DOC));
@@ -471,7 +458,7 @@ describe("a deletion elsewhere never takes an unsaved buffer with it", () => {
     );
     try {
       await new Promise((r) => setTimeout(r, 900)); // let settings-changed land
-      await page.type("#rawArea", "!");
+      await typeInDoc("!");
 
       /* NOTHING IS CLICKED AND NOTHING IS PRESSED FROM HERE ON. The veil opens
          on its own, which is the whole premise. */

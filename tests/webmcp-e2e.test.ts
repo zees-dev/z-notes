@@ -60,7 +60,6 @@ const CATALOGUE = [
   "get_app_state",
   "get_conversation",
   "get_settings",
-  "indent_lines",
   "list_commands",
   "list_docs",
   "list_proposals",
@@ -82,7 +81,6 @@ const CATALOGUE = [
   "run_command",
   "save_doc",
   "search_docs",
-  "set_mode",
   "set_setting",
   "set_text_zoom",
   "set_vault_remote",
@@ -518,22 +516,17 @@ describe("a tool never throws — every refusal is a named result", () => {
    ------------------------------------------------------------------ */
 
 describe("the UI is where the tool left it", () => {
-  test("open_doc, set_mode, show_panel and open_settings all move the visible app", async () => {
-    const opened = await call("open_doc", { path: ANCHOR, mode: "preview" });
+  test("open_doc, show_panel and open_settings all move the visible app", async () => {
+    const opened = await call("open_doc", { path: ANCHOR });
     expect(`open_doc → ${opened.path}`).toBe(`open_doc → ${ANCHOR}`);
     await page.waitForFunction((p: string) => document.getElementById("stPath")!.textContent === p, { timeout: 10000 }, ANCHOR);
     expect(`the address bar followed: ${await page.evaluate(() => location.pathname)}`).toBe(
       `the address bar followed: /d/${encPath(ANCHOR)}`
     );
 
-    await call("set_mode", { mode: "raw" });
-    await page.waitForFunction(() => document.getElementById("doc")!.classList.contains("raw-mode"), {
-      timeout: 10000,
-    });
-
     let state = await call("get_app_state");
-    expect(`get_app_state: ${state.activeDoc} in ${state.mode}, unsaved ${state.unsaved}`).toBe(
-      `get_app_state: ${ANCHOR} in raw, unsaved false`
+    expect(`get_app_state: ${state.activeDoc}, unsaved ${state.unsaved}`).toBe(
+      `get_app_state: ${ANCHOR}, unsaved false`
     );
 
     await call("show_panel", { panel: "assistant", open: false });

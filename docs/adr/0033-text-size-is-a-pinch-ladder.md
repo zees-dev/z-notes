@@ -9,6 +9,9 @@ themes are read by, is a phone-first choice in the line of
 [ADR 0007](0007-installable-web-app.md), and reaches an agent through
 [ADR 0031](0031-the-agent-gets-the-same-doors.md).
 
+Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: the
+"Raw and Preview at one size" case is moot; there is one surface.
+
 ## Context
 
 A pinch over a document in this app did one of three things, none of them what

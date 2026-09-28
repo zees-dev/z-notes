@@ -36,7 +36,7 @@ import { state } from "./state.js";
 import { vaultOf } from "./ui.js";
 import { pendingHistory, stepHistory } from "./history.js";
 import { doDelete, loadTree, mintEntry, moveByPath } from "./tree.js";
-import { ensureLoaded, flushTextRun, indentSelection, openDoc, replaceDocText, saveDoc, setMode, syncRaw } from "./editor.js";
+import { ensureLoaded, openDoc, replaceDocText, saveDoc } from "./editor.js";
 import { proposalAction, sendMessageText, startNewSession, turnInFlight } from "./chat.js";
 import { emptyTrash, purgeTrashEntry, refreshTrash, restoreTrashEntry, toggleTrash } from "./trash.js";
 import { adoptSettings, savedValue, showSettings } from "./settings.js";
@@ -157,14 +157,13 @@ const PANELS = {
     the file otherwise. Every read and read-modify-write goes through here,
     so a tool never answers with bytes the user has already typed over. */
 async function docText(path) {
-  if (path === state.active) syncRaw();
   return str((await ensureLoaded(path)).markdown);
 }
 
 const byteLen = (s) => new TextEncoder().encode(s).length;
 
 /** Put the open buffer on disk before a tool navigates away from it. The
-    human routes ask (`guardRawExit`); an agent has nobody to ask, and the
+    human routes ask (`guardExit`); an agent has nobody to ask, and the
     answer is always the same one, saved and never discarded, so it is settled
     before any function that could raise the question runs. */
 async function settleBuffer() {
@@ -204,7 +203,6 @@ async function terminalReady() {
  * it is addressed to.
  */
 async function stepTimeline(redo) {
-  flushTextRun();
   const entry = pendingHistory(redo);
   if (!entry) return { applied: false, entry: null };
   const at = { kind: entry.kind, path: entry.path || entry.to || entry.from || null };
@@ -231,7 +229,7 @@ const TOOLS = [
   {
     name: "get_app_state",
     description:
-      "Report what the app is showing: the open doc, the view, mode and text size, whether the buffer is unsaved, the event connection, sync state, every vault, the secrets and terminal state, the assistant session, which panels are open, and whether undo or redo has a step waiting. Call this first.",
+      "Report what the app is showing: the open doc, the view and text size, whether the buffer is unsaved, the event connection, sync state, every vault, the secrets and terminal state, the assistant session, which panels are open, and whether undo or redo has a step waiting. Call this first.",
     annotations: { readOnlyHint: true },
     execute: async () => {
       const s = state.sync || {};
@@ -241,7 +239,6 @@ const TOOLS = [
         activeDoc: state.active,
         view: state.view,
         settingsSection: state.settingsSection,
-        mode: state.mode,
         textZoom: Math.round(zoomFactor() * 100),
         unsaved: !!state.dirty,
         connection: state.conn,
@@ -294,7 +291,7 @@ const TOOLS = [
     annotations: { readOnlyHint: true, untrustedContentHint: true },
     execute: async ({ path }) => {
       const unsaved = path === state.active && state.dirty;
-      const d = unsaved ? (syncRaw(), await ensureLoaded(path)) : await api.getDoc(path);
+      const d = unsaved ? await ensureLoaded(path) : await api.getDoc(path);
       const markdown = str(d.markdown);
       return { path: d.path || path, title: d.title, rev: d.rev, markdown, bytes: unsaved ? byteLen(markdown) : d.bytes, mtime: d.mtime, hasSecrets: !!d.hasSecrets, unsaved };
     },
@@ -379,44 +376,13 @@ const TOOLS = [
   /* ---------- navigation ---------- */
   {
     name: "open_doc",
-    description: "Open a doc in the editor pane, optionally at a line and in a given mode. The tree, the statusbar and the address bar follow. An unsaved buffer in the doc being left is saved on the way, never discarded.",
-    inputSchema: schema(
-      {
-        path: DOC_PATH,
-        mode: { type: "string", enum: ["raw", "preview"], description: 'Which view to land in: "preview" is the visual editor (Edit), "raw" the Markdown source (Source). Defaults to the current one.' },
-        line: { type: "integer", description: "1-based source line to scroll to and put the caret on." },
-      },
-      ["path"]
-    ),
-    execute: async ({ path, mode, line }) => {
-      if (mode != null && mode !== "raw" && mode !== "preview") throw deny("bad-mode", 'Mode is "raw" or "preview".');
+    description: "Open a doc in the editor pane, optionally at a line. The tree, the statusbar and the address bar follow. An unsaved buffer in the doc being left is saved on the way, never discarded.",
+    inputSchema: schema({ path: DOC_PATH, line: { type: "integer", description: "0-based source line, as search_docs reports it, to scroll to and put the caret on." } }, ["path"]),
+    execute: async ({ path, line }) => {
       if (!state.docPaths.has(path)) throw deny("not-found", "No such doc: " + path + ".");
-      await openDoc(path, { force: true, line: line == null ? null : line });
+      await openDoc(path, { force: true, line });
       if (state.active !== path) throw deny("failed", "Could not open " + path + ".");
-      if (mode) setMode(mode, { force: true, silent: true });
-      return { path: state.active, mode: state.mode };
-    },
-  },
-  {
-    name: "set_mode",
-    description: 'Switch the editor pane between the visual editor (Edit, "preview") and the Markdown source (Source, "raw"). An unsaved buffer is written first, so the switch never asks the user anything.',
-    inputSchema: schema({ mode: { type: "string", enum: ["raw", "preview"], description: 'Which view to show: "preview" for the visual editor (Edit), "raw" for the Markdown source (Source).' } }, ["mode"]),
-    execute: async ({ mode }) => {
-      if (mode !== "raw" && mode !== "preview") throw deny("bad-mode", 'Mode is "raw" or "preview".');
-      if (!state.active) throw deny("no-active-doc", "No doc is open.");
-      await settleBuffer();
-      setMode(mode, { force: true, silent: true });
-      return { mode: state.mode };
-    },
-  },
-  {
-    name: "indent_lines",
-    description:
-      "Indent or outdent every line the Source selection touches, exactly as Tab and Shift-Tab do: a list line moves one hierarchy level, any other line gains or loses the configured tab size. This is the button a phone gets instead of a Tab key. It needs the Markdown source open (mode \"raw\") and no dialog over it.",
-    inputSchema: schema({ outdent: { type: "boolean", description: "True to move the lines out one level instead of in. Defaults to false." } }),
-    execute: async ({ outdent }) => {
-      if (!indentSelection(!!outdent)) throw deny("not-raw", "The Markdown source is not open. Switch to Source first.");
-      return { ok: true };
+      return { path: state.active };
     },
   },
   {

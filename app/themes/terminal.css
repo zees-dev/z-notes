@@ -92,8 +92,7 @@
 
   --input-bd: 1px solid var(--line);
 
-  --seg-on-bg: var(--accent);          /* inverse video, like the prototype's
-                                          preview|raw control */
+  --seg-on-bg: var(--accent);          /* inverse video */
   --seg-on-fg: var(--accent-on);
   --seg-on-sh: none;
 
