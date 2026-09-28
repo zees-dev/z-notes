@@ -51,30 +51,10 @@ bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
 Shaping happens in conversation → `/spec` writes `docs/specs/open/NNNN-slug.md`
 (self-sufficient; the implementing agent gets no other context) → `/implement`
 executes it TDD-at-the-agreed-seams, moves the spec to `done/`, and promotes any
-durable decision to an ADR in the same change. Features and major bug fixes take the
-pipeline below; small fixes and mechanical edits are done directly.
-
-| Harness | Coordinator | Implementers | Fresh independent reviewer | Delegation |
-| --- | --- | --- | --- | --- |
-| Claude | Fable (high) | Opus 5 (`opus`, max) | Fable (`fable`, high) | Workflows |
-| Codex | `gpt-6-astra` (high) | `gpt-6-astra` (medium) | `gpt-6-astra` (high) | native agent threads |
-
-Select child models explicitly and verify them through the harness's own controls; prompt text is not
-configuration. If a model or native delegation cannot be selected, stop and ask; no silent fallback.
-Delegation never authorizes super.engineering orchestration, worktrees, commits or deployment.
-
-1. **Coordinator researches, designs, decomposes**: reads code, ADRs and spec; settles decisions; defines
-   tasks, file ownership, dependencies and acceptance criteria. Analysis fan-out is fine.
-2. **Separate agents implement** from that brief, independent tasks in parallel, never two on one file.
-   The coordinator does not write the bulk of the code. Clean, minimal; an abstraction earns its keep.
-3. **Coordinator consolidates and validates** the merged diff against the spec, not the agents' reports.
-4. **A fresh agent reviews adversarially** with spec, constraints and diff, never a reused implementation
-   thread. The coordinator triages, delegates real fixes, and re-reviews until clean.
-5. **Coordinator verifies the running app** (`bun run dev`, the e2e harness) by measurement, never by
-   eye; then `/clean-code`, `bun run gates`. Report checks and blockers honestly.
-
-Never commit or push unless the user asks. Every agent applies the repo-owned `clean-code` skill
-before any `git commit`, then runs `bun run gates` and `bun run lint:docs`.
+durable decision to an ADR in the same change. Features and major bug fixes follow the shared
+engineering workflow and model table (the global agent policy); small fixes are done directly.
+Here, verifying the running app means `bun run dev` plus the e2e harness. Every agent applies the
+repo-owned `clean-code` skill before any `git commit`, then runs `bun run gates` and `bun run lint:docs`.
 
 ## Principles
 
