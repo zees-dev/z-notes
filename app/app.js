@@ -25,7 +25,7 @@ import { applyTextHistory, autoGrow, closeExitGuard, ensureLoaded, exitGuardDisc
 import { changeVaultPassphrase, closePP, doPassphraseOk, initSecrets, keyHint, lockVault, newSecret, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, palSetMode, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
-import { CLOSERS, VEILS, app, bootDoc, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, recountBlocked, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
+import { CLOSERS, VEILS, app, bootDoc, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, recountBlocked, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc, applyNavigationBar } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
 import { initZoom } from "./zoom.js";
 import { registerWebMcpTools } from "./webmcp.js";
@@ -885,6 +885,7 @@ export async function start() {
   state.settings = s.settings;
   state.meta = s.meta;
   paintSettings();
+  applyNavigationBar();
 
   const q = new URLSearchParams(location.search);
   const urlTheme = q.get("theme");

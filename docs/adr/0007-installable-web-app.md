@@ -7,7 +7,8 @@ Accepted, 2026-08-08.
 Superseded in part by [0040](0040-the-frontend-is-built.md), 2026-10-28: the
 Context's "no frontend build step" rule is gone, and the last Consequence ("no
 service worker, no offline story") by [0041](0041-the-app-works-offline.md).
-The manifest and the committed icons stand.
+The manifest and the committed icons stand; [0043](0043-the-installed-app-keeps-the-system-bars.md)
+makes the system bars a setting.
 
 ## Context
 

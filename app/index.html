@@ -25,14 +25,13 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='7' fill='%23121412'/%3E%3Ctext x='10.5' y='20.8' font-family='ui-monospace,Menlo,monospace' font-size='17' font-weight='600' fill='%238fbfa2' text-anchor='middle'%3Ez%3C/text%3E%3Crect x='16.5' y='9.5' width='5.5' height='13' fill='%238fbfa2'%3E%3Canimate attributeName='opacity' values='1;1;0;0;1' keyTimes='0;.5;.5;.95;1' dur='1.3s' repeatCount='indefinite'/%3E%3C/rect%3E%3C/svg%3E">
 <!-- ── INSTALLED TO A HOME SCREEN ─────────────────────────────────────────────
      The block below is the whole difference between a bookmark and an
-     app. `manifest.json` asks for `fullscreen` first and falls back through
-     `standalone` (no URL bar, no browser chrome), plus the `background_color` +
-     icon pair that BOTH platforms build their launch screen out of — Chrome
-     generates the splash from them, and Safari has done the same since iOS
-     15.4. `fullscreen` is honoured on Android and ignored on iOS, which has no
-     such mode for an installed web app; the ordered fallback is what makes that
-     a preference rather than a broken request. The `apple-*` tags are the older
-     iOS spelling of the same facts and are still what a device on an earlier
+     app. `manifest.json` asks for `standalone` (no URL bar, no browser chrome;
+     the OS keeps its status and navigation bars, which the
+     `installed.navigationBar` setting hides with the Fullscreen API, ADR 0043),
+     plus the `background_color` + icon pair that BOTH platforms build their
+     launch screen out of — Chrome generates the splash from them, and Safari
+     has done the same since iOS 15.4. The `apple-*` tags are the older iOS
+     spelling of the same facts and are still what a device on an earlier
      version reads.
 
      `apple-touch-icon` is a PNG and cannot be the SVG above: iOS takes no SVG
@@ -387,6 +386,10 @@
             <div class="field">
               <div class="lab"><b>Density</b><span>Comfy is the default; Compact tightens every surface further.</span></div>
               <div class="ctl"><div class="seg" data-seg="density" id="densitySeg"></div></div>
+            </div>
+            <div class="field">
+              <div class="lab"><b>Navigation bar</b><span>In the installed app on a phone or tablet. Off runs it full screen, without the status bar too.</span></div>
+              <div class="ctl"><button class="sw" data-sw="installed.navigationBar" aria-label="Navigation bar"></button></div>
             </div>
           </section>
 

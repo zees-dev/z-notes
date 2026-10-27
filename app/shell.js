@@ -1651,3 +1651,37 @@ export function wireVisualViewport() {
   window.addEventListener("resize", publish);
   publish();
 }
+
+/**
+ * THE SYSTEM BARS of an installed app (ADR 0043).
+ *
+ * The manifest asks for `standalone`, so Android keeps its navigation and
+ * status bars. `installed.navigationBar` off hides them with the Fullscreen
+ * API, which only a tap may start: the first tap after launch enters it, and
+ * the first tap after Back or a swipe has left it enters it again.
+ *
+ * Read once, at load: element full screen itself matches
+ * `display-mode: fullscreen`. `pointer: coarse` is not a layout axis here (see
+ * THE ONE RESPONSIVE AXIS): it keeps an installed DESKTOP window, where full
+ * screen takes over the whole display, out of it.
+ */
+const installedOnTouch =
+  matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches &&
+  matchMedia("(pointer: coarse)").matches &&
+  typeof document.documentElement.requestFullscreen === "function";
+let hideBars = false;
+
+export function applyNavigationBar() {
+  if (!installedOnTouch) return;
+  hideBars = settingAt("installed.navigationBar") === false;
+  if (!hideBars && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+
+if (installedOnTouch)
+  document.addEventListener(
+    "pointerup",
+    () => {
+      if (hideBars && !document.fullscreenElement) document.documentElement.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+    },
+    true
+  );
