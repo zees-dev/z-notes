@@ -431,8 +431,8 @@ reachable only from the tailnet.
 the private CA). It works without Tailscale, on the LAN, and the app works there
 online — but it runs no service worker and no replica, and shows a notice naming
 the canonical address. Use it when Tailscale is down. Plain `http://znotes.k3s.lan`
-answers a permanent redirect to the canonical address, path and query kept
-(`redirect-canonical` in `50-ingress.yaml`).
+redirects to `https://znotes.k3s.lan` (`redirect-https` in `50-ingress.yaml`),
+so the old name keeps working on a device without Tailscale.
 
 The perimeter argument holds unchanged: the tailnet is the auth boundary. Keep
 ACLs tight and do not enable Funnel — Funnel puts an app with no login on the
@@ -617,16 +617,16 @@ Verified on this machine:
 
 **Not** verified, and why:
 
-- **The built-frontend image (spec 0024) was never built.** The image changes —
-  `oven/bun:1.4.4-slim`, `bun scripts/build.ts` in the `src` stage, a runtime
-  stage with `server/`, `dist/` and `package.json` only, `ZNOTES_DIST` — were
-  written on a machine without Docker. The graph check without `node_modules`
-  was run natively against `server/` (it resolves), and the manifests were
-  parsed as YAML, but no `docker build` ran, `oven/bun:1.4.4-slim` was not
-  pulled to confirm it matches the 1.4.0 record above, and the new manifests
-  were not applied. The Tailscale ingress, the `redirect-canonical` regex under
-  Traefik, SSE and brotli passthrough through the Tailscale proxy, and WebAPK
-  minting on the phone are all unexercised.
+- **The built-frontend image (spec 0024) is verified only up to the browser.**
+  Release 0.22.0 was built with podman (arm64) on 2026-10-28: the `src` stage's
+  Bun 1.4.4 build and the module-graph check without `node_modules` passed, and
+  the image is 329 MB (0.21.0 was 570 MB) with only `server/`, `dist/` and
+  `package.json`. After `kubectl apply -k`, the Tailscale ingress served the
+  canonical address with a Let's Encrypt certificate (the first request took
+  37 s while it was issued), the shell headers, brotli and SSE passed through
+  the proxy, and a headless Chromium on the tailnet registered the service
+  worker, filled the replica with every doc and reopened offline. WebAPK
+  minting on the phone and Safari are unexercised.
 
 - **`docker build` was never run.** The `docker` CLI exists but no daemon is
   reachable (`/var/run/docker.sock` absent). The Dockerfile is therefore

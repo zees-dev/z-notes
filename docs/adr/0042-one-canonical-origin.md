@@ -31,7 +31,9 @@ origin only.
 - **`https://znotes.k3s.lan` stays as the LAN break-glass.** The app works there,
   online, with no worker and no replica, and shows a sticky notice once per
   session: "z-notes lives at <origin> — open it there to use it offline." Its
-  plain-HTTP router redirects, permanently, to the canonical origin.
+  plain-HTTP router still redirects to its own https, not to the canonical
+  origin: the old name must keep working on a device without Tailscale, and a
+  permanent cross-host redirect is cached past any change of mind.
 - **Ship the switch before any device holds an outbox.** The old origin holds
   only view preferences in localStorage, so moving costs nothing; later it would
   strand unsent edits.
@@ -42,8 +44,8 @@ origin only.
   slot on Android), and on Android Private DNS must not be a strict hostname. An
   installed app still opens offline from its cache; `znotes.k3s.lan` remains
   reachable on the LAN.
-- The name is in three places that change together: the Ingress, `ZNOTES_ORIGIN`
-  and the redirect in `50-ingress.yaml`.
+- The name is in two places that change together: the Ingress and
+  `ZNOTES_ORIGIN`.
 - The perimeter argument is unchanged: the tailnet is the auth boundary; no
   Funnel, no public domain.
 - Not done: a public domain, DNS-01, installing the K3s CA on devices.
