@@ -9,7 +9,7 @@
 
 import * as api from "./api.js";
 import { state } from "./state.js";
-import { $, $$, apiFail, dirname, toast, vaultOf, withDefaultExtension } from "./ui.js";
+import { $, $$, apiFail, clearStickyToast, dirname, notice, toast, vaultOf, withDefaultExtension } from "./ui.js";
 import { adoptVaultSync, closeCtx, loadTree, renderTree, revealFolder } from "./tree.js";
 import { closeConfirm, closeConflict, confirmDialog } from "./dialogs.js";
 import { adoptTrash, refreshTrash } from "./trash.js";
@@ -61,6 +61,8 @@ export async function adoptVaults(payload) {
   const gone = state.active && !list.some((v) => v.id === vaultOf(state.active));
   const was = state.active;
   await loadTree().catch(() => {});
+  /* no doc event announces a vault's docs arriving or leaving */
+  replicaSoon();
   if (!gone) return;
   state.docs.delete(was);
   state.active = null;
@@ -140,15 +142,19 @@ function paintConn(st) {
   const c = $("#stConn");
   const txt = $("#stConnTxt");
   const quiet = connSilence() > CONN_STALE_MS;
-  const live = state.conn === "open" && !quiet;
+  const live = state.conn === "open" && !quiet && !state.offline;
   c.classList.toggle("down", !live);
   txt.textContent = live
     ? "connected"
+    : state.offline
+    ? "offline"
     : state.conn === "open"
     ? "no signal"
     : state.conn === "connecting"
     ? "reconnecting…"
     : "offline";
+  /* a request that found no network outranks what the stream last said */
+  if (state.offline) return void (c.title = "Offline");
   c.title =
     "SSE /events · " +
     txt.textContent +
@@ -250,6 +256,13 @@ function reconnectSoon() {
 }
 
 export function connect() {
+  /* No feature is disabled offline: each online-only action fails through its
+     own error path with the offline message. Only the dot says so up front. */
+  api.offline.onChange = (now) => {
+    state.offline = now;
+    paintConn();
+  };
+  state.offline = api.offline.now;
   startConnWatch();
   clearTimeout(reconnectT);
   reconnectT = null;
@@ -348,11 +361,14 @@ export function connect() {
       if (e == null) return;
       const missed = state.epoch != null && e !== state.epoch;
       state.epoch = e;
-      if (missed) resyncAfterGap();
+      /* a new connection is the server back: send what this device holds first */
+      catchUp().then(() => missed && resyncAfterGap());
     },
     onDocChanged: async (d) => {
       if (!d) return;
       blipConn();
+      const echo = !d.removed && d.reason !== "moved" && d.rev != null && state.docs.get(d.path)?.rev === d.rev;
+      if (!echo) replicaSoon();
       /* A move arrives as a PAIR: the old path with removed+`to`, the new path
          with `from` (the event contract). The old half carries everything needed
          to follow the doc, so the new half only has to refresh the tree — which
@@ -459,6 +475,15 @@ export function connect() {
   });
 }
 
+/* The vault moved under this session: the replica copies that too, once a
+   burst of frames is over and off the editing path (`refreshReplica` waits for
+   idle). Our own saves' echoes are already in it. */
+let replicaT = null;
+function replicaSoon() {
+  clearTimeout(replicaT);
+  replicaT = setTimeout(() => api.refreshReplica(), 1500);
+}
+
 /* Adopt what is on disk, unless doing so would take work away from the user.
    The PROTECTED BUFFER is the whole rule, and it is checked again AFTER the
    fetch: a save, a keystroke, a reveal edit or a navigation can all land inside
@@ -472,14 +497,16 @@ async function refreshDoc(path, notify, ours = () => true) {
     state.saving.has(path) ||
     (path === state.active && (state.dirty || path !== viewedPath())) ||
     (cached?.loaded && cached.markdown !== cached.diskText) ||
+    cached?.queued != null ||
     [...state.reveal.values()].some((e) => e.path === path && e.dirty);
   if (protectedBuffer()) return;
   const request = {};
   refreshes.set(path, request); // newest request wins; a slower older one must not undo it
   try {
     const fresh = await api.getDoc(path);
+    /* `pending`: this device holds unsent bytes for it — a dirty buffer too */
     if (
-      refreshes.get(path) !== request || !ours() || protectedBuffer() ||
+      fresh.pending || refreshes.get(path) !== request || !ours() || protectedBuffer() ||
       state.docs.get(path) !== cached || cached?.rev !== rev ||
       cached?.markdown !== markdown || cached?.diskText !== diskText || rev === fresh.rev
     )
@@ -530,9 +557,82 @@ async function resyncAfterGap() {
    (`keepalive` rides along with it because only an unloading request needs to
    outlive its document; api.js already drops it for a body over the budget.) */
 export function flushBuffer(opts) {
-  if (!state.dirty || !state.active) return;
+  if (!state.dirty || !state.active) return Promise.resolve(true);
   const leaving = !!(opts && opts.leaving);
-  saveDoc(state.active, { silent: true, quiet: leaving, keepalive: leaving });
+  return saveDoc(state.active, { silent: true, quiet: leaving, keepalive: leaving });
+}
+
+/* ---------- REPLAY: what this device saved while the server was out of reach ----------
+
+   Run on every way back — `hello` on a new connection, a page coming back
+   (`healAfterGap`), the window's `online` — in one order: the open buffer
+   through its own save path, then the outbox (minus the buffers the editor
+   owns), then the replica refresh. A second trigger while one runs asks for
+   one more pass rather than a parallel one. */
+let catching = null;
+let catchAgain = false;
+function catchUp() {
+  if (catching) {
+    catchAgain = true;
+    return catching;
+  }
+  catching = (async () => {
+    do {
+      catchAgain = false;
+      /* a save already on the wire is this retry; queueing another behind it
+         would only PUT the same bytes twice */
+      if (!state.saving.has(state.active)) await flushBuffer();
+      const r = await api.replayOutbox((p) => p === state.active || state.saving.has(p));
+      for (const s of r.sent) {
+        /* a buffer left behind still holding exactly these bytes is clean now */
+        const doc = state.docs.get(s.path);
+        if (doc && doc.queued === s.markdown) {
+          delete doc.queued;
+          Object.assign(doc, { rev: s.rev, mtime: s.mtime, bytes: s.bytes });
+          setBaseline(doc, s.markdown);
+        }
+      }
+      if (r.sent.length) await loadTree().catch(() => {});
+      paintBlocked(r.blocked.length);
+      api.refreshReplica(state.epoch);
+    } while (catchAgain);
+  })()
+    .catch(() => {})
+    .finally(() => (catching = null));
+  return catching;
+}
+
+/**
+ * BLOCKED ENTRIES — replay met someone else's change, so they wait for the
+ * user: one sticky notice whose action opens the first. Opening loads it as a
+ * pending dirty buffer and saves it, which meets the same 409/404 and so the
+ * existing conflict banner or orphan dialog; each resolution recounts.
+ * `blockedOpen` is the notice's Open button while it is up; the notice is
+ * still ours only while the toast still holds it.
+ */
+let blockedOpen = null;
+function paintBlocked(n) {
+  if (!n) {
+    if (blockedOpen && $("#toastTxt").contains(blockedOpen)) clearStickyToast();
+    blockedOpen = null;
+    return;
+  }
+  const open = (blockedOpen = document.createElement("button"));
+  open.className = "btn";
+  open.textContent = "Open";
+  open.addEventListener("click", openBlocked);
+  notice(n + (n === 1 ? " offline edit needs you " : " offline edits need you "), open);
+}
+
+export async function recountBlocked() {
+  paintBlocked((await api.blockedEntries()).length);
+}
+
+async function openBlocked() {
+  const [first] = await api.blockedEntries();
+  if (!first) return;
+  await openDoc(first.path);
+  if (state.active === first.path && state.dirty) saveDoc(first.path);
 }
 
 /** …and the mirror: a page coming back has missed everything the stream carried
@@ -542,7 +642,7 @@ export function flushBuffer(opts) {
     `resyncAfterGap` compares revs and `connect` is idempotent. */
 export function healAfterGap() {
   if (!state.events || state.events.state !== "open") connect();
-  /* …and RETRY THE WRITE, which nothing else here does. `doSaveDoc` clears
+  /* …and RETRY THE WRITE (in `catchUp`), which nothing else here does. `doSaveDoc` clears
      `dirtyT` before it attempts the PUT and only `markDirty` re-arms it, so a
      save that failed while the network was down is the LAST attempt: the timer
      is gone and `resyncAfterGap` returns immediately on a dirty buffer by
@@ -550,8 +650,7 @@ export function healAfterGap() {
      beside an indicator reading "Unsaved changes", and the text was still not
      on disk 7.5× the debounce later — it took another keystroke. `flushBuffer`
      no-ops on a clean buffer, so this costs nothing on the ordinary path. */
-  flushBuffer();
-  resyncAfterGap().catch(() => {});
+  catchUp().then(() => resyncAfterGap().catch(() => {}));
 }
 
 /* ============================================================
@@ -702,9 +801,9 @@ export function dismissTop() {
      `/d/<vault-relative path, each segment percent-encoded>` — the open doc,
      e.g. `/d/architecture/event-pipeline.md`. The doc path stays a real path so
      the URL is readable and copy-pasteable, and the `/d/` prefix is what makes
-     it collision-free forever: `/api/*`, `/events`, `/vendor/*`, `/healthz` and
-     every file under app/ live on other first segments, so no vault path can
-     ever shadow a route.
+     it collision-free forever: `/api/*`, `/events`, `/assets/*`, `/sw.js`,
+     `/healthz` and the static files live on other first segments, so no vault
+     path can ever shadow a route.
 
      `/` — not a third shape but a request for the DEFAULT place: boot resolves
      it through `bootDoc` below and replaces it with that doc's `/d/` URL, so

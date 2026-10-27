@@ -41,8 +41,9 @@ scar": many comments cite the bug that forced the shape
 - Locks live in the module that owns the invariant (`recon.lock` inside
   `DocStore`/`Reconciler`), never in the router.
 - No new dependencies without an ADR. The zero-dep bias is load-bearing:
-  the frontend must run unbuilt, and `tests/secrets.test.ts` structurally
-  depends on the server's import graph staying crypto-free.
+  every dependency is bytes in the build every device precaches (ADR 0040), and
+  `tests/secrets.test.ts` structurally depends on the server's import graph
+  staying crypto-free.
 - UI action buttons sit RIGHT-ALIGNED in their row (`justify-content:
   flex-end`) unless a stronger convention says otherwise (a dialog's own
   footer order, an input+button pair where the button hugs its input). The
@@ -99,12 +100,31 @@ scar": many comments cite the bug that forced the shape
 - **`bun --hot` keeps `globalThis`** across reloads; module-level state that
   must survive dev reloads relies on this. Don't move it into closures
   casually.
-- **The editor island is bundled at boot, not on edit.** `app/block-editor.tsx`
-  and `app/markdown-source.ts` are TypeScript/React that `server/index.ts`
-  bundles once at startup; `bun --hot` does not rebuild them when they change
-  — restart `bun run dev`. BlockNote's look is overridden in base.css through
+- **The frontend is a build, and the build is cached.** Everything in `app/` is
+  bundled (ADR 0040). `bun run dev` sets `ZNOTES_DEV=1`, which rebuilds in memory
+  on an `app/` edit and swaps the build; reload the page. A failed rebuild shows
+  its error in the boot screen while the API keeps serving. The image build
+  (`bun scripts/build.ts`) is what production runs, and bundler output can differ
+  between Bun versions. BlockNote's look is overridden in base.css through
   its `--bn-colors-*` properties mapped from the theme tokens; theme files stay
   layout-free (ADR 0003), so a BlockNote override belongs in base.css.
+- **`server/search-match.ts` is bundled into the browser.** `app/api.js` imports
+  it as `../server/search-match.ts` for offline search (ADR 0041), so it may import
+  nothing and use no Bun or node API — a `Bun.` or `node:` there builds fine on
+  the server and breaks the browser bundle (or worse, the offline path only).
+  `vault.ts` and `db.ts` import their pure rules back from it.
+- **`app/index.html` carries one marker, `<!-- znotes:head -->`.** The build
+  replaces it with the build id, service-worker and origin metas, the island's
+  stylesheet, the `modulepreload` links and the boot script. Delete or rename it
+  and the build appends one before `</head>` and fails: the boot screen says
+  "The app failed to build" and names the missing marker.
+  Never write those tags into the template by hand — they name hashed files.
+- **`new Worker` URLs come from `#znotes-assets`.** Bun does not rewrite
+  `new Worker(new URL("./x.js", import.meta.url))` (checked on 1.4.0 and 1.4.4),
+  and `import.meta.url` names a hashed chunk anyway. The island and crypto-worker
+  URLs are read from the shell's `#znotes-assets` JSON; a new worker is a new
+  build entry plus a new key there. The same goes for `API_ROOT`:
+  `new URL("./", document.baseURI)`, never `import.meta.url`.
 - **Comment citations are load-bearing**: code cites `docs/*.md §sections` and
   research docs. If you rename or move a doc, sweep the citations in the same
   change (`bun run lint:docs` catches broken relative links in docs, not in

@@ -149,10 +149,10 @@ describe("routing — URL shape", () => {
     /* everything that must keep winning against the prefix */
     expect((await srv.get("/api/docs")).status).toBe(200);
     expect((await srv.get("/healthz")).status).toBe(200);
-    expect((await srv.get("/app.js")).headers.get("content-type")).toContain("javascript");
-    expect((await srv.get("/api.js")).headers.get("content-type")).toContain("javascript");
     expect((await srv.get("/themes/base.css")).headers.get("content-type")).toContain("css");
-    expect((await srv.get("/vendor/age.js")).status).toBe(200); // 302 → hashed bundle
+    expect((await srv.get("/sw.js")).headers.get("content-type")).toContain("javascript");
+    const boot = /<script type="module" src="([^"]+)"/.exec(root.text)![1];
+    expect((await srv.get(boot)).headers.get("content-type")).toContain("javascript");
   }, 20000);
 
   test("/settings and /settings/<section> serve the same shell, and never shadow /api/settings", async () => {

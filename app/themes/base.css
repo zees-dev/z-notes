@@ -1155,6 +1155,8 @@ a.xl:hover { color: var(--accent-h); text-decoration-color: currentColor; }
 }
 #saveInd.dirty .pip { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
 #saveInd.flash .pip { background: var(--ok); box-shadow: 0 0 0 4px rgba(18, 161, 80, .16); animation: savepop .5s var(--ease); }
+/* "Saved on this device" (ADR 0041): a hollow ring — kept, not yet on the server */
+#saveInd.device .pip { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ok); }
 /* Announced, never drawn: the state's WORD, kept in the layout at a pixel so
    assistive tech has a node to read and the pip stays the only visible mark. */
 /* No negative margin in the usual sr-only recipe: this bar is `overflow:

@@ -57,7 +57,7 @@ const chord = (code: string) => pressChord(page, code);
 /** the open doc's buffer — what ⌘S writes and SSE refreshes */
 const buffer = () =>
   page.evaluate(async () => {
-    const { state } = await import("/state.js");
+    const { state } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
     return state.docs.get(state.active).markdown as string;
   });
 

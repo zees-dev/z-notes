@@ -26,6 +26,11 @@ surface, unchanged); [ADR 0034](0034-the-soft-keyboard-carries-an-editing-bar.md
 keyboard); [ADR 0022](0022-asking-before-leaving-edits-is-a-preference.md)
 (the guard now covers both surfaces).
 
+Superseded in part by [0040](0040-the-frontend-is-built.md), 2026-10-28: the
+island is no longer bundled by the server at boot or served from `/vendor`; it
+is one chunk graph of the build, under `/assets/`, named by `#znotes-assets`.
+Everything about the editor itself stands.
+
 Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: Source is
 gone. A protected block's door is "Edit", in place; a failed bundle load shows
 a Reload note, not Source; the persisted `preview`/`raw` ids and the WebMCP

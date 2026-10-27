@@ -122,7 +122,7 @@ const docText = () => page.evaluate(() => document.getElementById("doc")!.textCo
 /** the open doc's buffer: the bytes the next save would send */
 const buffer = () =>
   page.evaluate(async () => {
-    const { state } = await import("/state.js");
+    const { state } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
     return state.docs.get(state.active).markdown as string;
   });
 

@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot server/index.ts",
+    "dev": "ZNOTES_DEV=1 bun --hot server/index.ts",
+    "build": "bun scripts/build.ts",
     "start": "bun server/index.ts",
     "test": "bun test --parallel=4",
-    "gates": "bun test tests/roundtrip.test.ts tests/reconcile.test.ts tests/ai.test.ts tests/leak.test.ts tests/e2e.test.ts tests/mermaid-e2e.test.ts",
+    "gates": "bun test tests/roundtrip.test.ts tests/reconcile.test.ts tests/ai.test.ts tests/leak.test.ts tests/e2e.test.ts tests/mermaid-e2e.test.ts tests/offline-e2e.test.ts",
     "lint:docs": "bun scripts/lint-docs.ts"
   },
   "devDependencies": {

@@ -8,6 +8,12 @@ Accepted, 2026-08-09. First exception to the dependency rule in
 [ADR 0004](0004-secrets-are-client-side-age.md), whose `/vendor/age.js`
 machinery this deliberately does **not** reuse.
 
+Superseded in part by [0040](0040-the-frontend-is-built.md), 2026-10-28: the
+"a generator, not a build step" framing is gone — there is a build step now, and
+mermaid is one of its inputs, loaded lazily (`app/mermaid-lazy.ts`). The
+fence-is-untrusted-input half stands, and `tests/mermaid-e2e.test.ts` remains its
+gate.
+
 ## Context
 
 The preview had no way to draw a diagram. Mermaid is the canonical answer —

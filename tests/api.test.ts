@@ -107,10 +107,10 @@ describe("static frontend", () => {
     expect(html).toContain('id="tree"');
   });
 
-  test("GET /app.js and /api.js and /themes/base.css are served", async () => {
+  test("GET /sw.js and /manifest.json and /themes/base.css are served", async () => {
     for (const [p, type] of [
-      ["/app.js", "javascript"],
-      ["/api.js", "javascript"],
+      ["/sw.js", "javascript"],
+      ["/manifest.json", "json"],
       ["/themes/base.css", "css"],
     ] as const) {
       const res = await fetch(srv.url(p));
@@ -120,18 +120,18 @@ describe("static frontend", () => {
     }
   });
 
-  test("Bun.file responses carry a hand-rolled ETag that honours If-None-Match", async () => {
-    const first = await fetch(srv.url("/app.js"));
+  test("frontend responses carry an ETag that honours If-None-Match", async () => {
+    const first = await fetch(srv.url("/sw.js"));
     expect(first.status).toBe(200);
     const etag = first.headers.get("etag");
     expect(typeof etag).toBe("string");
     expect((etag ?? "").length).toBeGreaterThan(0);
     await first.text();
 
-    const second = await fetch(srv.url("/app.js"), { headers: { "if-none-match": etag! } });
+    const second = await fetch(srv.url("/sw.js"), { headers: { "if-none-match": etag! } });
     expect(second.status).toBe(304);
 
-    const bogus = await fetch(srv.url("/app.js"), { headers: { "if-none-match": '"not-the-etag"' } });
+    const bogus = await fetch(srv.url("/sw.js"), { headers: { "if-none-match": '"not-the-etag"' } });
     expect(bogus.status).toBe(200);
     await bogus.text();
   });

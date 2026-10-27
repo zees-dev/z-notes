@@ -30,8 +30,9 @@ frontend does not change if the implementation does.
 ### Conventions
 
 - **Base.** Every path below is relative to an API root — `/` in production
-  (so `GET /api/docs`); `api.js` resolves paths against `new URL('./', import.meta.url)`,
-  so the contract survives being served from a sub-path.
+  (so `GET /api/docs`); `api.js` resolves paths against `new URL('./', document.baseURI)`
+  (the shell's `<base href="/">`; the bundled modules have hashed URLs, so `import.meta.url`
+  is not the anchor), so the contract survives being served from a sub-path.
 - **Encoding.** Requests and responses are `application/json; charset=utf-8` unless stated.
   Doc source travels as the legacy `markdown` JSON string field, never as a raw body.
 - **Doc paths** are vault-relative POSIX paths without a leading slash and with an
@@ -98,14 +99,16 @@ The vault tree. Folders carry children; files carry metadata only, never content
   "vault": { "name": "z-notes", "root": "~/vault", "docCount": 7 },
   "tree": [
     { "type": "file", "path": "inbox.md", "name": "inbox.md", "title": "inbox.md",
-      "slug": "inbox", "bytes": 0, "mtime": "2026-08-01T00:12:04.000Z", "empty": true },
+      "slug": "inbox", "bytes": 0, "mtime": "2026-08-01T00:12:04.000Z", "empty": true,
+      "hasSecrets": false, "rev": "r1" },
     { "type": "folder", "path": "architecture", "name": "architecture", "open": true,
       "children": [
         { "type": "file", "path": "architecture/z-notes-design.md", "name": "z-notes-design.md",
           "title": "z-notes design", "slug": "z-notes-design", "bytes": 812,
-          "mtime": "2026-08-01T00:12:04.000Z", "empty": false, "hasSecrets": false }
+          "mtime": "2026-08-01T00:12:04.000Z", "empty": false, "hasSecrets": false, "rev": "r7" }
       ] }
-  ]
+  ],
+  "epoch": 41
 }
 ```
 
@@ -135,7 +138,8 @@ unchanged and describe the **primary vault only**, so a single-vault client need
       "prefix": "@work-notes/",
       "sync": { "state": "synced", "…": "…" },
       "tree": [ { "type": "file", "path": "@work-notes/inbox.md", "…": "…" } ] }
-  ]
+  ],
+  "epoch": 41
 }
 ```
 
@@ -145,6 +149,30 @@ otherwise — prepend it rather than rebuilding the grammar. `label` is the disp
 the last segment of the sanitized remote when there is one, else the directory's basename,
 else `<basename> (unsynced)` when the directory is not a git repository at all. `sync` is
 the vault's last known sync status — a snapshot, never a git spawn per tree request.
+
+Every file node in `tree` and `vaults[].tree` carries the index row's `rev` as its last
+key. It may lag disk until the debounced reconcile pass; a doc read always derives its
+body and rev from disk. The body's last key is `epoch`, the persisted vault epoch shared
+with `/events`'s `hello`, read **before** building the trees so a concurrent change bumps
+past it. Changes in any vault advance the epoch.
+
+#### `POST /api/replica`
+
+Batch-read docs for the device's replica. Same-origin guard as every write route.
+
+```json
+{ "paths": ["inbox.md", "@work-notes/inbox.md", "absent.md"] }
+```
+
+→ `200 { "docs": [ …doc bodies… ], "missing": ["absent.md"] }`
+
+`paths` must be an array of 1–500 strings; any other body shape is `400 bad-body`.
+Only POST is accepted; other methods are `405 method-not-allowed`. Each path resolves
+through the same vault and canonical-path rules as a doc GET. Reads are sequential and
+disk-derived, and each body is exactly the corresponding `GET /api/docs/{path}` body,
+including a qualified `path` for secondary vaults. An unsafe, unknown-vault or absent
+path is returned verbatim in `missing`; it never fails the batch. Both arrays retain
+request order among their entries.
 
 #### `GET /api/docs/{path}`
 
@@ -172,7 +200,12 @@ the vault's last known sync status — a snapshot, never a git spawn per tree re
 
 → `200 { "path": "...", "rev": "r8", "bytes": 830, "mtime": "..." }`
 
-`409 {"error":"rev-conflict","rev":"r9"}` when `rev` is stale. Emits `doc-changed` on
+Identical markdown bytes answer `200` with the current rev, bytes and mtime **before**
+checking the supplied rev, even when that rev is stale. Nothing is written and no
+`doc-changed` is emitted, so retrying a save whose reply was lost is safe.
+
+Different bytes with a stale `rev` are `409 {"error":"rev-conflict","rev":"r9"}`.
+A successful write emits `doc-changed` on
 `/events` to every client (including the writer — compare `rev` to your own to ignore your
 echo). Also nudges sync into `syncing` and back to `synced`.
 
@@ -437,34 +470,45 @@ replace of one opaque string by another: the passphrase never appears in a reque
 `recipient` is identical before and after — which is the wire-level tell that the vault key
 was *not* rotated and no block needs re-encrypting.
 
-#### `GET /vendor/age.js` *(asset, not an API route)*
+#### Caching and compression
 
-The `age-encryption` (typage) browser bundle, built in memory at server start from
-`vendor/age-entry.js` and served to the crypto worker. `/vendor/age.js` is a `302` with
-`cache-control: no-cache` to `/vendor/age.<hash>.js`, which carries an `ETag` and
-`cache-control: public, max-age=2592000, immutable`; the hash covers the lockfile and the
-entry source, so a dependency bump changes the URL. `503 {"error":"vendor-unavailable"}` if
-the bundle failed to build — the client then disables secrets features and says why.
+The frontend is a build (ADR 0040), and the URL space it serves is the exact keys of that
+build — nothing is looked up on a file system. `/vendor/*` does not exist (the `age-encryption`
+browser code is a chunk of the crypto worker's graph under `/assets/`), and neither does any
+per-file `app/*.js` URL. Anything outside the table is `404 {"error":"not-found"}`; methods
+other than `GET`/`HEAD` are `405`.
 
-#### Asset caching and compression *(every non-API GET)*
+| Path | Policy |
+|---|---|
+| `/assets/<name>.<hash>.<ext>` — the boot, island and worker entries, every chunk, the island's stylesheet, fonts | content-addressed: `cache-control: public, max-age=2592000, immutable` |
+| `/`, `/d`, `/d/*`, `/settings`, `/settings/*` — the app shell | `no-cache` + `ETag` (content hash of the finished shell bytes) |
+| `/sw.js` — `text/javascript; charset=utf-8`; the release's service worker, or with `ZNOTES_SW=off` the kill worker | `no-cache` + `ETag` |
+| `/manifest.json`, `/themes/*.css`, `/icons/*` | `no-cache` + `ETag` (content hash, so two pods agree) |
 
 Two policies, and which one a path gets follows from whether its URL is content-addressed.
 
-- **Content-addressed** — `/vendor/age.<hash>.js` and `/vendor/editor/*` — carry
-  `cache-control: public, max-age=2592000, immutable`: one month, because the URL changes
-  whenever the bytes do and nothing stale can be reached.
-- **Everything else** — `index.html` (at `/`, `/d/*`, `/settings*`), `/app.js`, `/tree.js`,
-  `themes/*.css`, `manifest.json`, the icons — carries `cache-control: no-cache` and an
-  `ETag`, and answers `304` to a matching `If-None-Match`. These paths are *not*
-  content-addressed, so a month of freshness would mean a release an already-warm browser
-  would not see until it expired; a revalidation costs a few hundred bytes.
+- **Content-addressed** (`/assets/*`) — one month, because the URL changes whenever the bytes
+  do and nothing stale can be reached. An unknown name under `/assets/` is a `404` and is
+  never answered with a different asset.
+- **Everything else** — the shell, `/sw.js`, the static files — carries
+  `cache-control: no-cache` and an `ETag`, and answers `304` to a matching `If-None-Match`.
+  These paths are *not* content-addressed, so a month of freshness would mean a release an
+  already-warm browser would not see until it expired; a revalidation costs a few hundred
+  bytes.
 
 Every textual response (`text/*`, JavaScript, JSON, XML, SVG) is content-coded by
-`Accept-Encoding`, brotli preferred over gzip, and says `vary: accept-encoding`. A coding is
+`Accept-Encoding`, brotli preferred over gzip, and says `vary: accept-encoding`. Frontend
+assets are coded once: at image build (brotli q11, gzip) and loaded as-is, or in memory at
+boot (brotli q9) when the server runs without `ZNOTES_DIST`. A coding is
 a distinct representation, so **each carries its own `ETag`** — the identity tag with a `-br`
 or `-gz` suffix inside the quotes — and `If-None-Match` matches the representation the client
 actually holds. `Accept-Encoding: identity`, or no header at all, gets the identity bytes.
 `content-length` is always the length of the coding that was sent, `HEAD` included.
+
+API `application/json` responses of at least 1024 bytes are also content-coded when the
+client accepts it: brotli quality 4 preferred, else gzip level 6, with `content-encoding`
+and `vary: accept-encoding`. Error JSON bytes are preserved before coding. Streaming
+routes and `/events` are never coded.
 
 ---
 
@@ -1669,8 +1713,8 @@ and whatever doc is open. Settings do not move it — see `settings-changed` abo
 Not an API route: the SPA shell. The frontend gives every open doc its own URL so a doc can
 be linked, refreshed into, and walked back to with the browser's Back button, and `/d/` is
 the prefix that reserves a routing space no vault path can ever collide with — `/api/*`,
-`/events`, `/vendor/*`, `/healthz` and every file under `app/` (`/app.js`, `/api.js`,
-`/themes/*`) live on other first segments.
+`/events`, `/healthz`, `/assets/*`, `/sw.js`, `/manifest.json`, `/themes/*` and `/icons/*` live
+on other first segments.
 
 `{path}` is a **doc path** under the same rule as `/api/docs/{path}`: vault-relative POSIX,
 no leading slash, each segment percent-encoded, `/` separators left alone —
@@ -1678,15 +1722,16 @@ no leading slash, each segment percent-encoded, `/` separators left alone —
 `@` arrives percent-encoded (`/d/%40work-notes/inbox.md`) and decodes before the vault
 prefix is read; the unencoded spelling works too.
 
-The response is the same `index.html` the shell gets at `/`, with the same `ETag` and
-`cache-control: no-cache`. "The same" includes the server's one rewrite of it: the
-`<link id="editor-css">` tag is served pointing at the *hashed* editor stylesheet, carries
-`data-js="<hashed editor entry>"` for the client to import, and is followed by
-`<link rel="modulepreload" href="<hashed editor entry>">`, so neither editor asset pays the
-alias `302` and the entry starts downloading in `<head>`. The shell's `ETag` therefore
-carries the editor build's hash: a new bundle invalidates the HTML that names it. When the
-editor bundle failed to build the tag is served unrewritten, pointing at the alias, which
-answers `503`.
+The response is the same app shell the server gives at `/`, with the same `ETag` and
+`cache-control: no-cache`: `index.html` with the build's tags spliced in where its
+`<!-- znotes:head -->` marker stands — `meta` tags for the build id, whether the service worker
+is on and the canonical origin (when `ZNOTES_ORIGIN` is set); the island's hashed stylesheet
+(`id="editor-css"`); `<link rel="modulepreload">` for the island entry and for each static
+chunk of the boot entry; a `<script type="application/json" id="znotes-assets">` naming the
+island and crypto-worker URLs; and the boot script. The `ETag` is the content hash of those
+finished bytes, so a new build invalidates the HTML that names it. When an in-memory build
+failed (dev and tests only) the splice is one inline script that writes the build error into
+the boot screen; the API and `/healthz` are unaffected.
 The server does **not** check that the doc exists — the client already has the tree and can
 say "no such doc" without a round trip, and a 404 shell would be a broken page rather than
 an app that can say so. `GET` and `HEAD` only; anything else is `405`.
@@ -1698,9 +1743,9 @@ the app's WebMCP tools (ADR 0031) unless the document's agent cluster is origin-
 and API replies carry neither.
 
 Because the shell is served from more than one depth, `index.html` carries `<base href="/">`
-— that is what keeps `./app.js`, `./themes/*.css` and, through `import.meta.url`, the API
-root in `api.js` and the crypto worker's URL resolving against the app root instead of
-against whatever doc URL is in the address bar.
+— that is what keeps `./themes/*.css` and, through `document.baseURI`, the API root in
+`api.js` resolving against the app root instead of against whatever doc URL is in the address
+bar. (The crypto worker's URL is not resolved at all: it is read from `#znotes-assets`.)
 
 #### `GET /settings`, `GET /settings/{section}` — the settings page
 
@@ -1711,7 +1756,7 @@ reloaded and walked back out of. `{section}` is one of `appearance`, `editing`, 
 "open Settings at the AI section" (the statusbar AI chip) a link and not a gesture. An
 unrecognised section is not an error: the client degrades it to the top of the page.
 
-Same response as `/d/{path}`: `index.html` byte-for-byte, same `ETag`, `GET`/`HEAD` only.
+Same response as `/d/{path}`: the same app shell, same `ETag`, `GET`/`HEAD` only.
 
 This is **not** `/api/settings` and never shadows it — the API lives under `/api/*`, which is
 matched first, so the read/write surface documented above is untouched by this route.

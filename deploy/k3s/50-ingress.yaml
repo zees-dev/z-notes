@@ -10,16 +10,21 @@
 # TWO Ingresses on purpose:
 #   znotes         — websecure (:443), the real one, TLS from the cert-manager
 #                    secret, backed by the Service.
-#   znotes-http    — web (:80), nothing but a 308 to https. Without it, typing
-#                    the bare hostname lands on a dead port and looks like the
-#                    app is down. It also means nobody can accidentally use the
-#                    app over an insecure origin and wonder why the secrets
-#                    features degrade off outside a secure context.
+#   znotes-http    — web (:80), nothing but a permanent redirect to the CANONICAL
+#                    origin, https://znotes.tailb95e62.ts.net (ADR 0042). Without
+#                    it, typing the bare hostname lands on a dead port and looks
+#                    like the app is down. It also means nobody can accidentally
+#                    use the app over an insecure origin and wonder why the
+#                    secrets features degrade off outside a secure context.
+#
+# znotes.k3s.lan over HTTPS stays as the LAN BREAK-GLASS: the app works there,
+# online, but its service worker and replica run only on the canonical origin
+# (ZNOTES_ORIGIN), so it tells you where to go for offline use.
 #
 # >>> The three `znotes.k3s.lan` occurrences must match 40-certificates.yaml
-# and what you type in the browser. Add a second `rules[]` host block (and a
-# second `tls[].hosts` entry) for the *.ts.net name if you want to reach it by
-# MagicDNS as well as by LAN name.
+# and what you type in the browser. The canonical name lives in
+# 60-tailscale-ingress.yaml, 20-deployment.yaml (ZNOTES_ORIGIN) and the
+# redirect below — change those three together.
 # =============================================================================
 ---
 apiVersion: networking.k8s.io/v1
@@ -72,7 +77,7 @@ metadata:
     app.kubernetes.io/name: z-notes
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web
-    traefik.ingress.kubernetes.io/router.middlewares: znotes-redirect-https@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: znotes-redirect-canonical@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:
@@ -91,14 +96,20 @@ spec:
 # browsers cache — the redirect is paid once per browser, not per visit.
 # The @kubernetescrd suffix in the annotation is Traefik's provider namespace
 # for CRD-sourced middlewares; the name is <namespace>-<name>.
+#
+# It is a redirectRegex, not a redirectScheme: the target is a different HOST,
+# and the path and query ride along in ${1}. Single-quoted so YAML leaves the
+# backslashes alone. This router matches only znotes.k3s.lan on :80, so the
+# regex only ever sees that host.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: redirect-https
+  name: redirect-canonical
   namespace: znotes
   labels:
     app.kubernetes.io/name: z-notes
 spec:
-  redirectScheme:
-    scheme: https
+  redirectRegex:
+    regex: '^http://znotes\.k3s\.lan/(.*)'
+    replacement: 'https://znotes.tailb95e62.ts.net/${1}'
     permanent: true

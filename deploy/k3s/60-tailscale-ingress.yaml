@@ -1,17 +1,18 @@
 # =============================================================================
-# ALTERNATIVE ingress — the Tailscale Kubernetes operator.
+# The CANONICAL ingress (ADR 0042) — the Tailscale Kubernetes operator.
 #
-# NOT applied by kustomization.yaml. This is the path that makes the CA trust
-# step disappear: the operator runs a proxy pod that joins your tailnet as a
-# device, and Tailscale issues it a REAL, publicly-trusted certificate for
-# <name>.<tailnet>.ts.net. Every browser on the tailnet gets a secure context
-# with nothing to install, which is exactly what the secrets half of the app —
-# WebCrypto, hence a secure context — wants.
+# Applied by kustomization.yaml. The operator runs a proxy pod that joins your
+# tailnet as a device, and Tailscale issues it a REAL, publicly-trusted
+# certificate for <name>.<tailnet>.ts.net — here
+# https://znotes.tailb95e62.ts.net, which is ZNOTES_ORIGIN in
+# 20-deployment.yaml. Every browser on the tailnet gets a secure context with
+# nothing to install: WebCrypto for the secrets half of the app, and the
+# service worker, install prompt and HTTP cache of the offline half (ADR 0041)
+# all require a certificate the browser trusts.
 #
-# Trade-off vs. 50-ingress.yaml + 40-certificates.yaml: this is reachable ONLY
-# from the tailnet — there is no LAN hostname and no path in when Tailscale is
-# down. Running both is fine and is the belt-and-braces answer: cert-manager +
-# Traefik for znotes.k3s.lan on the LAN, this for the phone.
+# Trade-off: this is reachable ONLY from the tailnet — there is no LAN hostname
+# and no path in when Tailscale is down. 50-ingress.yaml + 40-certificates.yaml
+# stay as the LAN break-glass (https://znotes.k3s.lan, private CA).
 #
 # Requires: the Tailscale operator installed, MagicDNS and HTTPS certificates
 # enabled in the tailnet admin console (both are off by default), and the
@@ -22,8 +23,8 @@
 #     -n tailscale --create-namespace \
 #     --set-string oauth.clientId="<id>" --set-string oauth.clientSecret="<secret>"
 #
-#   kubectl apply -f deploy/k3s/alt-tailscale-ingress.yaml
-#   # then: https://znotes.<tailnet>.ts.net
+# Another tailnet or device name changes the host below AND ZNOTES_ORIGIN AND
+# the redirect in 50-ingress.yaml together.
 #
 # The OAuth credentials are yours to create in the Tailscale admin console —
 # nothing here invents or stores one.

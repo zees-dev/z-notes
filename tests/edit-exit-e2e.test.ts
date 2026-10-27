@@ -144,13 +144,14 @@ describe("unsaved exit", () => {
       const saved = await serverMarkdown(SHORT);
       expect(saved).toContain("second line saved on leaving");
 
-      /* No prompt must not become navigate-at-any-cost. If the automatic write
-         fails, the doc and its only copy of the new text stay where they are. */
+      /* No prompt must not become navigate-at-any-cost. If the server REFUSES the
+         automatic write, the doc and the new text stay where they are. (A write
+         that never reached it is held on the device and replayed — ADR 0041.) */
       await app.clickDoc(SHORT);
       await appendTo("second line saved on leaving", " and kept");
       await page.setRequestInterception(true);
       const refuseSave = (request: HTTPRequest) => {
-        if (request.method() === "PUT" && request.url().endsWith("/api/docs/short.md")) void request.abort();
+        if (request.method() === "PUT" && request.url().endsWith("/api/docs/short.md")) void request.respond({ status: 500, contentType: "application/json", body: '{"error":"internal","message":"refused"}' });
         else void request.continue();
       };
       page.on("request", refuseSave);

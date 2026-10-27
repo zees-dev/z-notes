@@ -415,6 +415,8 @@ export interface StartOptions {
   timeout?: number;
   /** keep the temp vault after stop() (debugging) */
   keepVault?: boolean;
+  /** listen here instead of a free port — a restart on the same origin */
+  port?: number;
 }
 
 export async function startServer(opts: StartOptions = {}): Promise<TestServer> {
@@ -426,7 +428,7 @@ export async function startServer(opts: StartOptions = {}): Promise<TestServer> 
   }
 
   const vault = opts.vault ?? makeVault(opts.seed ?? {});
-  const port = await freePort();
+  const port = opts.port ?? (await freePort());
 
   /* `--no-orphans`: a killed test worker takes its server, port and fs.watch with it. */
   const proc = Bun.spawn(["bun", "--no-orphans", "server/index.ts"], {
@@ -446,6 +448,9 @@ export async function startServer(opts: StartOptions = {}): Promise<TestServer> 
          it. A sibling rather than a child because a vaults home nested in the
          primary vault is a state the registry deliberately refuses. */
       ZNOTES_VAULTS_DIR: `${vault}-vaults`,
+      /* no service worker unless a suite asks for one: a cached shell would
+         change what every other suite measures about the network */
+      ZNOTES_SW: "off",
       ...(opts.env ?? {}),
     },
     stdout: "pipe",
@@ -683,7 +688,7 @@ export function findChromium(): string {
    not a hand-maintained twin that could drift.
    ------------------------------------------------------------------ */
 
-export { fuzzy as refFuzzy } from "../server/db";
+export { fuzzy as refFuzzy } from "../server/search-match";
 
 /* ------------------------------------------------------------------
    git in a test repo. One copy of the spawn plumbing: argv only, prompts

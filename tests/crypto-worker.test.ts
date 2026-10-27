@@ -3,7 +3,7 @@
 
    app/crypto-worker.js is where every cryptographic decision in z-notes is
    made, and the UI can only ever show what this worker returns. So it is
-   driven here DIRECTLY — a real Chromium, the real `/vendor/age.js` bundle,
+   driven here DIRECTLY — a real Chromium, the real built worker and its age chunk,
    real scrypt at logN=18, real X25519 — with no app.js in the way.
 
    Four findings are pinned here:
@@ -90,7 +90,7 @@ interface OpResult {
  */
 async function runWorker(ops: Array<Record<string, unknown>>): Promise<OpResult[]> {
   return page.evaluate(async (list) => {
-    const w = new Worker("/crypto-worker.js", { type: "module" });
+    const w = new Worker(JSON.parse(document.getElementById("znotes-assets")!.textContent!).worker, { type: "module" });
     const waits = new Map<number, (m: any) => void>();
     let seq = 0;
     w.onmessage = (ev: MessageEvent) => {

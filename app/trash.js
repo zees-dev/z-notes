@@ -363,6 +363,7 @@ export async function restoreTrashEntry(id) {
        the row rather than in a toast, and that sentence is the whole answer */
     const taken = state.trash.rowErr.get(e.id);
     if (taken) throw new api.ApiError(409, { error: "exists", message: taken });
+    if (api.offline.now) throw api.offlineError();
     throw new api.ApiError(409, { error: "failed", message: "Could not restore " + e.path + "." });
   }
   return { path: landed };
@@ -371,12 +372,15 @@ export async function restoreTrashEntry(id) {
 /** @returns {Promise<{purged:true}>} — throws `not-found` / `failed`. */
 export async function purgeTrashEntry(id) {
   const e = await trashEntry(id);
-  if (!(await purgeEntry(e))) throw new api.ApiError(409, { error: "failed", message: "Could not delete " + e.path + "." });
-  return { purged: true };
+  if (await purgeEntry(e)) return { purged: true };
+  if (api.offline.now) throw api.offlineError();
+  throw new api.ApiError(409, { error: "failed", message: "Could not delete " + e.path + "." });
 }
 
 async function trashEntry(id) {
   await refreshTrash();
+  // that read found no network: the list is stale and the action cannot run
+  if (api.offline.now) throw api.offlineError();
   const e = (state.trash.entries || []).filter((x) => x.id === id)[0];
   if (!e) throw new api.ApiError(404, { error: "not-found", message: "Nothing in the trash with id " + id + "." });
   return e;

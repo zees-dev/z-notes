@@ -97,7 +97,7 @@ try {
 let agePromise = null;
 function loadAge() {
   if (!agePromise) {
-    agePromise = import("/vendor/age.js").then((m) => {
+    agePromise = import("age-encryption").then((m) => {
       S.age = m;
       return m;
     });

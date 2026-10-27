@@ -45,7 +45,7 @@ const atPath = (target: string, options = {}) => page.waitForFunction(p => docum
 const settleFrames = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 async function snapshot() {
   return page.evaluate(async () => {
-    const { state } = await import("/state.js");
+    const { state } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
     const doc = state.docs.get(state.active);
     return { markdown: doc.markdown, rev: doc.rev, diskText: doc.diskText, dirty: state.dirty };
   });
@@ -72,10 +72,10 @@ async function holdRefresh() {
   };
 }
 async function stopEvents() {
-  await page.evaluate(async () => { (await import("/state.js")).state.events.source.close(); });
+  await page.evaluate(async () => { (await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src)).state.events.source.close(); });
 }
 async function recoverGap() {
-  await page.evaluate(async () => { (await import("/shell.js")).healAfterGap(); });
+  await page.evaluate(async () => { (await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src)).healAfterGap(); });
 }
 
 for (const cause of ["external event", "stream gap"]) {
@@ -123,10 +123,10 @@ test("gap refresh finishing after navigation preserves the new editor and select
 test("CSS-only editor load failure says so, offers Reload and leaves nothing editable", async () => {
   await page.setRequestInterception(true);
   let cssRequests = 0;
-  // hashed href in the shell, alias as the fallback — ADR 0038
+  // the island's hashed stylesheet, named by the shell — ADR 0040
   page.on("request", request => {
     const path = new URL(request.url()).pathname;
-    if (/^\/vendor\/editor(?:\.css|\/editor\.[^/]+\.css)$/.test(path)) { cssRequests++; void request.abort("failed"); }
+    if (/^\/assets\/block-editor\.[^/]+\.css$/.test(path)) { cssRequests++; void request.abort("failed"); }
     else void request.continue();
   });
   await appDriver(page, srv.base).boot("/d/" + path);
@@ -240,7 +240,7 @@ test("a dirty revealed secret follows an external move and saves independently d
 
   // Hold the real worker request, then let encryption finish at the moved path.
   await page.evaluate(async () => {
-    const { vault } = await import("/secrets.js");
+    const { vault } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
     const worker = vault.worker;
     const send = worker.postMessage.bind(worker);
     worker.postMessage = (message: { op: string }) => {

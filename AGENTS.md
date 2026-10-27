@@ -1,25 +1,27 @@
 # z-notes — agent map
 
 Single-user Markdown notes app; files on disk are the source of truth. One Bun process serves a
-no-build frontend, JSON/SSE API, client-side (age) secrets, git sync, AI edit relay and gated terminal.
+built, installable, offline-capable frontend, JSON/SSE API, client-side (age) secrets, git sync, AI
+edit relay and gated terminal.
 
 ## Layout
 
 - `server/` — the backend. Flat files, each a deep module with a deliberate export surface;
   `index.ts` is the composition root + route table, `vaults.ts` the vault registry it routes through.
-  Forward-only layering (`bun run lint:docs`): `vault db http sse` → `settings watch ai-edits` →
-  `trash ai-endpoint` → `git terminal` → `ai docs` → `vaults` → `index`.
-- `app/` — the frontend. ES modules served as-is, plus one React island the server bundles at boot:
-  `block-editor.tsx`, the BlockNote editor (Edit) over `markdown-source.ts`, a byte-preserving MDAST
-  adapter (ADR 0037). Leaf modules (`state ui api armor entropy dialogs crypto-worker history
-  markdown-source`) never import feature modules; `history` reaches editor.js/tree.js through injected
-  callbacks (ADR 0014). `webmcp.js` wraps every UI operation as a WebMCP tool (ADR 0031). `icons/` is
+  Forward-only layering (`bun run lint:docs`): `search-match` → `vault db http sse` → `settings watch
+  ai-edits frontend` → `trash ai-endpoint` → `git terminal` → `ai docs` → `vaults` → `index`.
+- `app/` — the frontend, bundled by `scripts/build.ts` into `dist/`; the server loads it, or builds in
+  memory without `ZNOTES_DIST` (ADR 0040). One React island, `block-editor.tsx`, the BlockNote editor
+  (Edit) over `markdown-source.ts`, a byte-preserving MDAST adapter (ADR 0037). Offline: `sw.js`, the
+  replica and outbox (ADR 0041). Leaf modules (`state ui api replica armor entropy dialogs crypto-worker
+  history markdown-source`) never import feature modules; `history` reaches editor.js/tree.js through
+  injected callbacks (ADR 0014). `webmcp.js` wraps every UI operation as a WebMCP tool (ADR 0031). `icons/` is
   COMMITTED generator output (ADR 0007).
 - `docs/` — the knowledge base; [API](docs/specs/done/0002-http-api-v0.md) is normative, [product](docs/specs/done/0001-z-notes-v1.md) the product spec.
 - `tests/` — black-box by default (real server, real Chromium); `helpers.ts` +
   `browser.ts` are the harness, `mock-upstream.ts` fakes the AI endpoint. `bun run
-  gates` = five acceptance suites plus `mermaid-e2e`: a fence is untrusted input
-  (ADR 0010) and its hardening must not regress quietly.
+  gates` = five acceptance suites plus `mermaid-e2e` and `offline-e2e`: a fence is untrusted input
+  (ADR 0010) and its hardening must not regress quietly; an offline edit must never be lost.
 - `deploy/` — Dockerfile + k3s manifests; `deploy/README.md` is the runbook.
 - `.agents/skills/` — canonical repo-specific skills, symlinked from `.claude/skills/`; `spec implement clean-code` are the shared global skills.
   `CONTEXT.md` is domain language only; `docs/` is design only; `scripts/lint-docs.ts` enforces the shape.
@@ -29,9 +31,10 @@ no-build frontend, JSON/SSE API, client-side (age) secrets, git sync, AI edit re
 ## Commands
 
 ```sh
-bun run dev          # bun --hot server/index.ts on :4700
+bun run dev          # ZNOTES_DEV=1 bun --hot server/index.ts on :4700; rebuilds the frontend in memory on edit
+bun run build        # scripts/build.ts → dist/ (the image runs it; the server loads it via ZNOTES_DIST)
 bun test [tests/X.test.ts]  # full suite ~5 min (--parallel=4, servers + Chromium); one file while iterating
-bun run gates        # the 6 acceptance gates (~70 s) — run before every commit
+bun run gates        # the 7 acceptance gates — run before every commit
 bun run lint:docs    # docs/link/layering/spec-template enforcement (CI runs it)
 ```
 
@@ -72,8 +75,9 @@ repo-owned `clean-code` skill before any `git commit`, then runs `bun run gates`
   `age-encryption` — `tests/secrets.test.ts` enforces it.
 - The AI relay has no route to rename/delete (`tests/fileops.test.ts` greps all three `ai*.ts`); one
   deploy replica, ever (sqlite + fs.watch + git working tree; `deploy/k3s/20-deployment.yaml`).
-- Runtime deps are exactly pinned: `age-encryption` plus the BlockNote/React/MDAST editor set (ADR 0037),
-  bundled by the server at boot — no separate build command. Any further dependency is an ADR.
+- Dependencies are exactly pinned: `age-encryption` plus the BlockNote/React/MDAST editor set (ADR 0037),
+  build inputs only (ADR 0040) — the runtime image has no `node_modules`, so `server/` imports no npm
+  package. Any further dependency is an ADR.
 - Source-text tests (`docs/style.md` gotchas) fail on incidental reformatting of `server/ai*.ts`,
   crypto imports and theme CSS. `tests/api.test.ts` holds NUL bytes: grep skips it silently.
 - `bun run lint:docs` enforces: this file ≤100 lines, resolving links, server layering, spec templates.

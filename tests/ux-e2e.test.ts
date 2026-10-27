@@ -463,14 +463,18 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
   const docsInTree = () =>
     page.evaluate(() => [...document.querySelectorAll("#tree .row.file")].map((r) => (r as HTMLElement).dataset.doc));
   const confirmUp = () => page.evaluate(() => document.getElementById("cfVeil")!.classList.contains("show"));
-  const prompt = () =>
-    page.evaluate(() => ({
+  /** the dialog the chord opened — waited for (a timeout fails the test), since
+      the handler is async and #cfTitle's markup default ("Delete") reads like an answer */
+  const prompt = async () => {
+    await page.waitForFunction(() => document.getElementById("cfVeil")!.classList.contains("show"), { timeout: 8000 });
+    return page.evaluate(() => ({
       title: document.getElementById("cfTitle")!.textContent,
       path: document.getElementById("cfPath")!.textContent,
       ok: document.getElementById("cfOkTxt")!.textContent,
       danger: document.getElementById("cfOk")!.classList.contains("danger"),
       body: document.getElementById("cfBody")!.textContent,
     }));
+  };
 
   /** ⌘Z / ⌘⇧Z with focus deliberately OUTSIDE any text surface. */
   async function fileZ(redo = false) {
@@ -652,7 +656,10 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
     await page.waitForFunction((m) => !!document.querySelector(`#tree .row.file[data-doc="${m}"]`), { timeout: 8000 }, made);
     /* the row appears on the SSE re-render, the create lands on the timeline
        a beat later — wait for the entry, not the row */
-    await page.waitForFunction(async () => !!(await import("/history.js")).pendingHistory(false), { timeout: 8000 });
+    await page.waitForFunction(async () => !!(await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src)).pendingHistory(false), { timeout: 8000 });
+    /* …and for the new doc to finish opening: its editor takes focus when it
+       does, and a chord sent before that lands in the editor's own history */
+    await app.settled(made);
 
     await fileZ();
     const p = await prompt();
@@ -985,7 +992,7 @@ describe("ux — one undo timeline across documents and file operations", () => 
   const at = () => page.evaluate(() => document.getElementById("stPath")!.textContent);
   const buffer = () =>
     page.evaluate(async () => {
-      const { state } = await import("/state.js");
+      const { state } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
       return state.docs.get(state.active)?.markdown ?? "(no doc)";
     });
   const inTree = (t: string) => page.evaluate((x) => !!document.querySelector(`#tree .row.file[data-doc="${x}"]`), t);

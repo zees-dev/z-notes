@@ -61,7 +61,7 @@ async function endOfFirst(type = "paragraph") {
 }
 async function currentMarkdown() {
   return page.evaluate(async () => {
-    const { state } = await import("/state.js");
+    const { state } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
     return state.docs.get(state.active).markdown;
   });
 }
@@ -219,7 +219,7 @@ test("a protected block edits in place: Done replaces only its bytes and keeps e
   expect(readVaultText(srv.vault, path)).toBe(original.replace("title: Original", "title: Changed"));
   // An agent write over an open draft keeps the draft as its own undo step.
   await draft("Changed", "Agent");
-  await page.evaluate(async p => { await (await import("/editor.js")).replaceDocText(p, "agent\n"); }, path);
+  await page.evaluate(async p => { await (await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src)).replaceDocText(p, "agent\n"); }, path);
   await pressChord(page, "KeyZ");
   await waitUntil(async () => await currentMarkdown() === original.replace("title: Original", "title: Agent"), { label: "the draft kept under the agent write" });
 }, 40000);
@@ -245,7 +245,7 @@ test("leaving saves an open protected-block draft, which survives an external wr
   /* With the guard off, the automatic save carries the draft too. */
   expect((await srv.api("PUT", "/api/settings", { editor: { confirmBeforeExit: false } })).status).toBe(200);
   try {
-    await waitUntil(() => page.evaluate(async () => (await import("/state.js")).state.settings.editor.confirmBeforeExit === false), { label: "guard off" });
+    await waitUntil(() => page.evaluate(async () => (await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src)).state.settings.editor.confirmBeforeExit === false), { label: "guard off" });
     await draft(" unasked");
     await page.click('#tree [data-doc="other.md"]');
     await app.settled("other.md");
@@ -535,12 +535,11 @@ test("editing during an in-flight save keeps the newer visual input dirty", asyn
 
 test("a failed editor bundle says so, offers a working Reload and leaves nothing editable", async () => {
   await page.setRequestInterception(true);
-  /* The shell names the HASHED entry and preloads it (ADR 0038); the
-     `/vendor/editor.js` alias is only the fallback. Block both spellings, or
-     this stops simulating a failed island load and starts passing for free. */
+  /* The shell names the HASHED island entry and preloads it (ADR 0040);
+     every request for it fails, the preload and the import alike. */
   page.on("request", request => {
     const path = new URL(request.url()).pathname;
-    if (/^\/vendor\/editor(?:\.js|\/editor\.[^/]+\.js)$/.test(path)) void request.abort("failed");
+    if (/^\/assets\/block-editor\.[^/]+\.js$/.test(path)) void request.abort("failed");
     else void request.continue();
   });
   await writeDoc("Unreachable prose\n");

@@ -6,20 +6,26 @@ code disagree, the code is right — fix this file in the same change.
 
 ## Runtime topology
 
-One Bun process (`server/index.ts`). It serves `app/` as plain files, the JSON
-API under `/api/*`, the SSE bus at `/events`, and two in-memory `Bun.build`
-bundles: `age-encryption` at `/vendor/age.<hash>.js` (entry:
-`server/age-entry.js`) and the editor island at `/vendor/editor/*` (entry:
-`app/block-editor.tsx`, aliased as `/vendor/editor.js` + `.css`; ADR 0037). Every
-textual asset is brotli/gzip-compressed once — at boot for the bundles, on first
-request for `app/` — and negotiated by `Accept-Encoding` with a per-coding ETag;
-content-addressed URLs are cached for a month, everything else revalidates
-(ADR 0038). State lives in the vault directory (`$ZNOTES_VAULT`):
+One Bun process (`server/index.ts`). It serves the built frontend, the JSON
+API under `/api/*` and the SSE bus at `/events`. The frontend is one `Bun.build`
+of `app/` (ADR 0040): `scripts/build.ts` writes a content-hashed `dist/` at image
+build and the server loads it at boot (`ZNOTES_DIST`); without that variable
+(dev, tests) `server/frontend.ts` runs the same build in memory. Either way
+`serveFrontend` answers the exact keys of that build: the shell, hashed
+`/assets/*` (the boot entry, the BlockNote island, the crypto worker and their
+chunks), `/sw.js` and the static files. Every textual asset is brotli/gzip-coded
+once — at image build, or at boot in memory — and negotiated by
+`Accept-Encoding` with a per-coding ETag; content-addressed URLs are cached for a
+month, everything else revalidates (ADR 0038). The app registers a service worker
+and keeps an IndexedDB replica only on the canonical origin, `ZNOTES_ORIGIN`
+(ADRs 0041, 0042); `ZNOTES_SW=off` is the kill switch (default off under
+`ZNOTES_DEV=1`, which also rebuilds in memory on an `app/` edit). State lives in the vault directory (`$ZNOTES_VAULT`):
 visible, extension-bearing UTF-8 files (source of truth; ADR 0019),
 `.znotes/settings.toml` (committed),
 `.znotes/index.db` (sqlite cache + credentials, never committed),
 `.znotes/identity.age` + `vault.pub` (committed keyring). Production is one k3s
-replica behind a private-CA TLS ingress (`deploy/`); the replica count is a
+replica behind the Tailscale ingress (canonical) and a private-CA Traefik
+ingress (LAN break-glass) (`deploy/`); the replica count is a
 correctness constraint, not a cost choice — see `deploy/k3s/20-deployment.yaml`.
 
 There may be more than one vault (ADR 0018). `$ZNOTES_VAULT` is the **primary**
@@ -57,10 +63,12 @@ new module must be added there (and here) to compile through CI.
 
 | Layer | Module | Owns | Interface (import surface) |
 |---|---|---|---|
+| −1 | `search-match.ts` | the pure search and redaction rules — fuzzy and regex matching of one doc, `redact`, `isAgeOpen`. **No imports, no Bun or node APIs: the browser bundle imports it too** (offline search, ADR 0041) | `matchDoc`, `parseSearch`, `fuzzy`, `fuzzyOn`, `redact`, `isAgeOpen`, `closesFence` |
 | 0 | `vault.ts` | pure text/link/path facts + the `Vault` class (all disk I/O, bound to one root) + keyring | pure fns, `Vault`, armor constants |
-| 0 | `db.ts` | sqlite `Index` + corruption recovery + fuzzy search | `Index`, `fuzzy`, per-consumer slices `WatchIndex` / `AiIndex` / `TerminalIndex` |
+| 0 | `db.ts` | sqlite `Index` + corruption recovery + search (FTS path, line cache, deadline; matching itself is `search-match.ts`) | `Index`, per-consumer slices `WatchIndex` / `AiIndex` / `TerminalIndex` |
 | 0 | `http.ts` | JSON response shapes, body reading, the 8 MiB cap | `json`, `fail`, `readJsonBody`, sentinels |
 | 0 | `sse.ts` | the entire SSE wire format (encode, split, parse, response envelope) | `sseResponse`, `sseFrame`, `sseBlocks`, `parseSseFrame`, `SSE_HEADERS` |
+| 1 | `frontend.ts` | the frontend as served: the build (`Bun.build` in memory, or `dist/` loaded), the shell splice at `<!-- znotes:head -->`, the URL space, cache policy and content-coding negotiation (ADRs 0038, 0040) | `buildFrontend`, `loadFrontend`, `serveFrontend`, `FrontendBuild` |
 | 1 | `settings.ts` | settings.toml load/heal/save, ALL credentials (incl. terminal password crypto), PUT/GET fan-out behind `wire()` | `Settings`, `SettingsError`, `DEFAULTS`/`META` tables |
 | 1 | `watch.ts` | fs.watch doorbell → debounced full reconcile; the reconcile lock | `Reconciler` |
 | 1 | `ai-edits.ts` | the pure edit engine: anchors, `propose_edits` parse/validate/apply, diffs | `parseEdits`, `applyEditToText`, `buildDiff`, `findAnchor` |
@@ -71,7 +79,7 @@ new module must be added there (and here) to compile through CI.
 | 4 | `ai.ts` | turn orchestration, context assembly + leak guard, the two wire dialects, proposal stack | `AI` (single export) |
 | 4 | `docs.ts` | every doc/folder/trash transaction: create, CAS-write, move + backlink rewrite + rollback, delete/restore/purge/sweep, commit | `DocStore`, `isDocPath` |
 | 5 | `vaults.ts` | the vault registry: one stack per vault, the boot scan of the vaults home, add/remove, `@id/` qualification (ADR 0018) | `VaultRegistry`, `VaultStack`, `validVaultId`, `qualify` |
-| 6 | `index.ts` | composition root: wiring, route table, `/events` bus, vendor bundle, static serving, boot/shutdown | none (entrypoint) |
+| 6 | `index.ts` | composition root: wiring, route table, `/events` bus, frontend load/rebuild, API compression, boot/shutdown | none (entrypoint) |
 
 Dependency-injection convention: modules take **narrow structural deps**
 (`Pick<Settings, …>`, the `db.ts` slices, callback fields) — never a concrete
@@ -79,17 +87,20 @@ class they don't fully use. `GitSyncDeps` is the original model.
 
 ## Frontend modules
 
-ES modules served as-is, plus one React island the server bundles at boot
-(ADR 0037). Two tiers, enforced by lint:
+ES modules in `app/`, bundled by `scripts/build.ts` into `dist/` (ADR 0040) — the
+boot entry (`boot.js`), the React island and the crypto worker are the three
+entries. Two tiers, enforced by lint:
 
 - **Leaves** — `state.js` (the one shared-state object), `ui.js` (DOM helpers,
-  icons), `api.js` (the only file that opens a socket), `dialogs.js` (all
+  icons), `api.js` (the only file that opens a socket), `replica.js` (the
+  IndexedDB replica and outbox; imports nothing), `dialogs.js` (all
   modals; feature callbacks injected via `wireDialogs()` from `app.js`),
   `armor.js`, `entropy.js`, `crypto-worker.js` (the plaintext jail),
   `markdown-source.ts` (the source adapter). Leaves import only leaves.
 - **The island** — `block-editor.tsx`: the BlockNote editor (Edit), React,
-  TypeScript, bundled by `server/index.ts` at boot and loaded lazily by
-  `editor.js` from `/vendor/editor.js`; a load that fails leaves a Reload note
+  TypeScript, built as a lazily imported chunk graph and loaded by
+  `editor.js` from the URL `#znotes-assets` names (`warmEditor()` starts it
+  before the tree loads); a load that fails leaves a Reload note
   and nothing editable. It imports npm packages and `markdown-source.ts` only;
   `mountEditor(host, options)` takes callbacks (`onChange`, `onSourceEdit`,
   `onNewSecret`, `renderSecret`, `copyText`, `resolveWikiLink`, `onWikiLink`,
@@ -118,12 +129,22 @@ ES modules served as-is, plus one React island the server bundles at boot
   Outdent, Indent, and a ⋯ position calibration), docked on
   `--visual-bottom`, the visible viewport's bottom edge that
   `wireVisualViewport` publishes beside `--kb`.
-- **Static, not modules** — `index.html`, `themes/*.css`, `manifest.json`
-  and `icons/*.png`. The icons are GENERATOR output run by hand and committed
-  (`scripts/make-icons.ts`, ADR 0007), never a build step. `/vendor/` is the
-  one URL prefix answered from memory: `age.<hash>.js` and `editor/*` are
-  built at boot and have no file; anything else under it would be an ordinary
-  file in `app/vendor/` (there is none today).
+- **Boot and release** — `boot.js` is the entry the shell loads: it imports
+  `app.js`, awaits `start()`, swaps the boot screen for the app, then (only when
+  the shell says the service worker is on and the page is on the canonical
+  origin) registers `/sw.js` and wires the "A new version is ready" prompt.
+  `sw.js` is a second, stable-named build entry: plain JS, no imports, with the
+  build id and precache list defined in at build time; it caches the release and
+  never touches `/api`, `/events` or `/healthz` (ADR 0041).
+  `mermaid-lazy.ts` stands in for every `mermaid` import but its own, so the
+  library loads on a doc's first diagram and the hardened config (ADR 0010)
+  still reaches it.
+- **Static, copied** — `index.html` (the template: it carries the
+  `<!-- znotes:head -->` marker the build splices), `themes/*.css`,
+  `manifest.json` and `icons/*.png`, served at stable URLs with content-hash
+  ETags. The icons are GENERATOR output run by hand and committed
+  (`scripts/make-icons.ts`, ADR 0007). There is no `/vendor/` and no per-file
+  `app/*.js` URL.
 
 **Where the frontend's state lives.** `state.js` holds all of it. Two entries
 are VIEW choices the server has no opinion about, so each is mirrored per
@@ -136,6 +157,39 @@ about the folder), prunes to the tree that just loaded, and treats an
 unreadable store as no memory rather than an error. The island keeps one
 value of its own, `znotes.toolbarOffset` — the phone toolbar's calibrated
 offset in px, written by its ⋯ controls, clamped on read, and never synced.
+
+**The replica and the outbox** are the third kind of frontend state: data the
+server owns, copied to the device (ADR 0041). `replica.js` owns the IndexedDB
+database `znotes` — `docs` (every doc's markdown and rev), `meta` (the last tree
+and its `epoch`, settings, each vault's keyring, a `complete` flag) and `outbox`
+(one entry per doc: the bytes of a save the server has not acknowledged, its
+base rev, whether it creates the doc, and why it is blocked, if it is). Only
+`api.js` talks to it: reads write through and fall back to it when a request
+fails for lack of a network; `putDoc` and `createEntry` enqueue before they send.
+The outbox is the one place unsent text lives besides the open buffer, so the
+kill switch never clears IndexedDB. It is per origin and exists only on the
+canonical origin (ADR 0042); elsewhere every function is a no-op.
+
+**The boot sequence** (`boot.js` → `app.js start()`; ADR 0040):
+
+1. The shell loads with `modulepreload` for the boot entry's static chunks, so the
+   bundle is one request, not twenty. The island's entry is preloaded; its chunk
+   closure is not (that delayed first paint).
+2. `boot.js` sets the boot message and calls `start()`.
+3. Before its first await, `start()` calls `warmEditor()` (the island import
+   starts), and, if the URL names a doc, `ensureLoaded` for it.
+4. It awaits `Promise.all([getSettings(), loadTree()])` — the only reads on the
+   path to an editable doc.
+5. `loadSession()`, the sync status and `loadProposals()` start without being
+   awaited; each catches its own failure and its chip paints when it answers.
+6. The rest of `start()` runs in its old order: the doc opens, routing, the shell
+   listeners, `registerWebMcpTools()` last.
+7. `boot.js` swaps the boot screen for the app. Only then, on the canonical origin
+   with the service worker on, it registers `/sw.js`.
+8. When online, `refreshReplica()` fills the replica in idle slices (it does
+   nothing when the stored `epoch` equals `hello`'s and `complete` is set), and
+   the replay of any outbox entries runs on `hello`, after a gap and on the
+   window's `online` event.
 
 **The look, resolved before the first paint.** Four axes are cached in
 `localStorage` and applied by the inline script at the top of `app/index.html`,

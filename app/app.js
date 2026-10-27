@@ -21,11 +21,11 @@ import { pendingHistory, stepHistory, wireHistory } from "./history.js";
 import { LONGPRESS_MS, applyFileHistory, closeCtx, createFromLink, ctxKeys, ctxOpen, ctxTarget, loadTree, openCtx, openCtxFrom, startCreate } from "./tree.js";
 import { closeConfirm, confirmOk, conflictDiscardOrphan, conflictKeepMine, conflictRecreate, conflictTakeDisk, wireDialogs } from "./dialogs.js";
 import { refreshTrash, toggleTrash } from "./trash.js";
-import { applyTextHistory, autoGrow, closeExitGuard, exitGuardDiscard, exitGuardSave, openDoc, saveDoc, startHeaderRename, renderDoc, setBaseline, setSaveIndicator, visualCanStep } from "./editor.js";
+import { applyTextHistory, autoGrow, closeExitGuard, ensureLoaded, exitGuardDiscard, exitGuardSave, openDoc, saveDoc, startHeaderRename, renderDoc, setBaseline, setSaveIndicator, visualCanStep, warmEditor } from "./editor.js";
 import { changeVaultPassphrase, closePP, doPassphraseOk, initSecrets, keyHint, lockVault, newSecret, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, palSetMode, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
-import { CLOSERS, VEILS, app, bootDoc, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
+import { CLOSERS, VEILS, app, bootDoc, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, recountBlocked, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
 import { initZoom } from "./zoom.js";
 import { registerWebMcpTools } from "./webmcp.js";
@@ -855,7 +855,7 @@ function wire() {
    BOOT
    ============================================================ */
 export async function start() {
-  wireDialogs({ refreshTree: loadTree, renderDoc, saveDoc, setBaseline, setSaveIndicator, app, openFirstDoc });
+  wireDialogs({ refreshTree: loadTree, renderDoc, saveDoc, setBaseline, setSaveIndicator, app, openFirstDoc, recountBlocked });
   /* ONE TIMELINE, TWO HALVES. history.js is a leaf and holds only the stacks;
      which module knows how to put a document back and which knows how to put a
      FILE back is decided here, the same way the dialogs get their callbacks.
@@ -868,9 +868,20 @@ export async function start() {
      with no way to change the text size at all. It needs nothing the server
      says: `localStorage` and `#scroll`, both of which are here already. */
   initZoom();
-  /* settings first: they decide the theme, and a wrong theme flashing is worse
-     than 40ms of a blank shell */
-  const s = await api.getSettings();
+  /* Everything the editing path needs goes out in ONE round trip, not a chain:
+     the island starts fetching and evaluating, a deep-linked doc is read
+     (ensureLoaded de-dups the read openDoc makes for it below), and the tree
+     travels beside the settings, which decide the theme. */
+  warmEditor();
+  const early = urlDoc();
+  if (early) ensureLoaded(early).catch(() => {});
+  /* …and nothing on that path waits for the assistant, the proposals or the
+     sync status: each paints its chip when it answers, and a slow or failing
+     one costs its chip, never the boot. */
+  const quiet = (what) => (err) => console.warn(`[z-notes] ${what} unavailable at boot`, err);
+  const chat = [loadSession(), loadProposals()].map((p) => p.catch(quiet("assistant")));
+  api.getSyncStatus().then(paintSync).catch(quiet("sync status"));
+  const [s] = await Promise.all([api.getSettings(), loadTree()]);
   state.settings = s.settings;
   state.meta = s.meta;
   paintSettings();
@@ -892,9 +903,6 @@ export async function start() {
   /* remember the pin, so a settings-changed from another device cannot stamp
      the stored value over an axis THIS URL asked for (see `urlPinnedLook`) */
   pinLookFromUrl([themeOk ? "theme" : null, schemeOk ? "colorScheme" : null].filter(Boolean));
-
-  const [, , sync] = await Promise.all([loadTree(), loadSession(), api.getSyncStatus(), loadProposals()]);
-  paintSync(sync);
 
   /* A deep link or a reload names the doc to open; a bare `/` names none.
      `bootDoc` answers both against the tree we just loaded (ADR 0035) — an
@@ -919,6 +927,7 @@ export async function start() {
      handed us is this page's entry, and one address must not become two. */
   if (wantSettings) showSettings(wantSettings.section, { replace: true });
   renderChat();
+  for (const p of chat) p.then(() => renderChat());
 
   /* the remembered assistant state, and the width rules that override it */
   initChatOpen();

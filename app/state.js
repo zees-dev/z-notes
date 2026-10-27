@@ -60,6 +60,7 @@ export const state = {
   reveal: new Map(),
   sync: null,
   conn: "connecting",
+  offline: false, // the last request found no network (api.offline) — not navigator.onLine
   aiStatus: null, // last `meta.ai.status` / `ai-status` seen — see paintAiStatus
   creating: null,
   renaming: null, // { path, kind } — the tree row currently being edited in place

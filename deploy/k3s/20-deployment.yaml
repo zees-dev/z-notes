@@ -106,8 +106,8 @@ spec:
             capabilities:
               drop: ["ALL"]
             # Nothing writes to the image filesystem: server/index.ts only ever
-            # writes under the vaults home, and the /vendor/age.js bundle is built
-            # by Bun.build into MEMORY at boot and never hits disk. /tmp is an
+            # writes under the vaults home, and the frontend is read from the
+            # image's dist/ (ZNOTES_DIST), never written. /tmp is an
             # emptyDir below for anything in bun or git that wants scratch.
             readOnlyRootFilesystem: true
 
@@ -136,6 +136,23 @@ spec:
               value: /vaults
             - name: ZNOTES_PORT
               value: "4700"
+            # The CANONICAL origin (ADR 0042): the one place the service worker
+            # and the offline replica run. Any other origin that reaches the
+            # app — the znotes.k3s.lan break-glass — works online and shows a
+            # notice pointing here. Must match 60-tailscale-ingress.yaml and
+            # the redirect in 50-ingress.yaml.
+            - name: ZNOTES_ORIGIN
+              value: https://znotes.tailb95e62.ts.net
+            # The built frontend (ADR 0040), baked into the image by
+            # deploy/Dockerfile and loaded at boot. Unset, the server would
+            # bundle in memory instead — and the image has no node_modules.
+            - name: ZNOTES_DIST
+              value: /app/dist
+            # KILL SWITCH for a broken service worker: set ZNOTES_SW to "off"
+            # and redeploy. /sw.js becomes a worker that removes itself and
+            # its caches (never the replica's IndexedDB). deploy/README.md.
+            # - name: ZNOTES_SW
+            #   value: "off"
             # git 2.35.2+ refuses to operate on a repo whose owning UID differs
             # from the caller's ("detected dubious ownership"). fsGroup fixes
             # the GROUP of the PVC but leaves the UID as whatever created it, so
@@ -213,7 +230,7 @@ spec:
           # disk, no sqlite and no git (see the route comment in server/index.ts) ----
 
           # Bun.serve is only called AFTER the boot-time full reconcile, the
-          # vendor bundle build and the first git observation have awaited — so
+          # frontend load and the first git observation have awaited — so
           # the port does not open until the index is warm, and a connection
           # refused here means "still indexing", not "broken". Boot also scans
           # the vaults home and stands up a stack per vault it finds, so the
@@ -254,8 +271,9 @@ spec:
           #
           # requests are what the scheduler reserves and what the pod is
           # guaranteed. Steady state for this process is a Bun runtime (~40-70MB
-          # RSS), a sqlite index and page cache PER VAULT, and the in-memory
-          # /vendor/age.js bundle — comfortably inside 192Mi, and near-zero CPU
+          # RSS), a sqlite index and page cache PER VAULT, and the loaded
+          # dist/ (assets held in memory, precompressed) — comfortably inside
+          # 192Mi, and near-zero CPU
           # while nobody is typing. Vaults cost linearly (ADR 0018): one sqlite
           # connection, one recursive watcher and one working tree each. A
           # handful is what these numbers cover; a dozen large ones is a reason
@@ -266,10 +284,10 @@ spec:
           # which is roughly twice this entire request. Dropping it for a
           # character estimate is what made the number above honest again.
           #
-          # limits cover the two genuine spikes: the boot-time Bun.build of the
-          # age bundle, and a full Glob+stat+hash reconcile — which at boot runs
-          # once per vault. 1 CPU lets each finish fast instead of being
-          # throttled into a probe timeout.
+          # limits cover the genuine spike: a full Glob+stat+hash reconcile —
+          # which at boot runs once per vault. 1 CPU lets it finish fast instead
+          # of being throttled into a probe timeout. (The frontend build is not
+          # a spike here any more: it ran in the image build, ADR 0040.)
           #
           # The memory limit is the load-bearing one: without it a runaway
           # reconcile evicts other workloads on a single-node k3s box. With it,

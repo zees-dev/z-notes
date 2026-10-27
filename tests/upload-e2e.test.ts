@@ -81,6 +81,14 @@ const rowClasses = (sel: string) =>
   page.evaluate((s) => [...document.querySelector(s as string)!.classList], sel);
 
 const toastText = () => page.evaluate(() => document.getElementById("toastTxt")!.textContent ?? "");
+/** The toast an upload ends with. The new row can be drawn (by the stream) before
+    the upload loop gets to its toast, so wait for the toast, not the row. */
+const uploadToast = async (names: string) => {
+  await page
+    .waitForFunction((n) => document.getElementById("toastTxt")!.textContent!.includes(n as string), { timeout: 10000 }, names)
+    .catch(() => {});
+  return toastText();
+};
 
 /**
  * Hand the row a drag carrying `files`, one event at a time.
@@ -157,7 +165,7 @@ describe("dropping a file on the tree uploads it", () => {
     const onDisk = readFileSync(join(srv.vault, FOLDER, "note.md"));
     expect(`bytes on disk: ${JSON.stringify(onDisk.toString("utf8"))}`).toBe(`bytes on disk: ${JSON.stringify(BYTES)}`);
 
-    expect(`the toast said where it went: ${await toastText()}`).toBe(
+    expect(`the toast said where it went: ${await uploadToast("to projects")}`).toBe(
       "the toast said where it went: Uploaded 1 file to projects"
     );
   }, 90000);
@@ -172,7 +180,7 @@ describe("dropping a file on the tree uploads it", () => {
     await dragEvent(VAULT_ROW, "drop");
     await page.waitForSelector(DOC_ROW("ok.md"), { timeout: 10000 });
 
-    const toast = await toastText();
+    const toast = await uploadToast("photo.png");
     expect(`one file landed: ${toast.includes("Uploaded 1 file")}`).toBe("one file landed: true");
     expect(`the extension refusal names the file: ${toast.includes("photo.png")}`).toBe(
       "the extension refusal names the file: true"
@@ -198,7 +206,7 @@ describe("dropping a file on the tree uploads it", () => {
     await cdpDrop(VAULT_ROW, [join(scratch, "beside.md"), join(scratch, "notes.md")]);
     await page.waitForSelector(DOC_ROW("beside.md"), { timeout: 10000 });
 
-    const toast = await toastText();
+    const toast = await uploadToast("notes.md:");
     expect(`the file beside it landed: ${toast.includes("Uploaded 1 file")}`).toBe("the file beside it landed: true");
     expect(`and the folder got the folder's reason: ${toast.includes("notes.md: folders cannot be uploaded")}`).toBe(
       "and the folder got the folder's reason: true"

@@ -16,6 +16,10 @@ uses to say facts, not in the bar it uses to hold controls.
 Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: the
 statusbar has no mode chip.
 
+Amended by [0041](0041-the-app-works-offline.md), 2026-10-28: the pip has a
+third state, "Saved on this device" — written to the replica's outbox and not
+yet acknowledged by the server.
+
 ## Context
 
 The topbar carried three things for one idea:

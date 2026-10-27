@@ -126,7 +126,9 @@ function indexTree(nodes, seen, bySlug, folders) {
       else bySlug.set(slug, [n.path]);
       const prev = state.docs.get(n.path);
       // The doc OBJECT must survive a tree reload: editor callbacks and in-flight saves hold it.
-      state.docs.set(n.path, Object.assign(prev || { markdown: "", rev: null, loaded: false }, n));
+      // Its `rev` is the loaded buffer's base, so the tree's (possibly newer) `rev` never overwrites it.
+      const { rev: _treeRev, ...meta } = n;
+      state.docs.set(n.path, Object.assign(prev || { markdown: "", rev: null, loaded: false }, meta));
     }
   });
 }
@@ -1723,6 +1725,8 @@ export async function doDelete(path, kind, opts) {
     apiFail(err, "Could not delete " + path);
     return false;
   }
+  /* bytes held for a doc that is gone would refuse a later create at its path */
+  if (kind === "doc") await api.clearOutboxEntry(path);
   /* The doc's earlier TEXT entries stay on the timeline, deliberately. They
      are older than this delete, so ⌘Z always reaches the delete first and the
      file is back before any of them is applied — and dropping them is what

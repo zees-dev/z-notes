@@ -16,9 +16,8 @@
      4. The server has NO plaintext surface at all: no endpoint accepts a
         passphrase or a plaintext, the retired mock `POST /api/secrets/unlock`
         is gone, and no backend module imports the crypto library.
-     5. `/vendor/age.js` — typage bundled server-side at startup — is served
-        with an ETag and immutable caching (no build step, no committed
-        artifact).
+     5. typage reaches the browser only inside the crypto worker's own chunk
+        graph, served with an ETag and immutable caching.
 
    COST BUDGET: scrypt at logN=18 is ~0.5–1 s per run by design. This file
    performs EXACTLY THREE scrypt operations (wrap once in beforeAll; unwrap
@@ -582,22 +581,14 @@ describe("secrets — the server has no plaintext surface", () => {
       const imports =
         /\bfrom\s*["']age-encryption["']/.test(src) ||
         /\brequire\(\s*["']age-encryption["']\s*\)/.test(src) ||
-        /\bimport\(\s*["']age-encryption["']\s*\)/.test(src) ||
-        /* …and the SAME LIBRARY under its local name. `server/age-entry.js` is
-           deliberately exempt from this scan (it is the bundler's entry, never
-           imported), but that exemption is only sound while nothing imports
-           IT: `import * as age from "./age-entry.js"` would pull typage into
-           the backend graph while matching none of the specifiers above, and
-           the structural guarantee would be gone with the test still green. */
-        /\bfrom\s*["'][^"']*age-entry/.test(src) ||
-        /\brequire\(\s*["'][^"']*age-entry/.test(src) ||
-        /\bimport\(\s*["'][^"']*age-entry/.test(src);
+        /\bimport\(\s*["']age-encryption["']\s*\)/.test(src);
       const decrypts = /\bnew\s+Decrypter\b/.test(src) || /\.addPassphrase\s*\(/.test(src) || /\.addIdentity\s*\(/.test(src);
       if (imports || decrypts) offenders.push(f);
     }
-    /* Bundling typage for /vendor/age.js goes through a tiny entry file (server/age-entry.js)
-       fed to Bun.build — the backend's own module graph must stay crypto-free,
-       which is what makes "the server never sees a passphrase" structural. */
+    /* The frontend build bundles typage from app/crypto-worker.js, which the
+       server hands to Bun.build as a path and never imports — the backend's
+       own module graph must stay crypto-free, which is what makes "the server
+       never sees a passphrase" structural. */
     expect(offenders).toEqual([]);
   });
 });
@@ -617,49 +608,53 @@ function vaultFiles(dir: string): Array<[string, string]> {
 }
 
 /* ============================================================
-   5. /vendor/age.js — typage bundled at startup, no build step
+   5. typage ships inside the crypto worker's chunk graph
    ============================================================ */
 
-describe("secrets — the typage bundle is served, cached and immutable", () => {
+describe("secrets — the typage bundle is the crypto worker's, cached and immutable", () => {
   let srv: TestServer;
+  /** url → body of the worker entry and every chunk it imports, statically or lazily */
+  const graph = new Map<string, string>();
 
   beforeAll(async () => {
     srv = await serverOn(tempVault());
+    const shell = (await srv.get("/")).text;
+    const worker = JSON.parse(/<script type="application\/json" id="znotes-assets">([^<]+)<\/script>/.exec(shell)![1]).worker;
+    for (const queue = [worker]; queue.length; ) {
+      const url = queue.shift()!;
+      if (graph.has(url)) continue;
+      const r = await srv.get(url);
+      expect(`GET ${url} → ${r.status}`).toBe(`GET ${url} → 200`);
+      graph.set(url, r.text);
+      for (const m of r.text.matchAll(/["'](\/assets\/[^"']+\.js)["']/g)) queue.push(m[1]);
+    }
   }, 30000);
 
-  test("GET /vendor/age.js is a real JS module carrying the age v1 implementation", async () => {
-    const r = await srv.get("/vendor/age.js");
-    expect(`GET /vendor/age.js → ${r.status}`).toBe("GET /vendor/age.js → 200");
-    expect((r.headers.get("content-type") ?? "").toLowerCase()).toContain("javascript");
-    expect(r.text.length).toBeGreaterThan(10_000); // a stub or a 404 page would not be
+  test("the worker's chunk graph is real JS carrying the age v1 implementation", () => {
+    const code = [...graph.values()].join("\n");
+    expect(code.length).toBeGreaterThan(10_000); // a stub or a 404 page would not be
     /* the format string is load-bearing inside typage; a bundle that lost it is
        not the library */
-    expect(r.text.includes("age-encryption.org/v1")).toBe(true);
-    /* and the bundle is not a source map / directory listing */
-    expect(r.text.trimStart().startsWith("<")).toBe(false);
+    expect(code.includes("age-encryption.org/v1")).toBe(true);
+    for (const body of graph.values()) expect(body.trimStart().startsWith("<")).toBe(false);
   });
 
   test("it carries an ETag and immutable caching, and answers 304 to If-None-Match", async () => {
-    const first = await srv.get("/vendor/age.js");
+    const [url] = [...graph.keys()].filter((u) => graph.get(u)!.includes("age-encryption.org/v1"));
+    const first = await srv.get(url);
     const etag = first.headers.get("etag");
     expect(etag).toBeTruthy();
     expect((first.headers.get("cache-control") ?? "").toLowerCase()).toContain("immutable");
-
-    const again = await fetch(srv.url("/vendor/age.js"), { headers: { "if-none-match": String(etag) } });
+    const again = await fetch(srv.url(url), { headers: { "if-none-match": String(etag) } });
     expect(again.status).toBe(304);
     expect(await again.text()).toBe("");
-
-    /* the ETag is stable across requests — it is keyed to the lockfile, not to
-       the moment the response was built */
-    const third = await srv.get("/vendor/age.js");
-    expect(third.headers.get("etag")).toBe(etag);
   });
 
-  test("nothing in the bundle is vault-specific", async () => {
-    const r = await srv.get("/vendor/age.js");
-    expect(r.text.includes(identity)).toBe(false);
-    expect(r.text.includes(recipient)).toBe(false);
-    expect(r.text.includes(PASSPHRASE)).toBe(false);
+  test("nothing in the bundle is vault-specific", () => {
+    const code = [...graph.values()].join("\n");
+    expect(code.includes(identity)).toBe(false);
+    expect(code.includes(recipient)).toBe(false);
+    expect(code.includes(PASSPHRASE)).toBe(false);
   });
 });
 

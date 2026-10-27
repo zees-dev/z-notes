@@ -2,13 +2,14 @@
 
 ```
 browser (laptop / phone, on the tailnet)
-   │  https://znotes.k3s.lan   or   https://znotes.<tailnet>.ts.net
-   ▼
-Traefik (bundled with k3s) ── TLS from cert-manager's private CA
-   ▼
+   │  https://znotes.tailb95e62.ts.net  (canonical)   or   https://znotes.k3s.lan  (LAN break-glass)
+   ▼                                                        ▼
+Tailscale operator proxy ── Let's Encrypt cert     Traefik (bundled with k3s) ── cert-manager's private CA
+   └──────────────────────────────┬─────────────────────────┘
+                                  ▼
 Service znotes (ClusterIP :80)
    ▼
-Deployment znotes — ONE replica, bun server/index.ts, :4700
+Deployment znotes — ONE replica, bun server/index.ts, :4700, serving dist/ (ZNOTES_DIST)
    └── PVC znotes-vault mounted at /vaults        ← the vaults home: one dir per vault
         ├── vault/                                the PRIMARY — app state lives here
         │    ├── *.md                             the notes (source of truth)
@@ -47,13 +48,13 @@ armored and unlock is replaced by an explanatory badge.
 |---|---|
 | `Dockerfile` | production image. Build context is the **repo root**. |
 | `../.dockerignore` | at the repo root because that is where the builder looks. |
-| `k3s/00…50-*.yaml` | the deployment; apply with `kubectl apply -k deploy/k3s`. |
+| `k3s/00…60-*.yaml` | the deployment; apply with `kubectl apply -k deploy/k3s`. |
+| `k3s/60-tailscale-ingress.yaml` | the canonical address: Tailscale operator ingress — real cert, no trust step (ADR 0042). |
 | `k3s/alt-ingressroute.yaml` | Traefik CRD form of the Ingress. Either/or. |
-| `k3s/alt-tailscale-ingress.yaml` | Tailscale operator ingress — real cert, no trust step. |
 | `../scripts/check-single-volume.sh` | proves the image's volume contract against a real container: one mount at `/vaults`, a primary that creates itself, a second vault as a sibling directory, all of it surviving a container replacement. Needs a docker daemon. |
 
-Both `alt-*` files are excluded from `kustomization.yaml` on purpose; apply them
-by hand if you want them.
+`alt-ingressroute.yaml` is excluded from `kustomization.yaml` on purpose; apply it
+by hand if you want it.
 
 ---
 
@@ -71,17 +72,25 @@ is right for a Raspberry Pi node and wrong for an x86 box. Be explicit:
 docker buildx build --platform linux/arm64 -f deploy/Dockerfile -t z-notes:0.1.0 --load .
 ```
 
-There is **no frontend build step**, on purpose. `server/index.ts` serves `app/` as
-plain files (`APP_DIR = <repo>/app`), and the two things that need bundling — the
-`age-encryption` browser module and the BlockNote editing island — are bundled by
-the server itself at boot, in memory, at `/vendor/age.<hash>.js` and
-`/vendor/editor/editor.<hash>.{js,css}`. That is why their packages are runtime
-`dependencies` and node_modules ships in the image. Running
-`bun build ./app/index.html --outdir=dist` would emit a content-hashed tree at a
-path the server never reads. `--compile` is also avoided: it reports
-`import.meta.dir` as `/$bunfs/root`, which `server/index.ts` uses to locate `app/`,
-`vendor/` and `bun.lock`. (The vaults and their DBs are already immune — they
-come from `$ZNOTES_VAULTS_DIR`, i.e. the mount.)
+The image build **builds the frontend** (ADR 0040). In the `src` stage,
+`bun scripts/build.ts` runs one `Bun.build` over the boot entry, the BlockNote
+island and the crypto worker into a content-hashed `/src/dist`: hashed files
+under `/assets/`, brotli and gzip beside every textual one, the service worker,
+and a `build.json` manifest. The runtime stage copies `server/`, `dist/` and
+`package.json` — **no `node_modules`, no `app/`** — and sets
+`ZNOTES_DIST=/app/dist`, so the server loads the build at boot, bundles nothing
+and compresses only the small finished shell. A frontend that does not build fails the image build, not the
+deploy. The same stage then deletes `node_modules` and runs the module-graph
+check, which proves the server imports nothing from npm. The base image is
+`oven/bun:1.4.4-slim` throughout; bundler output can differ from the 1.4.0 a
+developer may have locally, and the image is the release build.
+
+Without `ZNOTES_DIST` (dev, tests) the server runs the same build in memory.
+`bun run build` writes `dist/` locally if you want to run the image's path
+without Docker: `bun run build && ZNOTES_DIST=./dist bun server/index.ts`.
+`--compile` is avoided: it reports `import.meta.dir` as `/$bunfs/root`, which
+`server/index.ts` uses to locate `app/`. (The vaults and their DBs are already
+immune — they come from `$ZNOTES_VAULTS_DIR`, i.e. the mount.)
 
 ## 2. Push it to the registry
 
@@ -145,9 +154,12 @@ node yourself:
 echo "<node-ip>  znotes.k3s.lan" | sudo tee -a /etc/hosts   # or a LAN DNS record
 ```
 
-If you also want the MagicDNS name on this certificate, uncomment the
-`znotes.<tailnet>.ts.net` entries in both files (`tailscale status` prints your
-tailnet name).
+This LAN name is the **break-glass** (section 7). The canonical address is the
+MagicDNS one, `https://znotes.tailb95e62.ts.net`, served by the Tailscale
+operator with its own certificate — it does not use this hostname, this
+certificate or these two files. If you move to another tailnet, change the name
+in `k3s/60-tailscale-ingress.yaml`, `ZNOTES_ORIGIN` in `20-deployment.yaml` and
+the redirect in `50-ingress.yaml` together.
 
 ## 5. Apply
 
@@ -361,7 +373,12 @@ having survived the move), and the notes are the notes.
 If any of that is wrong, the way back is the way in: scale to 0, move the
 contents of `vault/` back up one level, and re-apply the previous manifests.
 
-## 6. Trust the CA
+## 6. Trust the CA (break-glass only)
+
+Skip this unless you want `https://znotes.k3s.lan` to be warning-free. The
+canonical address (section 7) needs nothing installed. Even trusted, the LAN
+name is not the offline origin: the service worker and replica run only on
+`ZNOTES_ORIGIN`.
 
 Export the **public** half only — the private key stays in the cluster:
 
@@ -386,30 +403,47 @@ the secrets UI should offer unlock rather than the degraded badge, and
 
 The 90-day server certificate rotates on its own; you never repeat this step.
 
-## 7. Reach it over Tailscale
+## 7. The canonical address, and the break-glass
 
-Two paths. **They compose** — run both and use whichever the device can see.
+**Canonical: `https://znotes.tailb95e62.ts.net`** (ADR 0042). The Tailscale
+Kubernetes operator (`k3s/60-tailscale-ingress.yaml`) joins a proxy to your
+tailnet as a device and Tailscale issues a **real, publicly-trusted** certificate
+for it, so no device installs anything and step 6 never applies. This is the one
+origin where the app installs, registers its service worker and keeps the offline
+replica (`ZNOTES_ORIGIN` in `20-deployment.yaml`; ADR 0041). Open it, then
+install it from Chrome on each device.
 
-**A — Tailscale on the k3s node** (simplest; keeps the private CA). Install
-Tailscale on the node and `tailscale up`. Every tailnet device can now reach the
-node's IP, so Traefik answers as long as the hostname resolves. Add the name to
-each device's hosts file, or advertise the LAN as a subnet route
-(`tailscale up --advertise-routes=192.168.1.0/24 --accept-dns=false`, then
-approve it in the admin console) so your existing DNS keeps working remotely.
-To use the MagicDNS name instead, add `znotes.<tailnet>.ts.net` to the
-certificate's `dnsNames` **and** to the Ingress `rules`/`tls.hosts`.
+Prerequisites, per device:
 
-**B — the Tailscale Kubernetes operator** (`k3s/alt-tailscale-ingress.yaml`).
-The operator joins a proxy to your tailnet as a device and Tailscale issues a
-**real, publicly-trusted** certificate for `znotes.<tailnet>.ts.net` — step 6
-disappears entirely, including on phones. Requires MagicDNS and HTTPS
-certificates enabled in the tailnet admin console, plus an OAuth client you
-create there (nothing here ships a credential). Reachable only from the tailnet,
-which is why A is still worth keeping for LAN access.
+- **The Tailscale app is connected.** The name resolves only on the tailnet, and
+  on Android Tailscale takes the one VPN slot. An installed app still opens
+  offline from its cache with Tailscale off; it just cannot reach the server.
+- **Android: Private DNS must not be a strict hostname.** Settings › Network ›
+  Private DNS set to a provider hostname bypasses MagicDNS, so the name never
+  resolves. Use Off or Automatic.
 
-Either way the perimeter argument holds: the tailnet is the auth boundary. Keep
+Prerequisites, once: the operator installed, MagicDNS and HTTPS certificates
+enabled in the tailnet admin console (both are off by default), and an OAuth
+client you create there (nothing here ships a credential). The operator is
+reachable only from the tailnet.
+
+**Break-glass: `https://znotes.k3s.lan`** (sections 3–6: cert-manager, Traefik,
+the private CA). It works without Tailscale, on the LAN, and the app works there
+online — but it runs no service worker and no replica, and shows a notice naming
+the canonical address. Use it when Tailscale is down. Plain `http://znotes.k3s.lan`
+answers a permanent redirect to the canonical address, path and query kept
+(`redirect-canonical` in `50-ingress.yaml`).
+
+The perimeter argument holds unchanged: the tailnet is the auth boundary. Keep
 ACLs tight and do not enable Funnel — Funnel puts an app with no login on the
 public internet.
+
+**Kill switch for the service worker.** If a release ships a service worker that
+misbehaves, set `ZNOTES_SW=off` on the Deployment (the commented env entry in
+`20-deployment.yaml`) and redeploy. `/sw.js` then serves a worker that, on its
+next update check, deletes the `znotes-*` caches, unregisters itself and
+reloads the open windows. It never touches IndexedDB, so unsent offline edits
+survive. Remove the variable and redeploy to turn the worker back on.
 
 ---
 
@@ -507,24 +541,29 @@ makes concurrent viewers safe.
 attach a `compress` or `buffering` middleware to this router. Either one makes
 live updates silently stop while every request still returns 200.
 
-**Assets: compressed here, cached by the browser (ADR 0038).** The process
-brotli/gzip-codes every textual response itself — at boot for the editor and age
-bundles, on first request for the files under `app/` — so no ingress middleware
-needs to, and one must not be added for SSE's sake anyway (above). Boot pays
-about 0.6s of brotli on top of the island's build; the port opens after both, so
-readiness still means ready.
+**Assets: precompressed at build, cached by the browser (ADR 0038, 0040).** The
+image build brotli (q11) and gzip-codes every textual asset; the process loads
+`dist/` and serves the right bytes per `accept-encoding`, so no ingress
+middleware needs to compress, and one must not be added for SSE's sake anyway
+(above). JSON API responses of 1 KiB or more are coded by the process too
+(brotli q4, else gzip), never `/events` or the streaming routes. Boot loads files
+and compresses nothing; the port opens after the load, so readiness still means
+ready.
 
 Caching is two policies, and which one a path gets follows from its URL.
-Content-addressed assets — `/vendor/editor/*`, `/vendor/age.<hash>.js` — carry
+Content-addressed assets — everything under `/assets/` — carry
 `public, max-age=2592000, immutable`: **one month**, safely, because the hash IS
-the URL and a new image serves new URLs. Everything else — `index.html`,
-`/app.js`, `/tree.js`, `themes/*.css`, `manifest.json`, the icons — carries
-`no-cache` and an `ETag`, and that is deliberate: those paths keep their names
-across releases, so a month of freshness would mean a rollout that an
-already-warm browser does not see until it expires. They revalidate instead, and
-a revalidation is a few hundred bytes of `304`. **So a deploy needs no cache
-bust**, and nothing needs purging at the ingress; a browser picks up the new
-shell on its next load and follows it to the new hashed assets.
+the URL and a new image serves new URLs. Everything else — the shell (`/`,
+`/d/*`, `/settings/*`), `/sw.js`, `themes/*.css`, `manifest.json`, the icons —
+carries `no-cache` and an `ETag` (a content hash, so a second pod would agree),
+and that is deliberate: those paths keep their names across releases, so a
+month of freshness would mean a rollout that an already-warm browser does not
+see until it expires. They revalidate instead, and a revalidation is a few
+hundred bytes of `304`. **So a deploy needs no cache bust**, and nothing needs
+purging at the ingress. A browser without the service worker picks up the new
+shell on its next load. An installed app keeps its own release until the user
+accepts the "A new version is ready" prompt; the old release's assets are
+cached on the device, so an open page never loses its lazy chunks.
 
 ---
 
@@ -560,9 +599,6 @@ Verified on this machine:
   `readOnlyRootFilesystem: true` safe. Its entrypoint script was extracted and
   read: it ends in `exec "$@"`, so with `CMD ["bun","server/index.ts"]` **bun is PID 1
   and receives SIGTERM directly**.
-- **How the frontend is served today** — read `serveStatic()`/`buildVendor()` in
-  `server/index.ts` and confirmed prod serves `app/` verbatim with an in-memory vendor
-  bundle. That is why the image ships no `dist/`.
 - **`kubectl kustomize deploy/k3s`** renders cleanly; the image tag override
   lands, and `labels`/`includeSelectors:false` leaves `selector.matchLabels`
   untouched (`commonLabels` would have mutated an immutable field).
@@ -580,6 +616,17 @@ Verified on this machine:
   is offered.
 
 **Not** verified, and why:
+
+- **The built-frontend image (spec 0024) was never built.** The image changes —
+  `oven/bun:1.4.4-slim`, `bun scripts/build.ts` in the `src` stage, a runtime
+  stage with `server/`, `dist/` and `package.json` only, `ZNOTES_DIST` — were
+  written on a machine without Docker. The graph check without `node_modules`
+  was run natively against `server/` (it resolves), and the manifests were
+  parsed as YAML, but no `docker build` ran, `oven/bun:1.4.4-slim` was not
+  pulled to confirm it matches the 1.4.0 record above, and the new manifests
+  were not applied. The Tailscale ingress, the `redirect-canonical` regex under
+  Traefik, SSE and brotli passthrough through the Tailscale proxy, and WebAPK
+  minting on the phone are all unexercised.
 
 - **`docker build` was never run.** The `docker` CLI exists but no daemon is
   reachable (`/var/run/docker.sock` absent). The Dockerfile is therefore

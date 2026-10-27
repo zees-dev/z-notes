@@ -107,8 +107,9 @@ for (const bucket of ["open", "done"]) {
 /* ---------- 5. server layering ---------- */
 /* The law. Lower = deeper; imports must go strictly downward. */
 const LAYERS: Record<string, number> = {
+  "search-match": -1,
   vault: 0, db: 0, http: 0, sse: 0,
-  settings: 1, watch: 1, "ai-edits": 1,
+  settings: 1, watch: 1, "ai-edits": 1, frontend: 1,
   trash: 2, "ai-endpoint": 2,
   git: 3, terminal: 3,
   ai: 4, docs: 4,
@@ -126,7 +127,6 @@ for (const f of readdirSync(serverDir)) {
   const text = readFileSync(join(serverDir, f), "utf8");
   for (const m of text.matchAll(/from "\.\/([\w-]+)(?:\.ts)?"/g)) {
     const dep = m[1];
-    if (dep === "age-entry") continue; // Bun.build input, not a module
     if (!(dep in LAYERS)) continue; // caught when the dep file is scanned
     if (LAYERS[dep] >= LAYERS[mod])
       fail(
@@ -138,7 +138,7 @@ for (const f of readdirSync(serverDir)) {
 }
 
 /* ---------- 6. app/ leaves + no export let ---------- */
-const LEAVES = new Set(["state", "ui", "api", "armor", "entropy", "dialogs", "crypto-worker", "markdown-source"]);
+const LEAVES = new Set(["state", "ui", "api", "armor", "entropy", "dialogs", "crypto-worker", "markdown-source", "replica"]);
 const appDir = join(ROOT, "app");
 for (const f of readdirSync(appDir)) {
   if (!/\.(js|ts|tsx)$/.test(f)) continue;

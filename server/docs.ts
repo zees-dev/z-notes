@@ -71,6 +71,7 @@ export class DocStore {
     mtimeMs: number;
     empty: number;
     hasSecrets: number;
+    rev: string;
   }): FileMeta {
     return {
       type: "file",
@@ -82,6 +83,7 @@ export class DocStore {
       mtime: iso(row.mtimeMs),
       empty: !!row.empty,
       hasSecrets: !!row.hasSecrets,
+      rev: row.rev,
     };
   }
 
@@ -244,16 +246,16 @@ export class DocStore {
     return this.recon.lock(async () => {
       const current = await this.docBody(p);
       if (!current) return fail(404, "not-found", { message: `No doc at ${p}` });
+      if (markdown === current.markdown) {
+        // identical bytes ⇒ same rev, no write, no doc-changed
+        return json({ path: p, rev: current.rev, bytes: current.bytes, mtime: current.mtime });
+      }
       if (wantRev && wantRev !== current.rev) {
         return fail(409, "rev-conflict", {
           rev: current.rev,
           markdown: current.markdown,
           message: "This doc changed since you read it.",
         });
-      }
-      if (markdown === current.markdown) {
-        // identical bytes ⇒ same rev, no write, no doc-changed
-        return json({ path: p, rev: current.rev, bytes: current.bytes, mtime: current.mtime });
       }
       await this.vault.writeDocAtomic(p, markdown);
       await this.recon.reconcileHeld(new Map<string, ChangeReason>([[p, "write"]]));

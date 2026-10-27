@@ -448,6 +448,20 @@ const turnResult = (r) => {
   };
 };
 
+/** The session, read again when boot could not (offline, say). Its failure is
+    the turn's, through the turn's own error path: offline, that is the
+    offline message rather than a Send that does nothing. */
+async function sessionNow() {
+  if (state.session) return state.session;
+  try {
+    await loadSession();
+  } catch (err) {
+    apiFail(err, "Message failed");
+    throw err;
+  }
+  return state.session;
+}
+
 /** The composer's own send: read it, empty it, and hand the text to the turn.
     Everything the send DOES is one function down — the composer is only where
     a human's text happens to come from. */
@@ -455,8 +469,10 @@ export async function sendMessage() {
   const ta = $("#composer");
   const text = ta.value.trim();
   if (!text) return;
-  if (!state.session) return;
-  ta.value = "";
+  // a failure is on screen already, and the text stays in the composer
+  if (!(await sessionNow().catch(() => null))) return;
+  // only what is sent leaves: text typed while the session loaded stays
+  ta.value = ta.value.replace(text, "").trimStart();
   autoGrow(ta); // …and shrinks back: a sent prompt must not leave its own hole
   /* the failure is already on screen (`apiFail` inside), and a click handler
      has nowhere to put a rejection */
@@ -469,7 +485,7 @@ export async function sendMessage() {
  * abort does, so there is one way to stop a turn and not two.
  */
 export async function sendMessageText(text, { signal } = {}) {
-  const s = state.session;
+  const s = await sessionNow();
   if (!s) throw new api.ApiError(409, { error: "no-session", message: "The assistant has no session yet." });
   abortStream(); // a new message supersedes whatever is still arriving
 
@@ -738,7 +754,8 @@ export function openPal() {
   clearTimeout(palT);
   paintPalModes(palToggle);
   palQuery("");
-  setTimeout(() => inp.focus(), 40);
+  // a long task can hold this timer past an Esc; a closed palette must not take focus back
+  setTimeout(() => isOpen("#palVeil") && inp.focus(), 40);
 }
 export function closePal() {
   $("#palVeil").classList.remove("show");

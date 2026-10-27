@@ -12,9 +12,9 @@
      so the UA paints form controls, scrollbars and the canvas to match. -->
 <meta name="color-scheme" id="schemeMeta" content="light dark">
 <!-- The shell is served from `/` AND from `/d/<doc path>` (one URL per open
-     doc), so every relative reference below — the stylesheets, ./app.js, and
-     through import.meta.url the API root and the crypto worker — has to resolve
-     against the app root rather than against whatever doc URL is in the bar. -->
+     doc), so every relative reference below — the stylesheets, the manifest,
+     and through document.baseURI the API root — has to resolve against the app
+     root rather than against whatever doc URL is in the bar. -->
 <base href="/">
 <title>z-notes</title>
 <!-- zero external requests: the icon is an inline SVG data: URI, so the browser's
@@ -57,18 +57,15 @@
      also the manifest's background_color, so the launch screen, the tile and
      the status bar are one colour rather than three -->
 <meta name="theme-color" content="#121412">
-<!-- the visual editor's own stylesheet, bundled at boot beside its script and
-     served from /vendor (ADR 0037). BEFORE base.css, so the app's rules win
-     every collision; the two data flags are what renderVisual waits on, since a
-     <link> that has already finished loading fires no event for it.
-
-     THE SERVER REWRITES THIS TAG. `serveStatic` swaps the href for the hashed
-     stylesheet, adds `data-js="<hashed entry>"` (what editor.js imports) and a
-     `modulepreload` for that entry, so the editor's 1.7 MB starts downloading
-     here rather than after the tree loads, and neither asset pays the alias's
-     302. The alias below is what a browser gets when the bundle failed to
-     build. -->
-<link rel="stylesheet" id="editor-css" href="/vendor/editor.css" onload="this.dataset.loaded='true'" onerror="this.dataset.failed='true'">
+<!-- THE BUILD'S TAGS GO HERE (server/frontend.ts, ADR 0040): the build id,
+     whether the service worker is on, the canonical origin, the island's
+     stylesheet (`#editor-css`, whose two data flags are what renderVisual
+     waits on, since a <link> that has already finished loading fires no event
+     for it), a modulepreload for the island entry and for every chunk the boot
+     entry statically imports, `#znotes-assets` (the island and crypto-worker
+     URLs), and the boot entry itself. BEFORE base.css, so the app's rules win
+     every collision with the island's. -->
+<!-- znotes:head -->
 <link rel="stylesheet" href="./themes/base.css">
 <!-- swapped live by the Settings › Theme control; ?theme=<id> overrides at boot.
      The href below is the DEFAULT theme; the resolver under it rewrites it from
@@ -138,11 +135,9 @@
 </head>
 <body>
 
-<!-- boot splash. There is no gate: the inline script at the foot of this file
-     imports app.js unconditionally and hides this div once app.start() resolves
-     (a throw leaves it up, carrying the reason). The serviceWorker loop down
-     there is a one-off eviction of any prototype-era worker on this origin,
-     not something boot waits on. -->
+<!-- boot splash. There is no gate: app/boot.js (the module script the build
+     splices into <head>) hides this div once app.start() resolves (a throw
+     leaves it up, carrying the reason). -->
 <!-- The splash carries the MARK now, not just a line of text. Installed to a
      home screen this div is the frame directly after the OS launch screen (the
      one Chrome and Safari generate from manifest.json's icon + background),
@@ -1122,38 +1117,5 @@
 
 <div class="toast" id="toast"><span class="ok">✓</span><span id="toastTxt">Saved</span></div>
 
-<script type="module">
-/* ------------------------------------------------------------------
-   Boot. The prototype's service-worker gate is gone: this page is
-   served by the real bun backend, so /api/* and /events are live from
-   the first request. If a stale mock worker from the prototype era
-   still controls this origin, evict it before starting.
-   ------------------------------------------------------------------ */
-const bootMsg = document.getElementById('bootMsg');
-
-function fatal(text, detail){
-  bootMsg.innerHTML = '<b>' + text + '</b><br><span style="font-size:12px">' + detail + '</span>';
-}
-
-async function boot(){
-  if ('serviceWorker' in navigator){
-    const regs = await navigator.serviceWorker.getRegistrations().catch(() => []);
-    for (const r of regs) await r.unregister().catch(() => {});
-  }
-
-  bootMsg.textContent = 'loading vault…';
-  try {
-    const app = await import('./app.js');
-    await app.start();
-  } catch (err) {
-    console.error(err);
-    fatal('The app failed to start', String(err && err.message || err));
-    return;
-  }
-  document.getElementById('boot').hidden = true;
-  document.getElementById('app').hidden = false;
-}
-boot();
-</script>
 </body>
 </html>

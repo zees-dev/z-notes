@@ -63,7 +63,7 @@ describe("the app shell carries the agent headers", () => {
 
     /* an asset is not a document: it has no agent cluster to key and no tools
        to delegate, so the headers would be bytes on every request for nothing */
-    for (const path of ["/app.js", "/api/docs"]) {
+    for (const path of ["/manifest.json", "/api/docs"]) {
       const r = await srv.get(path);
       expect(`GET ${path} → ${r.status}`).toBe(`GET ${path} → 200`);
       expect(`GET ${path} origin-agent-cluster: ${r.headers.get("origin-agent-cluster")}`).toBe(

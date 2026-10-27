@@ -1,8 +1,8 @@
 /* ============================================================
    editor.js — the Edit lifecycle, the save pipeline, the exit guard.
 
-   Edit is the BlockNote island (`app/block-editor.tsx`, mounted from
-   `/vendor/editor.js`), the only doc surface (ADR 0039).
+   Edit is the BlockNote island (`app/block-editor.tsx`, mounted from the
+   build's hashed entry), the only doc surface (ADR 0039).
    ============================================================ */
 "use strict";
 
@@ -81,7 +81,8 @@ export function exitDiff() {
     return [{ marker: "+", text: "An edit that cannot be written as Markdown (undo it, or discard)" }, ...rows];
   }
   if (visual?.hasDraft()) return [{ marker: "+", text: "A protected block being edited (saving keeps it)" }, ...changedLineDiff(doc.diskText, buf)];
-  if (buf === doc.diskText) {
+  /* bytes saved on this device are not at risk: replay sends them */
+  if (buf === doc.diskText || onDevice(doc)) {
     return [...state.reveal.values()].some((e) => e.path === doc.path && e.dirty)
       ? [{ marker: "+", text: "Edited secret block (plaintext hidden)" }]
       : null;
@@ -195,6 +196,11 @@ export function exitGuardDiscard() {
   const doc = state.docs.get(g.path);
   if (doc && doc.diskText != null) {
     doc.markdown = doc.diskText;
+    /* …and whatever this device was holding to send is discarded with it —
+       queued or not: every save writes ahead, and a refused one leaves its
+       entry behind */
+    delete doc.queued;
+    api.clearOutboxEntry(g.path);
     for (const [key, entry] of state.reveal) if (entry.path === g.path) state.reveal.delete(key);
     if (g.path === state.active) {
       /* the screen is the discarded text again, so whatever refused to
@@ -388,6 +394,27 @@ export function insertVisualSecret(path, armor) {
 
 export const commitVisualDrafts = () => visual?.commitDrafts();
 
+/** The island, fetched once per page. Its URL is the CONTENT-ADDRESSED entry
+    the shell names in `#znotes-assets` beside a modulepreload for it, so the
+    import usually resolves against a request the parser already started. A
+    failed import must not be cached, or a recovered network would never get a
+    second chance. */
+function loadIsland() {
+  editorBundle ||= Promise.resolve()
+    .then(() => import(JSON.parse($("#znotes-assets").textContent).island))
+    .catch((err) => {
+      editorBundle = null;
+      throw err;
+    });
+  return editorBundle;
+}
+
+/** Start fetching and evaluating the island before any doc needs it — boot
+    calls this before its first await. */
+export function warmEditor() {
+  loadIsland().catch(() => {});
+}
+
 async function renderVisual(doc, host) {
   const generation = mountGeneration;
   const surface = el("div", "block-editor-host");
@@ -395,17 +422,6 @@ async function renderVisual(doc, host) {
   host.appendChild(surface);
   try {
     const css = $("#editor-css");
-    /* `data-js` is the CONTENT-ADDRESSED entry, written into the shell by the
-       server beside the hashed stylesheet href and its modulepreload — so this
-       import usually resolves against a request the parser already started, and
-       never pays the alias's no-cache 302. `/vendor/editor.js` is the fallback
-       for a shell served before the bundle built, and for a direct hit.
-       The bundle is fetched once per page and cached; a failed import must not
-       be cached, or a recovered network would never get a second chance. */
-    editorBundle ||= import(css?.dataset.js || "/vendor/editor.js").catch((err) => {
-      editorBundle = null;
-      throw err;
-    });
     /* The stylesheet is a plain <link> in the head, so the only honest signals
        are its own events and the flags its inline handlers leave behind (the
        load may have finished before this code ever ran). */
@@ -415,7 +431,7 @@ async function renderVisual(doc, host) {
       css.addEventListener("load", resolve, { once: true });
       css.addEventListener("error", reject, { once: true });
     });
-    const [{ mountEditor }] = await Promise.all([editorBundle, stylesheet]);
+    const [{ mountEditor }] = await Promise.all([loadIsland(), stylesheet]);
     if (generation !== mountGeneration || !surface.isConnected) return;
     surface.textContent = "";
     visualPath = doc.path;
@@ -574,15 +590,32 @@ export function setBaseline(doc, text) {
   return doc;
 }
 
+/* One read per path in flight: boot asks for a deep-linked doc before the
+   tree is in, and openDoc asks again once it is. */
+const inflight = new Map();
 export async function ensureLoaded(path) {
   const cached = state.docs.get(path);
   if (cached && cached.loaded) return cached;
-  const d = await api.getDoc(path);
+  let reading = inflight.get(path);
+  if (!reading) {
+    reading = api.getDoc(path).finally(() => inflight.delete(path));
+    inflight.set(path, reading);
+  }
+  const { pending, diskMarkdown, ...d } = await reading;
   const merged = Object.assign({}, cached || {}, d, { loaded: true });
-  setBaseline(merged, d.markdown);
+  /* A PENDING doc arrives as a dirty buffer: the outbox's unacknowledged bytes
+     over the server's (or replica's) text, and the ordinary save sends them. */
+  setBaseline(merged, pending ? diskMarkdown : d.markdown);
+  if (pending) merged.queued = d.markdown;
+  else delete merged.queued;
   state.docs.set(path, merged);
   return merged;
 }
+
+/** `doc.queued` is the bytes held in this device's outbox for it — saved here,
+    not yet on the server. A buffer that still equals them loses nothing by
+    being left. */
+const onDevice = (doc) => doc.queued != null && doc.markdown === doc.queued;
 
 /**
  * New text for a doc that no keystroke typed — an agent's write, a protected
@@ -628,7 +661,8 @@ export async function replaceDocText(path, markdown, rev) {
       error: "not-saved",
       message: "The change is in this tab but did not reach disk — " + path + " may have moved or conflicted.",
     });
-  return { path, rev: doc.rev, bytes: doc.bytes };
+  // on this device's outbox, not on the server (`doc.queued`)
+  return { path, rev: doc.rev, bytes: doc.bytes, ...(doc.queued != null ? { queued: true } : null) };
 }
 
 /* Navigation token. openDoc awaits a save and a fetch, so two of them can be
@@ -726,10 +760,13 @@ export async function openDoc(path, opts) {
   state.pick = null;
   /* A doc can arrive dirty: this tab may have been holding unsaved text for it
      already (a buffer left behind by an earlier visit, a proposal written into
-     a doc that was not on screen). The baseline is the only honest answer. */
+     a doc that was not on screen). The baseline is the only honest answer —
+     and bytes the server has not acknowledged are dirty even when they equal
+     it (an empty doc created offline), or nothing would ever send them. */
   const doc = activeDoc();
-  state.dirty = doc.markdown !== doc.diskText;
-  setSaveIndicator(state.dirty ? "Unsaved changes" : "Saved", state.dirty ? "dirty" : undefined);
+  state.dirty = doc.markdown !== doc.diskText || doc.queued != null;
+  if (state.dirty && onDevice(doc)) setSaveIndicator(SAVED_ON_DEVICE, "device");
+  else setSaveIndicator(state.dirty ? "Unsaved changes" : "Saved", state.dirty ? "dirty" : undefined);
   /* Opening a doc from the settings page IS how you leave it — the tree, ⌘K,
      a [[link]] and the home button are all navigations, and the pane shows one
      place at a time. Before routeDoc, so the entry it writes describes what is
@@ -832,9 +869,13 @@ function saveState(txt) {
   $("#saveInd").title = txt + " — click (or ⌘S) to save now";
 }
 
+/* The pip's third state (ADR 0041): the buffer is durable in this device's
+   outbox but the server has not acknowledged it — still dirty, never "Saved". */
+const SAVED_ON_DEVICE = "Saved on this device";
+
 export function setSaveIndicator(txt, cls) {
   const ind = $("#saveInd");
-  ind.classList.remove("dirty", "flash");
+  ind.classList.remove("dirty", "flash", "device");
   if (cls) ind.classList.add(cls);
   saveState(txt);
   /* Every route into this function that is NOT "the buffer went dirty" is a
@@ -858,7 +899,7 @@ export function markDirty() {
 
 function flashSave(txt) {
   const ind = $("#saveInd");
-  ind.classList.remove("dirty", "flash");
+  ind.classList.remove("dirty", "flash", "device");
   saveState(txt);
   void ind.offsetWidth;
   ind.classList.add("flash");
@@ -909,7 +950,8 @@ export function saveDoc(path, opts) {
   return rec.p;
 }
 
-/** @returns {Promise<boolean>} whether the document actually reached the server */
+/** @returns {Promise<boolean>} whether the document is safe: on the server, or
+    durably in this device's outbox (`doc.queued`), where replay will send it */
 async function doSaveDoc(doc, opts) {
   opts = opts || {};
   const path = doc.path;
@@ -960,6 +1002,19 @@ async function doSaveDoc(doc, opts) {
   const sent = doc.markdown;
   try {
     const r = await api.putDoc(path, sent, doc.rev, opts.keepalive ? { keepalive: true } : null);
+    if (r.queued) {
+      /* ON THIS DEVICE, NOT ON THE SERVER: no baseline, no new rev, no toast.
+         The buffer stays dirty — it still differs from the file — and replay
+         (or the next save) sends it against the rev it was based on. */
+      doc.queued = sent;
+      if (path === state.active) {
+        state.dirty = true;
+        if (doc.markdown !== sent || [...state.reveal.values()].some((e) => e.path === path && e.dirty)) markDirty();
+        else setSaveIndicator(SAVED_ON_DEVICE, "device");
+      }
+      return true;
+    }
+    delete doc.queued;
     doc.rev = r.rev;
     doc.mtime = r.mtime;
     doc.bytes = r.bytes;
@@ -1012,8 +1067,10 @@ async function doSaveDoc(doc, opts) {
         return false;
       }
       toast("This doc changed on disk — reloading");
-      const fresh = await api.getDoc(path).catch(() => null);
+      const fresh = await api.getDoc(path, { overlay: false }).catch(() => null);
       if (fresh) {
+        delete doc.queued;
+        api.clearOutboxEntry(path);
         // setBaseline like every other adopt: skipping it left diskText naming
         // the pre-conflict bytes, and the exit guard then offered to
         // "discard" text that was already on disk

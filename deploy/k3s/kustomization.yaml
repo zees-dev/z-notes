@@ -5,7 +5,8 @@
 # reading `ls`, and for the plain `kubectl apply -f deploy/k3s/` path.
 #
 # alt-ingressroute.yaml is deliberately absent — it is an EITHER/OR with
-# 50-ingress.yaml. See the header of that file.
+# 50-ingress.yaml. See the header of that file. 60-tailscale-ingress.yaml is the
+# canonical address (ADR 0042); 50-ingress.yaml is the LAN break-glass.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -18,6 +19,7 @@ resources:
   - 30-service.yaml
   - 40-certificates.yaml
   - 50-ingress.yaml
+  - 60-tailscale-ingress.yaml
 
 # `labels` with includeSelectors:false, NOT the older `commonLabels`.
 # commonLabels injects into spec.selector.matchLabels, which is IMMUTABLE on an

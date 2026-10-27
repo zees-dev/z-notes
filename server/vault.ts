@@ -13,6 +13,8 @@
 import { basename, dirname, resolve } from "node:path";
 import { realpathSync, statSync } from "node:fs";
 import { mkdir, readdir, rename, rm, rmdir } from "node:fs/promises";
+import { redact, isAgeOpen, closesFence } from "./search-match.ts";
+export { redact };
 
 /* ---------- paths ---------- */
 
@@ -118,87 +120,10 @@ export function titleOf(markdown: string, fallback: string): string {
   return m ? m[1].trim() : fallback;
 }
 
-/* Both fence probes tolerate leading whitespace (the OPEN probe blockquote
-   markers too — see the close probe for why it must NOT) and a trailing CR,
-   because the lines they are fed come from a plain split("\n") over
-   byte-faithful text that may be CRLF.
-   hasSecrets() and redact() MUST agree by construction: a fence one of them
-   cannot see is either armor leaking into the index or the whole tail of the
-   file being blanked.
-
-   The prefix class is `[\s>]`, not `[ \t>]`, because the RENDERER's is `\s`
-   (app/app.js RE_FENCE = /^\s*```/) and `\s` is much wider: U+00A0, U+000C,
-   U+3000 and a leading BOM all open a secret block in the browser. A server
-   probe NARROWER than the client's means the client paints "encrypted" over a
-   fence whose armor `redact()` never blanked — straight into sqlite, FTS5 and
-   /api/search. Being wider is safe (it only over-redacts); being narrower is
-   the leak.
-
-   The gap AFTER the ticks is the same story and was the same bug: the renderer
-   reads the info string as `line.replace(/^\s*```/, "").trim()` and compares it
-   to "age", so ``` ``` age ``` (any whitespace between ticks and word) paints a
-   locked secret block. A regex demanding `age` abut the ticks never saw it. So
-   the opener is PARSED, not pattern-matched: strip the fence, trim, and accept
-   anything whose first word is `age` — case-insensitively, and even with a
-   trailing info string (``` ```age js ```), both of which the renderer treats as
-   ordinary code. Wider in those two directions is deliberate. */
-const FENCE_PREFIX = /^[\s>]*```/;
-/* The CLOSE probe is the mirror image and the direction is INVERTED: a close
-   the server honours but the renderer does not ENDS the redacted region early,
-   while the browser keeps painting "encrypted" over the lines that follow —
-   straight into sqlite, FTS5 and /api/search. So a close may never be WIDER
-   than the renderer's, and `>` is not in `\s`: a `> ``` ` line inside an
-   ordinary ```age fence used to close the server's region while app.js read
-   right past it into the same secret block.
-
-   But a fence whose OPENER is blockquoted is one the renderer never opened at
-   all — it exists only because the server's opener is deliberately wider — and
-   its close is blockquoted too. Refusing `>` there would blank the rest of the
-   file for no gain, so the close probe is chosen by the opener: renderer-
-   visible fences get renderer parity, server-only fences keep the wide close.
-   An unterminated fence still runs to EOF, which is what app.js does too. */
-const RENDERER_FENCE = /^\s*```/; // app/app.js RE_FENCE, verbatim
-const FENCE_CLOSE = /^\s*```[ \t]*\r?$/;
-const FENCE_CLOSE_QUOTED = /^[\s>]*```[ \t]*\r?$/;
-
-/** Does `line` end a fence that was opened by `openLine`? */
-function closesFence(line: string, openLine: string): boolean {
-  return (RENDERER_FENCE.test(openLine) ? FENCE_CLOSE : FENCE_CLOSE_QUOTED).test(line);
-}
-
-/** True for every line the RENDERER would open a secret block on — and more. */
-function isAgeOpen(line: string): boolean {
-  const m = FENCE_PREFIX.exec(line);
-  if (!m) return false;
-  return /^age\b/i.test(line.slice(m[0].length).trim());
-}
-
 /** A doc "has secrets" when it carries at least one ```age fence. */
 export function hasSecrets(markdown: string): boolean {
   for (const line of String(markdown).split("\n")) if (isAgeOpen(line)) return true;
   return false;
-}
-
-/**
- * Blank out the *bodies* of ```age fences, keeping the line count identical so
- * search line numbers still address the real file. The armor (and therefore the
- * `BEGIN AGE ENCRYPTED FILE` canary) never reaches sqlite, FTS or search output.
- */
-export function redact(markdown: string): string {
-  const lines = String(markdown).split("\n");
-  let openLine: string | null = null;
-  for (let i = 0; i < lines.length; i++) {
-    if (openLine === null) {
-      if (isAgeOpen(lines[i])) openLine = lines[i];
-      continue;
-    }
-    if (closesFence(lines[i], openLine)) {
-      openLine = null;
-      continue;
-    }
-    lines[i] = "";
-  }
-  return lines.join("\n");
 }
 
 /**
@@ -997,6 +922,7 @@ export interface FileMeta {
   mtime: string;
   empty: boolean;
   hasSecrets: boolean;
+  rev: string;
 }
 
 interface FolderNode {

@@ -225,7 +225,7 @@ describe("top-level blank paragraphs preserve source spacing in Edit", () => {
     expect(`blocks: ${m.types.join("|")}`).toBe("blocks: paragraph|paragraph|paragraph|paragraph|paragraph|paragraph");
     /* …and the model the editor is holding is the file, byte for byte */
     const held = await page.evaluate(async () => {
-      const { state } = await import("/state.js");
+      const { state } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
       return state.docs.get(state.active).markdown as string;
     });
     expect(`the buffer: ${JSON.stringify(held)}`).toBe(`the buffer: ${JSON.stringify(GAPS_SRC)}`);

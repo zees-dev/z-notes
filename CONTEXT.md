@@ -120,6 +120,26 @@ has happened or is likely, because agents invent synonyms.
 - **approval** — a human gate on each AI-originated `run_command`; records are
   **commands** with states (`queued/running/done/rejected`).
 
+## Build, release and offline (ADRs 0040–0042)
+
+- **build** — one run of `scripts/build.ts` (or its in-memory twin in
+  `server/frontend.ts`). Its **build id** names the release; every hashed asset
+  belongs to exactly one build.
+- **app shell** — `index.html` as served, with the build's tags spliced in at
+  its `<!-- znotes:head -->` marker.
+- **canonical origin** — the one origin where the service worker and replica run
+  (`ZNOTES_ORIGIN`; unset, whatever origin served the page). The LAN
+  **break-glass** (`znotes.k3s.lan`) works online but is not canonical.
+- **replica** — this device's IndexedDB copy of trees, docs, settings and
+  keyring (`app/replica.js`). *Banned:* "cache" for the replica (the cache is
+  the service worker's), and "sync" (sync is git).
+- **outbox** — the replica's per-doc store of saves not yet acknowledged by the
+  server. A save is in the outbox before its `PUT` is sent.
+- **replay** — sending outbox entries to the server after the network returns.
+  *Banned:* "sync" for this.
+- **offline** — the last request failed for lack of a network. *Banned:*
+  `navigator.onLine` as the test.
+
 ## Trash
 
 - **trash entry** — a retained delete, addressed by opaque **trash id**
@@ -133,7 +153,8 @@ has happened or is likely, because agents invent synonyms.
 - **broadcast / `/events`** — the app-wide SSE bus (`doc-changed`,
   `sync-status`, `settings-changed`, `trash-changed`, `vaults-changed`,
   heartbeat). One bus for every vault.
-- **gates** — the five acceptance suites (`bun run gates`).
+- **gates** — the five acceptance suites plus `mermaid-e2e` and `offline-e2e`
+  (`bun run gates`).
 - **seam** — a boundary tests go through; prefer the highest existing seam.
 - **tool** — a WebMCP tool: one named, schema'd operation registered by
   `app/webmcp.js` on `document.modelContext` (ADR 0031). Not the AI relay's

@@ -101,7 +101,8 @@ export interface NewPageOptions {
 /**
  * Forget what this browser remembers between visits, for every document it
  * loads from here on: the doc it last opened (`/` resumes it, ADR 0035), which
- * folders were collapsed (spec 0012) and the pinch-zoom rung (ADR 0033).
+ * folders were collapsed (spec 0012), the pinch-zoom rung (ADR 0033) and the
+ * replica (the `znotes` IndexedDB database, ADR 0041).
  *
  * localStorage belongs to the PROFILE, not to the page: without this reset the
  * second test of every suite — and every extra page a suite opens — would boot
@@ -116,6 +117,9 @@ export async function forgetBrowserState(p: Page): Promise<Page> {
   await p.evaluateOnNewDocument((keys: string[]) => {
     try {
       for (const k of keys) localStorage.removeItem(k);
+    } catch {}
+    try {
+      indexedDB.deleteDatabase("znotes");
     } catch {}
   }, BROWSER_MEMORIES);
   return p;

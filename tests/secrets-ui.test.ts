@@ -350,7 +350,7 @@ async function unlockBlock(p: Page, nth = 0) {
 /** the open doc's buffer — what a save writes */
 const buffer = (p: Page): Promise<string> =>
   p.evaluate(async () => {
-    const { state } = await import("/state.js");
+    const { state } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
     return state.docs.get(state.active).markdown;
   });
 

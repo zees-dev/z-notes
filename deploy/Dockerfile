@@ -9,37 +9,32 @@
 #
 # Three stages so the final image carries the runtime and nothing else: the
 # dependency install (and bun's ~/.bun/install/cache) stays in `deps`, the
-# import-graph verification stays in `src`, and neither is a layer in the
-# image that ships.
+# frontend build and import-graph verification stay in `src`, and neither is a
+# layer in the image that ships.
 #
-# NO FRONTEND BUILD STEP — deliberately.
-#   `server/index.ts` serves the frontend as plain files out of `APP_DIR = <repo>/app`
-#   (see serveStatic()); app/index.html links ./themes/*.css and inlines its own
-#   ES module. Running `bun build ./app/index.html --outdir=dist` would emit a
-#   *different* tree (content-hashed asset names, rewritten tags) at a path the
-#   server does not look at, so it would either do nothing or break serving.
-#   The two things that genuinely need bundling — the `age-encryption` browser
-#   module and the BlockNote editing island (app/block-editor.tsx) — are bundled
-#   by the server itself at boot (buildVendor()/buildEditor(), held in memory,
-#   served from content-addressed /vendor/ URLs) and therefore need node_modules
-#   present at runtime. That is why both are runtime `dependencies` and why we
-#   install deps rather than tree-shake them away. If prod serving ever moves to
-#   a dist/ tree, add the build here AND point APP_DIR at it in the same change.
+# THE FRONTEND IS BUILT HERE, once (ADR 0040).
+#   `bun scripts/build.ts` runs one Bun.build over the whole frontend — the
+#   shell's boot entry, the BlockNote island (app/block-editor.tsx) and the
+#   crypto worker — into a content-hashed `dist/` (brotli q11 + gzip beside every
+#   textual file, a build.json manifest, and the service worker). The server
+#   LOADS dist/ at boot (ZNOTES_DIST) and neither bundles nor compresses anything,
+#   so the runtime image needs no node_modules and no app/. A frontend that fails
+#   to build fails THIS build, not the deploy. Without ZNOTES_DIST (dev, tests)
+#   the same build runs in memory — one serving path either way.
 #
-#   MERMAID rides in with the island: `@blocknote/diagram-block` depends on it,
-#   so it is a runtime dependency like the rest and there is no committed
-#   `app/vendor/mermaid.js` any more. A fence is still untrusted input (ADR 0010)
-#   — the island locks mermaid's config down, which is app code, not a build step.
+#   MERMAID rides in with the island: `@blocknote/diagram-block` depends on it, so
+#   it is a build-time dependency like the rest. A fence is still untrusted input
+#   (ADR 0010) — the island locks mermaid's config down, which is app code.
 #
 # NOT `bun build --compile`: the compiled binary reports import.meta.dir as
-#   /$bunfs/root (research §5), and server/index.ts derives APP_DIR, VENDOR_ENTRY
-#   and LOCKFILE from import.meta.dir. The vaults and their DBs are already
-#   immune (they come from $ZNOTES_VAULTS_DIR), but the app paths are not. Plain
-#   `bun server/index.ts` keeps import.meta.dir honest.
+#   /$bunfs/root (research §5), and server/index.ts derives APP_DIR from
+#   import.meta.dir. The vaults and their DBs are already immune (they come from
+#   $ZNOTES_VAULTS_DIR), but the app paths are not. Plain `bun server/index.ts`
+#   keeps import.meta.dir honest.
 # =============================================================================
 
 # --- stage 1: production dependencies only ----------------------------------
-FROM oven/bun:1.4.0-slim AS deps
+FROM oven/bun:1.4.4-slim AS deps
 WORKDIR /src
 COPY package.json bun.lock ./
 # --production drops puppeteer-core (dev-only, headless parity tests);
@@ -48,7 +43,7 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
 
-# --- stage 2: sources, with the import graph proven at build time ------------
+# --- stage 2: the frontend build, with the import graph proven at build time --
 # This stage exists because an early revision of this file shipped a
 # hand-maintained COPY list that silently went stale: sse.ts, terminal.ts and
 # trash.ts were added to the repo and the list was not updated, which would
@@ -62,20 +57,26 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 #      directory copy fails the BUILD, not the deploy. The bundle it emits is
 #      thrown away; only the resolution matters.
 #
-# node_modules is borrowed from `deps` for the graph check, then removed, so
-# the `COPY --from=src /src/ ./` in the runtime stage carries sources only.
-FROM oven/bun:1.4.0-slim AS src
+# Order matters. The frontend build needs node_modules (BlockNote, React,
+# age-encryption, mermaid), so it runs first and writes /src/dist. node_modules is
+# then removed BEFORE the graph check, so the check proves the stronger thing the
+# runtime stage relies on: the server imports nothing from npm. (server/search-match.ts
+# is shared with the browser bundle and imports nothing at all.)
+FROM oven/bun:1.4.4-slim AS src
 WORKDIR /src
 COPY package.json bun.lock ./
 COPY server ./server
 COPY app ./app
+COPY scripts ./scripts
 COPY --from=deps /src/node_modules ./node_modules
-RUN bun build --target=bun --outdir=/tmp/graph server/index.ts > /dev/null \
- && rm -rf /tmp/graph node_modules
+RUN bun scripts/build.ts \
+ && rm -rf node_modules \
+ && bun build --target=bun --outdir=/tmp/graph server/index.ts > /dev/null \
+ && rm -rf /tmp/graph
 
 
 # --- stage 3: runtime -------------------------------------------------------
-FROM oven/bun:1.4.0-slim AS runtime
+FROM oven/bun:1.4.4-slim AS runtime
 LABEL org.opencontainers.image.source="https://github.com/zees-dev/z-notes"
 
 # Two packages, each earning its place:
@@ -93,14 +94,13 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# node_modules first: its layer is content-addressed, so it re-ships only when
-# bun.lock actually changes even though source edits rebuild the stages above.
-COPY --from=deps --chown=bun:bun /src/node_modules ./node_modules
-
-# Everything else comes from the verified `src` stage in one copy: package.json,
-# bun.lock, server/, app/. bun.lock is NOT optional at runtime: the server
-# hashes it into the /vendor/age.<hash>.js cache key.
-COPY --from=src --chown=bun:bun /src/ ./
+# Exactly what runs: the server's sources, the built frontend and package.json.
+# NO node_modules and NO app/ — the server imports nothing from npm, and the
+# frontend it serves is dist/ (ZNOTES_DIST below), not app/. dist/ is the layer
+# that changes with every release; server/ changes with backend edits only.
+COPY --from=src --chown=bun:bun /src/package.json ./package.json
+COPY --from=src --chown=bun:bun /src/server ./server
+COPY --from=src --chown=bun:bun /src/dist ./dist
 
 # The VAULTS HOME is a MOUNT POINT, never baked in. One volume holds every
 # vault, one top-level directory each — the primary at /vaults/vault and any
@@ -141,7 +141,8 @@ USER bun
 ENV ZNOTES_VAULTS_DIR=/vaults \
     ZNOTES_PORT=4700 \
     NODE_ENV=production \
-    GIT_TERMINAL_PROMPT=0
+    GIT_TERMINAL_PROMPT=0 \
+    ZNOTES_DIST=/app/dist
 
 EXPOSE 4700
 

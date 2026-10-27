@@ -13,6 +13,12 @@ Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: a failed
 bundle still answers 503, but the pane shows a Reload note rather than
 degrading to Source.
 
+Amended by [0040](0040-the-frontend-is-built.md), 2026-10-28: hashed assets live
+under `/assets/`, the shell is spliced at a marker rather than by regex, the
+`/vendor` aliases and the 503 are gone, per-file `app/*.js` serving is gone, and
+compression happens at image build (in memory only in dev and tests). The two
+cache policies, the per-coding `ETag`s and the one-month `immutable` stand.
+
 ## Context
 
 Measured on the deployed Pi, phone-sized headless Chromium, three loads: the app

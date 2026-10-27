@@ -19,8 +19,21 @@ import { $, apiFail, clearStickyToast, el, esc, toast } from "./ui.js";
    open a modal without pulling each other in. */
 let refreshTree = async () => {};
 let renderDoc, saveDoc, setBaseline, setSaveIndicator, app, openFirstDoc;
+let recountBlocked = () => {};
 export function wireDialogs(fns) {
-  ({ refreshTree, renderDoc, saveDoc, setBaseline, setSaveIndicator, app, openFirstDoc } = fns);
+  ({ refreshTree, renderDoc, saveDoc, setBaseline, setSaveIndicator, app, openFirstDoc, recountBlocked } = fns);
+}
+
+/* A resolution that leaves the buffer clean, or discards it, retires what this
+   device was holding to send for it — and the next blocked edit, if any, is
+   offered again. (A keep-mine or recreate that reaches the server has already
+   left the outbox.) */
+function settleOutbox(doc, path, clear) {
+  if (clear) {
+    if (doc) delete doc.queued;
+    api.clearOutboxEntry(path);
+  }
+  recountBlocked();
 }
 
 export function confirmDialog(opts) {
@@ -187,21 +200,34 @@ export async function conflictRecreate() {
   if (!c) return;
   const doc = state.docs.get(c.path);
   if (!doc) return;
+  /* the exact bytes this create carries: typing during the request is not in it */
+  const sent = doc.markdown;
   try {
-    const r = await api.createEntry({ path: c.path, type: "doc", markdown: doc.markdown });
+    const r = await api.createEntry({ path: c.path, type: "doc", markdown: sent }, { recreate: true });
     delete doc.orphaned;
-    setBaseline(doc, doc.markdown);
+    doc.loaded = true;
+    if (r.queued) {
+      /* offline: the create waits in the outbox, and the buffer is a doc made
+         on this device — its next save is that create (api.putDoc) */
+      doc.rev = null;
+      doc.queued = sent;
+      if (c.path === state.active && doc.markdown === sent) setSaveIndicator("Saved on this device", "device");
+      clearStickyToast();
+      return toast("Recreated " + c.path + " on this device");
+    }
+    delete doc.queued;
+    setBaseline(doc, sent);
     doc.rev = r.rev;
     doc.mtime = r.mtime;
     doc.bytes = r.bytes;
-    doc.loaded = true;
     if (c.path === state.active) {
-      state.dirty = false;
-      setSaveIndicator("Saved");
+      state.dirty = doc.markdown !== sent;
+      setSaveIndicator(state.dirty ? "Unsaved changes" : "Saved", state.dirty ? "dirty" : undefined);
     }
     await refreshTree().catch(() => {});
     clearStickyToast();
     toast("Recreated " + c.path);
+    settleOutbox(doc, c.path, false);
   } catch (err) {
     /* still orphaned, still dirty, notice still up — nothing was lost by
        failing, which is the only property that matters here */
@@ -216,6 +242,7 @@ export async function conflictDiscardOrphan() {
   if (!c) return;
   state.docs.delete(c.path);
   clearStickyToast();
+  settleOutbox(null, c.path, true);
   if (c.path !== state.active) return toast("Discarded the buffer for " + c.path);
   state.active = null;
   state.dirty = false;
@@ -353,8 +380,9 @@ export async function conflictTakeDisk() {
   closeConflict();
   if (!c) return;
   const doc = state.docs.get(c.path);
-  const fresh = await api.getDoc(c.path).catch(() => null);
+  const fresh = await api.getDoc(c.path, { overlay: false }).catch(() => null);
   if (!fresh) return toast("Could not re-read " + c.path);
+  settleOutbox(doc, c.path, true);
   state.docs.set(c.path, setBaseline(Object.assign({}, doc || {}, fresh, { loaded: true }), fresh.markdown));
   if (c.path === state.active) {
     state.dirty = false;
@@ -370,9 +398,10 @@ export async function conflictKeepMine() {
   if (!c) return;
   const doc = state.docs.get(c.path);
   if (!doc) return;
-  const fresh = await api.getDoc(c.path).catch(() => null);
+  const fresh = await api.getDoc(c.path, { overlay: false }).catch(() => null);
   if (!fresh) return toast("Could not re-read " + c.path);
   doc.rev = fresh.rev; // the buffer is unchanged; only the rev it answers moves
   const ok = await saveDoc(c.path, { silent: true });
   toast(ok ? "Kept your version · " + c.path : "Could not save " + c.path);
+  settleOutbox(doc, c.path, false);
 }

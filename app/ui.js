@@ -147,6 +147,12 @@ export function toast(msg, opts) {
   if (!sticky) toastT = setTimeout(() => t.classList.remove("show"), 1900);
 }
 
+/** A sticky toast whose text carries live controls (a link, a button). */
+export function notice(...parts) {
+  toast("", { sticky: true });
+  $("#toastTxt").replaceChildren(...parts);
+}
+
 /** Take a sticky notice down — on a click, or once the thing it warned about
     has been dealt with. A no-op for the ordinary self-expiring kind. */
 export function clearStickyToast() {

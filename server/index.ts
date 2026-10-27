@@ -2,7 +2,7 @@
    server.ts — z-notes backend.
 
    One bun process: Bun.serve hosts the v0 JSON API, the SSE event stream, and
-   the static frontend in ./app. Zero runtime deps.
+   the built frontend (server/frontend.ts). Zero runtime deps.
 
      ZNOTES_VAULTS_DIR home of EVERY vault (default ./vaults), one subdirectory
                        each; scanned at boot, so the filesystem is the registry
@@ -13,13 +13,17 @@
      ZNOTES_PORT       listen port       (default 4700)
      ZNOTES_VAULT_REPO vault repo to attach on first boot (ADR 0017)
      ZNOTES_GIT_TOKEN  git credential, absorbed into sqlite on first boot
+     ZNOTES_DIST       the frontend `scripts/build.ts` wrote (unset: built in memory)
+     ZNOTES_SW         `off` serves the service worker that removes itself
+     ZNOTES_ORIGIN     the canonical origin, the only one that works offline
+     ZNOTES_DEV        `1` rebuilds the frontend on an app/ edit; SW off by default
 
    sqlite always lives at <vault>/.znotes/index.db — one per vault.
    ============================================================ */
 
-import { existsSync, mkdirSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { existsSync, mkdirSync, watch } from "node:fs";
 import * as zlib from "node:zlib";
+import { resolve } from "node:path";
 import { AI } from "./ai.ts";
 import { Index } from "./db.ts";
 import { GitSync, sanitizeRemote, validRemoteUrl } from "./git.ts";
@@ -32,6 +36,7 @@ import { BAD_JSON, TOO_LARGE, MAX_BODY_BYTES, JSON_HEADERS, fail, json, readJson
 import { DocStore, isDocPath } from "./docs.ts";
 import { PRIMARY_VAULT_ID, VaultRegistry, qualify, type VaultStack } from "./vaults.ts";
 import { Vault } from "./vault.ts";
+import { COMPRESS_MIN, buildFrontend, loadFrontend, offeredCodings, serveFrontend } from "./frontend.ts";
 
 /* ONE HOME FOR EVERY VAULT. The vaults home holds them all — the primary at
    `<home>/vault` and every secondary beside it — so an install is one directory
@@ -61,8 +66,6 @@ mkdirSync(VAULT, { recursive: true });
 const vault = new Vault(VAULT);
 const PORT = Number(process.env.ZNOTES_PORT || 4700);
 const APP_DIR = resolve(import.meta.dir, "..", "app");
-const VENDOR_ENTRY = resolve(import.meta.dir, "age-entry.js");
-const LOCKFILE = resolve(import.meta.dir, "..", "bun.lock");
 const HEARTBEAT_MS = 20_000;
 
 
@@ -329,371 +332,6 @@ settings.wire({
 });
 
 /* ============================================================
-   Assets: one representation, three content-codings, two cache policies.
-
-   The whole editor island is 1.3 MB of JavaScript and 368 KB of CSS, and the
-   box this runs on uploads at roughly 250 KB/s — uncompressed that was five
-   seconds of a cold load. Brotli takes the entry to ~370 KB and the stylesheet
-   to a tenth of its size, so every textual asset is compressed ONCE and held in
-   memory: at boot for the two `Bun.build` bundles, on first request for the
-   handful of files under app/. Compressing per request would hand that cost to
-   every load, which on this hardware is the thing being fixed.
-
-   A content-coding is a distinct representation of a resource, so each coding
-   carries its own ETag (RFC 9110 §8.8.1) and every response says
-   `vary: accept-encoding`. One tag shared across codings would let a
-   revalidation answer 304 to a client holding the *other* coding's bytes.
-   ============================================================ */
-
-/** Content-addressed assets: the URL changes whenever the bytes do, so the
-    browser may keep them for the month the user asked for. Everything that is
-    NOT content-addressed (`/app.js`, `/tree.js`, `themes/*.css`, `index.html`,
-    `manifest.json`, the icons) stays `no-cache` + ETag on purpose: a month on
-    those would hide a deploy from an already-warm browser until it expired,
-    and a revalidation that answers 304 costs a few hundred bytes. */
-const IMMUTABLE_CACHE = "public, max-age=2592000, immutable";
-const REVALIDATE_CACHE = "no-cache";
-/** Fonts, images and the woff2 the editor CSS pulls are already compressed;
-    a second pass costs boot time and gives bytes back. */
-const TEXTUAL = /^(?:text\/|application\/(?:javascript|json|xml)|image\/svg\+xml)/;
-/** Below this the framing costs more than the coding saves. */
-const COMPRESS_MIN = 1024;
-const BROTLI_OPTS = { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } };
-
-type Coding = "br" | "gzip";
-interface Representation {
-  type: string;
-  bytes: Uint8Array;
-  etag: string;
-  encoded: Map<Coding, { bytes: Uint8Array; etag: string }>;
-}
-
-/** Build the identity representation and whatever codings actually shrink it.
-    `etag` is the identity tag; a coding's tag is that tag with a suffix. */
-function represent(bytes: Uint8Array, type: string, etag: string): Representation {
-  const rep: Representation = { type, bytes, etag, encoded: new Map() };
-  if (!TEXTUAL.test(type) || bytes.byteLength < COMPRESS_MIN) return rep;
-  for (const [coding, suffix, out] of [
-    ["br", "br", zlib.brotliCompressSync(bytes, BROTLI_OPTS)],
-    ["gzip", "gz", zlib.gzipSync(bytes, { level: 9 })],
-  ] as const) {
-    // a coding that grew the body is not an optimisation; drop it and offer identity
-    if (out.byteLength < bytes.byteLength)
-      rep.encoded.set(coding, { bytes: new Uint8Array(out), etag: `${etag.slice(0, -1)}-${suffix}"` });
-  }
-  return rep;
-}
-
-/** The coding to send: brotli, then gzip, then identity. `;q=0` is a refusal. */
-function negotiate(req: Request, rep: Representation) {
-  const offered = new Set(
-    (req.headers.get("accept-encoding") || "")
-      .split(",")
-      .map((t) => t.trim().toLowerCase())
-      .filter((t) => t && !/;\s*q=0(?:\.0+)?$/.test(t))
-      .map((t) => t.split(";")[0])
-  );
-  for (const coding of ["br", "gzip"] as const) {
-    const enc = rep.encoded.get(coding);
-    if (enc && offered.has(coding)) return { coding, bytes: enc.bytes, etag: enc.etag };
-  }
-  return { coding: "", bytes: rep.bytes, etag: rep.etag };
-}
-
-/** One asset response for every in-memory representation: the negotiated
-    coding, its own ETag, and If-None-Match / HEAD answered from the same
-    headers. `extra` is for headers that belong to the document rather than to
-    the asset (the shell's WebMCP pair). */
-function assetResponse(
-  rep: Representation,
-  req: Request,
-  cacheControl: string,
-  extra: Record<string, string> = {}
-): Response {
-  const { coding, bytes, etag } = negotiate(req, rep);
-  const headers: Record<string, string> = {
-    ...extra,
-    "content-type": rep.type,
-    etag,
-    "cache-control": cacheControl,
-  };
-  if (rep.encoded.size) headers["vary"] = "accept-encoding";
-  if (coding) headers["content-encoding"] = coding;
-  const inm = req.headers.get("if-none-match");
-  if (inm && inm.split(",").some((t) => t.trim() === etag)) return new Response(null, { status: 304, headers });
-  if (req.method === "HEAD")
-    return new Response(null, { status: 200, headers: { ...headers, "content-length": String(bytes.byteLength) } });
-  return new Response(bytes, { status: 200, headers });
-}
-
-/* ============================================================
-   /vendor/age.js — the age-encryption (typage) browser bundle.
-
-   The frontend stays build-free, and client-side secrets need exactly one
-   crypto library in the browser. Squaring those: bundle `vendor/age-entry.js` with Bun.build
-   ONCE at boot, hold the bytes in memory, serve them. No artifact is written,
-   nothing is added to `dev`, and the crypto worker gets a plain ESM import.
-
-   Cache shape is the standard content-addressed pair: `/vendor/age.js` is a
-   tiny no-cache redirect to `/vendor/age.<hash>.js`, which is immutable for a
-   month. The hash is over the lockfile + the entry source, so bumping the
-   dependency changes the URL and no stale bundle can survive a restart —
-   which matters more here than elsewhere, because this bundle is the crypto.
-   ============================================================ */
-
-interface VendorBundle {
-  name: string;
-  rep: Representation;
-}
-
-let vendor: VendorBundle | null = null;
-let vendorError = "";
-
-async function buildVendor(): Promise<void> {
-  try {
-    const lock = await Bun.file(LOCKFILE)
-      .text()
-      .catch(() => "");
-    const entry = await Bun.file(VENDOR_ENTRY).text();
-    const built = await Bun.build({
-      entrypoints: [VENDOR_ENTRY],
-      target: "browser",
-      format: "esm",
-      minify: true,
-      sourcemap: "none",
-    });
-    if (!built.success || !built.outputs.length) {
-      throw new Error(built.logs.map((l) => String(l)).join("; ") || "no output");
-    }
-    const js = await built.outputs[0].text();
-    // key on the inputs (lockfile + entry) AND the output, so an identical
-    // dependency tree always yields the same URL across restarts
-    const hash = Bun.hash(lock + "\0" + entry + "\0" + js).toString(16);
-    const rep = represent(new TextEncoder().encode(js), "text/javascript; charset=utf-8", `"${hash}"`);
-    vendor = { name: `age.${hash}.js`, rep };
-    vendorError = "";
-  } catch (err) {
-    vendor = null;
-    vendorError = String((err as Error)?.message || err);
-    process.stderr.write(`[z-notes] vendor bundle failed: ${vendorError}\n`);
-  }
-}
-
-/* ============================================================
-   /vendor/editor.js + /vendor/editor.css — the BlockNote editing island.
-
-   Same mechanism as the age bundle above, same reason: the frontend has no
-   build step, so what cannot be served as a plain file is bundled here at boot
-   and held in memory. Unlike age it is a multi-file bundle (`splitting`, a
-   stylesheet, font assets), so `publicPath` pins every internal reference to
-   `/vendor/editor/` and Bun's content hashes — which cover the dependency bytes
-   and the cross-asset references — become the URLs. The unhashed pair is a
-   no-cache 302 into the hashed tree, which is immutable for a month.
-
-   The shell no longer travels through that 302: `serveStatic` rewrites the
-   stylesheet link in index.html to the hashed pair (§ the shell below), so the
-   hot path is one direct, cacheable request per asset. The aliases stay for a
-   direct hit and as the fallback when the build failed.
-
-   A failed browser build must never take the API, the shell or the age bundle
-   with it: the editor paths answer 503 and the pane says the editor could not load.
-   ============================================================ */
-
-const editorAssets = new Map<string, Representation>();
-const editorAliases = new Map<string, string>();
-/** The entry's content hash, or "" when the build failed: the shell's ETag
-    carries it so a new bundle invalidates the HTML that names it. */
-let editorBuildId = "";
-let editorError = "";
-
-async function buildEditor(): Promise<void> {
-  try {
-    const built = await Bun.build({
-      entrypoints: [resolve(APP_DIR, "block-editor.tsx")],
-      target: "browser",
-      format: "esm",
-      minify: true,
-      splitting: true,
-      sourcemap: "none",
-      publicPath: "/vendor/editor/",
-      naming: { entry: "editor.[hash].[ext]", chunk: "chunk.[hash].[ext]", asset: "[name].[hash].[ext]" },
-      // React and its dependents ship dev-only branches behind this flag
-      define: { "process.env.NODE_ENV": JSON.stringify("production") },
-    });
-    if (!built.success || !built.outputs.length) {
-      throw new Error(built.logs.map((l) => String(l)).join("; ") || "no output");
-    }
-    for (const output of built.outputs) {
-      const name = basename(output.path);
-      const path = `/vendor/editor/${name}`;
-      const bytes = new Uint8Array(await output.arrayBuffer());
-      editorAssets.set(path, represent(bytes, output.type, `"${Bun.hash(bytes).toString(16)}"`));
-      if (/^editor\.[^.]+\.(js|css)$/.test(name))
-        editorAliases.set(`/vendor/editor.${name.endsWith(".css") ? "css" : "js"}`, path);
-    }
-    const entry = editorAliases.get("/vendor/editor.js");
-    if (!entry || !editorAliases.has("/vendor/editor.css")) {
-      throw new Error("the editor build produced no JavaScript/CSS pair");
-    }
-    editorBuildId = basename(entry).split(".")[1];
-    editorError = "";
-  } catch (err) {
-    editorAssets.clear();
-    editorAliases.clear();
-    editorBuildId = "";
-    editorError = String((err as Error)?.message || err);
-    process.stderr.write(`[z-notes] editor bundle failed: ${editorError}\n`);
-  }
-}
-
-/** GET /vendor/editor… — 302 for the unhashed alias, the asset for a hashed one. */
-function serveEditor(pathname: string, req: Request): Response {
-  if (editorError) {
-    return fail(503, "vendor-unavailable", {
-      message: "The editor bundle is unavailable; reload once the server has rebuilt it.",
-      detail: editorError,
-    });
-  }
-  const alias = editorAliases.get(pathname);
-  if (alias) {
-    return new Response(null, {
-      status: 302,
-      headers: { location: alias, "cache-control": "no-cache" },
-    });
-  }
-  const asset = editorAssets.get(pathname);
-  // never substitute another asset for a stale hash: the importer is generated
-  if (!asset) return fail(404, "not-found", { message: `No such editor asset: ${pathname}` });
-  return assetResponse(asset, req, IMMUTABLE_CACHE);
-}
-
-/** GET /vendor/… — 302 for the unhashed alias, the bundle for the hashed one. */
-function serveVendor(pathname: string, req: Request): Response {
-  if (!vendor) {
-    // the client feature-detects on worker init; a JSON body it can read beats
-    // an opaque 500, and secrets simply degrade to the badge
-    return fail(503, "vendor-unavailable", {
-      message: "The age bundle could not be built; secrets features are unavailable.",
-      detail: vendorError,
-    });
-  }
-  if (pathname === "/vendor/age.js") {
-    return new Response(null, {
-      status: 302,
-      headers: { location: `/vendor/${vendor.name}`, "cache-control": "no-cache" },
-    });
-  }
-  if (pathname !== `/vendor/${vendor.name}`) {
-    // a hash from a previous build — send them to the current one
-    return new Response(null, {
-      status: 302,
-      headers: { location: `/vendor/${vendor.name}`, "cache-control": "no-cache" },
-    });
-  }
-  return assetResponse(vendor.rep, req, IMMUTABLE_CACHE);
-}
-
-/* ============================================================
-   Static frontend (Bun emits no ETag — we add one and honour If-None-Match).
-
-   Two things happen here that are not "read a file and send it":
-
-   1. The shell is rewritten. index.html ships the stylesheet link pointing at
-      `/vendor/editor.css`, the no-cache alias; the served copy points at the
-      hashed stylesheet instead, carries the hashed script path in `data-js` for
-      `renderVisual` to import, and gains a `modulepreload` for it. That removes
-      a 302 round trip per asset from every load AND starts the 1.3 MB entry
-      while the parser is still in <head>, instead of after the tree has
-      loaded. The rewritten bytes are memoised per build; the shell's ETag
-      carries `editorBuildId`, so a new bundle invalidates the HTML that names
-      it and no browser can keep a copy pointing at assets that are gone.
-   2. Textual files are compressed once and kept. There are a dozen of them and
-      none is large; recompressing per request is the cost this avoids.
-
-   Everything here stays `no-cache` + ETag: these paths are NOT
-   content-addressed, so a month of freshness would mean a release the browser
-   never sees until it expires. Revalidation costs one 304.
-   ============================================================ */
-
-/** The `<link id="editor-css">` tag in app/index.html, whatever else it carries. */
-const EDITOR_LINK = /<link\b[^>]*\bid="editor-css"[^>]*>/;
-
-function withHashedEditor(html: string): string {
-  const css = editorAliases.get("/vendor/editor.css");
-  const js = editorAliases.get("/vendor/editor.js");
-  // the build failed: leave the aliases in place, they answer 503 and the pane offers a reload
-  if (!css || !js) return html;
-  return html.replace(
-    EDITOR_LINK,
-    (tag) =>
-      tag.replace('href="/vendor/editor.css"', `href="${css}" data-js="${js}"`) +
-      `\n<link rel="modulepreload" href="${js}">`
-  );
-}
-
-/** rel → the representation built for its current ETag. */
-const staticAssets = new Map<string, Representation>();
-/** Above this a file is streamed from disk rather than held compressed in
-    memory. Nothing shipped in app/ is close. */
-const STATIC_MAX = 4 * 1024 * 1024;
-
-async function serveStatic(pathname: string, req: Request): Promise<Response> {
-  let rel = pathname === "/" ? "index.html" : pathname.slice(1);
-  if (rel.endsWith("/")) rel += "index.html";
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(rel);
-  } catch {
-    return fail(400, "bad-path", { message: "Malformed URL path." });
-  }
-  if (decoded.includes("\0") || decoded.split("/").some((s) => s === "..")) {
-    return fail(400, "bad-path", { message: "Path escapes the app directory." });
-  }
-  const abs = resolve(APP_DIR, decoded);
-  if (abs !== APP_DIR && !abs.startsWith(APP_DIR + "/")) {
-    return fail(400, "bad-path", { message: "Path escapes the app directory." });
-  }
-  const file = Bun.file(abs);
-  let st;
-  try {
-    st = await file.stat();
-  } catch {
-    return fail(404, "not-found", { message: `No such file: ${pathname}` });
-  }
-  if (!st.isFile()) return fail(404, "not-found", { message: `No such file: ${pathname}` });
-
-  const shell = rel === "index.html";
-  const type = file.type || "application/octet-stream";
-  const etag = `W/"${st.size.toString(16)}-${Math.round(st.mtimeMs).toString(16)}${shell ? "-" + editorBuildId : ""}"`;
-  /* app/webmcp.js registers the app's operations as WebMCP tools (ADR 0031),
-     and Chrome refuses that registration unless the page's agent cluster is
-     origin-keyed and the `tools` permission is delegated to the origin. Both
-     are properties of the document, so they ride on the shell only. `rel` is
-     `index.html` for `/`, `/d/*` and `/settings*` alike, and the 304 and HEAD
-     branches below share this object, so a cached reload keeps them too. */
-  const extra: Record<string, string> = shell
-    ? { "origin-agent-cluster": "?1", "permissions-policy": "tools=(self)" }
-    : {};
-
-  if (TEXTUAL.test(type) && st.size <= STATIC_MAX) {
-    let rep = staticAssets.get(rel);
-    if (!rep || rep.etag !== etag) {
-      const text = await file.text();
-      rep = represent(new TextEncoder().encode(shell ? withHashedEditor(text) : text), type, etag);
-      staticAssets.set(rel, rep);
-    }
-    return assetResponse(rep, req, REVALIDATE_CACHE, extra);
-  }
-
-  // icons and anything else binary: already compressed, streamed straight off disk
-  const headers: Record<string, string> = { ...extra, etag, "cache-control": REVALIDATE_CACHE, "content-type": type };
-  const inm = req.headers.get("if-none-match");
-  if (inm && inm.split(",").some((t) => t.trim() === etag)) return new Response(null, { status: 304, headers });
-  if (req.method === "HEAD") return new Response(null, { status: 200, headers: { ...headers, "content-length": String(st.size) } });
-  return new Response(file, { status: 200, headers });
-}
-
-/* ============================================================
    API router — a declarative table.
 
    One place owns method dispatch (405), the no-route 404, param extraction
@@ -836,7 +474,10 @@ const ROUTES: Route[] = [
   {
     pattern: "docs",
     methods: {
-      GET: async () => json(await registry.treeBody()),
+      GET: async () => {
+        const epoch = vaultEpoch;
+        return json({ ...(await registry.treeBody()), epoch });
+      },
       POST: async (c) => {
         /* `path` picks the vault here exactly as the URL does on the routes
            below; a body that names no legal path falls through to the primary,
@@ -845,6 +486,28 @@ const ROUTES: Route[] = [
         if (t && "unknownVault" in t) return noVault(t.unknownVault);
         if (!t) return docs.create(c.body);
         return registry.requalify(t.stack, await t.stack.docs.create({ ...c.body, path: t.rel }));
+      },
+    },
+  },
+  {
+    pattern: "replica",
+    methods: {
+      POST: async (c) => {
+        const paths: unknown = c.body?.paths;
+        if (!Array.isArray(paths) || paths.length < 1 || paths.length > 500 || paths.some((p) => typeof p !== "string")) {
+          return fail(400, "bad-body", { message: "paths must hold 1–500 doc paths." });
+        }
+        const found = [];
+        const missing: string[] = [];
+        for (const path of paths as string[]) {
+          const t = registry.resolveDocPath(path);
+          const doc = t && "stack" in t && isDocPath(t.rel) ? await t.stack.docs.docBody(t.stack.docs.canonicalDocPath(t.rel)) : null;
+          if (doc && t && "stack" in t) {
+            doc.path = qualify(t.stack.id, doc.path);
+            found.push(doc);
+          } else missing.push(path);
+        }
+        return json({ docs: found, missing });
       },
     },
   },
@@ -1244,7 +907,33 @@ const ROUTES: Route[] = [
   { pattern: "ai/proposals/{id}/reject", methods: { POST: aiProp("reject") } },
 ];
 
-async function api(req: Request, url: URL, caller: string | null): Promise<Response> {
+/** JSON API bodies go out brotli/gzip-coded when the client accepts it (the tree
+    and the replica batch are the large ones). Lighter settings than the assets:
+    this runs per request. */
+async function compressJson(req: Request, res: Response): Promise<Response> {
+  if (!res.headers.get("content-type")?.startsWith("application/json") || res.headers.has("content-encoding")) return res;
+  const offered = offeredCodings(req);
+  const coding = offered.has("br") ? "br" : offered.has("gzip") ? "gzip" : null;
+  if (!coding) return res;
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const headers = new Headers(res.headers);
+  let out = bytes;
+  if (bytes.byteLength >= COMPRESS_MIN) {
+    out = new Uint8Array(
+      coding === "br"
+        ? zlib.brotliCompressSync(bytes, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 } })
+        : zlib.gzipSync(bytes, { level: 6 })
+    );
+    headers.set("content-encoding", coding);
+    headers.set("vary", "accept-encoding");
+    headers.set("content-length", String(out.byteLength));
+  }
+  return new Response(out, { status: res.status, statusText: res.statusText, headers });
+}
+
+const api = async (req: Request, url: URL, caller: string | null) => compressJson(req, await dispatch(req, url, caller));
+
+async function dispatch(req: Request, url: URL, caller: string | null): Promise<Response> {
   const method = req.method.toUpperCase();
   const rest = url.pathname.slice("/api/".length);
 
@@ -1334,8 +1023,42 @@ recon.start();
    one that failed and the app boots with the rest. */
 await registry.boot();
 
-// the two browser bundles, built once and kept in memory (never written to disk)
-await Promise.all([buildVendor(), buildEditor()]);
+/* The frontend (server/frontend.ts, ADR 0040). An image boots from the `dist/`
+   its build wrote — and fails loudly when that is unreadable, because an image
+   without its frontend is a broken image; dev and tests build it in memory.
+   `ZNOTES_SW=off` serves the worker that removes itself, and is the default in
+   dev, where a cached shell would hide every edit. */
+const DIST = process.env.ZNOTES_DIST ? resolve(process.env.ZNOTES_DIST) : null;
+const DEV = process.env.ZNOTES_DEV === "1";
+const SW = (process.env.ZNOTES_SW ?? (DEV ? "off" : "on")) !== "off";
+const ORIGIN = (process.env.ZNOTES_ORIGIN || "").trim() || null;
+const inMemory = async () => {
+  const built = await buildFrontend({ appDir: APP_DIR, sw: SW, origin: ORIGIN, quality: 9 });
+  if (built.error) process.stderr.write(`[z-notes] frontend build failed: ${built.error}\n`);
+  return built;
+};
+let frontend = DIST ? await loadFrontend(DIST, { sw: SW, origin: ORIGIN }) : await inMemory();
+
+/* `bun --hot` reloads the server's own graph, which app/ is not part of, so dev
+   watches app/ itself and swaps in a rebuild. The watcher lives on globalThis
+   because a hot reload re-runs this module and must close the old one. */
+if (DEV && !DIST) {
+  const g = globalThis as { znotesAppWatch?: { close(): void } };
+  g.znotesAppWatch?.close();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let latest = 0; // rebuilds can overlap; only the newest may replace `frontend`
+  g.znotesAppWatch = watch(APP_DIR, { recursive: true }, () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const seq = ++latest;
+      const started = performance.now();
+      const built = await inMemory();
+      if (seq !== latest) return;
+      frontend = built;
+      process.stdout.write(`[z-notes] frontend rebuilt in ${Math.round(performance.now() - started)} ms${frontend.error ? " (failed)" : ""}\n`);
+    }, 150);
+  });
+}
 
 /* Retention sweep at boot, BEFORE the port opens: a server that was off for a
    month must not serve a trash listing full of entries it is about to delete.
@@ -1390,7 +1113,7 @@ const server = Bun.serve({
        liveness probe should ask.
 
        It doubles as readiness because of where the listener starts: `Bun.serve`
-       is called AFTER the boot-time `recon.reconcile()`, `buildVendor()` and
+       is called AFTER the boot-time `recon.reconcile()`, the frontend build and
        `gitSync.start()` have all awaited, so the port does not exist until the
        index is warm. Anything that answers here is genuinely ready.
 
@@ -1429,41 +1152,9 @@ const server = Bun.serve({
          header, which a client could forge. */
       return api(req, url, srv.requestIP(req)?.address ?? null);
     }
-    /* `/vendor/*` is THIRD-PARTY CODE, and it arrives two ways. Two bundles are
-       built in memory at boot and have no file behind them — the age bundle
-       (`serveVendor`) and the editor island (`serveEditor`) — so they are
-       matched by name here. Anything else under the prefix is an ordinary file
-       in APP_DIR and falls through to `serveStatic` below, which already owns
-       traversal-proofing and ETags. Each guard is narrow on purpose: the age
-       one used to swallow the whole prefix and redirect every miss to the age
-       bundle, which would have served 3 MB of crypto to anything that asked. */
-    if (url.pathname === "/vendor/editor.js" || url.pathname === "/vendor/editor.css" || url.pathname.startsWith("/vendor/editor/")) {
-      if (req.method !== "GET" && req.method !== "HEAD")
-        return fail(405, "method-not-allowed", { message: `${req.method} ${url.pathname}` });
-      return serveEditor(url.pathname, req);
-    }
-    if (url.pathname === "/vendor/age.js" || url.pathname.startsWith("/vendor/age.")) {
-      if (req.method !== "GET" && req.method !== "HEAD")
-        return fail(405, "method-not-allowed", { message: `${req.method} ${url.pathname}` });
-      return serveVendor(url.pathname, req);
-    }
     if (req.method !== "GET" && req.method !== "HEAD")
       return fail(405, "method-not-allowed", { message: `${req.method} ${url.pathname}` });
-    /* `/d/<vault path>` is the frontend's routing space, never a file: the app
-       owns one URL per open doc so a doc can be linked, refreshed and walked
-       back to. It answers with the SPA shell — the same `index.html` bytes and
-       the same ETag as `/`, so nothing about asset caching changes — and the
-       app reads the path back out of `location`. The prefix is what keeps it
-       collision-free against `/api/*`, `/events`, `/vendor/*`, `/healthz` and
-       every real file under app/ (`/app.js`, `/themes/*`). */
-    if (url.pathname === "/d" || url.pathname.startsWith("/d/")) return serveStatic("/", req);
-    /* `/settings` and `/settings/<section>` are the app's other routing space:
-       Settings is a page, not a modal, so it has a real address that can be
-       deep-linked, reloaded and walked back out of. Same SPA shell, same ETag.
-       Note this is a FRONTEND route and has nothing to do with
-       `/api/settings` — the API lives under `/api/*` and was matched above. */
-    if (url.pathname === "/settings" || url.pathname.startsWith("/settings/")) return serveStatic("/", req);
-    return serveStatic(url.pathname, req);
+    return serveFrontend(frontend, url.pathname, req) ?? fail(404, "not-found", { message: `No such file: ${url.pathname}` });
   },
   error(err) {
     // detail to stderr only: err.message carries absolute filesystem paths

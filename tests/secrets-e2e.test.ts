@@ -292,7 +292,7 @@ async function block() {
  */
 const armorInModel = () =>
   page.evaluate(async (armor) => {
-    const { state } = await import("/state.js");
+    const { state } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
     return state.docs.get(state.active).markdown.includes(armor);
   }, blockArmor);
 
@@ -407,7 +407,24 @@ const storageDump = () =>
     } catch {
       /* ignore */
     }
-    return { local: dump(localStorage), session: dump(sessionStorage), dbs, dbApi };
+    /* every record of the replica (ADR 0041), the one database the app may own */
+    let idb = "";
+    if (dbs.includes("znotes")) {
+      const db: IDBDatabase = await new Promise((ok, no) => {
+        const r = indexedDB.open("znotes");
+        r.onsuccess = () => ok(r.result);
+        r.onerror = () => no(r.error);
+      });
+      for (const name of [...db.objectStoreNames]) {
+        const all = await new Promise((ok) => {
+          const r = db.transaction(name).objectStore(name).getAll();
+          r.onsuccess = () => ok(r.result);
+        });
+        idb += JSON.stringify(all);
+      }
+      db.close();
+    }
+    return { local: dump(localStorage), session: dump(sessionStorage), dbs, dbApi, idb };
   });
 
 /* ------------------------------------------------------------------
@@ -659,10 +676,15 @@ describe("secrets e2e — unlock and reveal", () => {
       const label = needle.slice(0, 24);
       expect(`${label} in web storage: ${blob.includes(needle)}`).toBe(`${label} in web storage: false`);
     }
-    /* the design is absolute: nothing goes in IndexedDB at all (research §5.2),
-       so the database list is empty rather than merely crypto-free */
-    expect(s.dbApi).toBe(true); // otherwise the line below proves nothing
-    expect(s.dbs).toEqual([]);
+    /* IndexedDB holds the replica and nothing else (ADR 0041): docs as their
+       armor and the passphrase-WRAPPED keyring — the bytes the vault's git repo
+       already holds — but never a passphrase, a raw identity or a plaintext */
+    expect(s.dbApi).toBe(true); // otherwise the lines below prove nothing
+    expect(s.dbs.filter((n) => n !== "znotes")).toEqual([]);
+    for (const needle of [PASSPHRASE, identity, "AGE-SECRET-KEY", CANARY]) {
+      const label = needle.slice(0, 24);
+      expect(`${label} in IndexedDB: ${s.idb.includes(needle)}`).toBe(`${label} in IndexedDB: false`);
+    }
   }, 20000);
 
   test("Copy puts the plaintext on the clipboard and shows a countdown that ticks", async () => {
@@ -870,7 +892,9 @@ describe("secrets e2e — the session does not survive a reload", () => {
         `${n.slice(0, 20)} survived the reload: false`
       );
     }
-    expect(s.dbs).toEqual([]);
+    expect(s.dbs.filter((n) => n !== "znotes")).toEqual([]);
+    for (const n of [PASSPHRASE, WRONG_PASSPHRASE, identity, "AGE-SECRET-KEY", CANARY, "EDITEDBYTHEEETWOEGATE"])
+      expect(`${n.slice(0, 20)} in IndexedDB: ${s.idb.includes(n)}`).toBe(`${n.slice(0, 20)} in IndexedDB: false`);
   }, 60000);
 });
 

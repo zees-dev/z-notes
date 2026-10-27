@@ -238,7 +238,7 @@ describe("visibilitychange flushes the buffer", () => {
     await typeInDoc(" " + big);
 
     const bytes = await page.evaluate(async (p) => {
-      const { state } = await import("/state.js");
+      const { state } = await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src);
       return new TextEncoder().encode(state.docs.get(p).markdown).length;
     }, BIG_DOC);
     expect(`the buffer is over the 64KiB keepalive cap: ${bytes > 65536}`).toBe(
@@ -257,7 +257,7 @@ describe("visibilitychange flushes the buffer", () => {
     /* Disk visibility can win the poll just before the fetch continuation
        adopts its new baseline. Do not carry that transient dirty state into
        the next test, where the exit guard would correctly stop navigation. */
-    await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent !== "Unsaved changes", {
+    await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Saved", {
       timeout: 8000,
     });
   }, 90000);
@@ -282,14 +282,12 @@ describe("visibilitychange flushes the buffer", () => {
       /* an explicit save, so the failure is deterministic rather than waiting
          on a debounce that is turned off anyway */
       await page.click(".statusbar #saveInd");
-      await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Unsaved changes", {
+      /* the write is held on the device (ADR 0041), and the pip says exactly that */
+      await page.waitForFunction(() => document.getElementById("saveTxt")!.textContent === "Saved on this device", {
         timeout: 8000,
       });
       expect(`the failed save left nothing on disk: ${(diskText(HEAL_DOC) ?? "").includes(canary)}`).toBe(
         "the failed save left nothing on disk: false"
-      );
-      expect(`…and the buffer still says it is unsaved: ${await page.evaluate(() => document.getElementById("saveTxt")!.textContent)}`).toBe(
-        "…and the buffer still says it is unsaved: Unsaved changes"
       );
     } finally {
       await page.setOfflineMode(false);
@@ -496,6 +494,51 @@ describe("a deletion elsewhere never takes an unsaved buffer with it", () => {
       await new Promise((r) => setTimeout(r, 600));
     }
   }, 120000);
+
+  /* THE BOOT CRITICAL PATH (spec 0024 §3). Editing needs the settings, the
+     tree, the doc and the island; the assistant session, the proposals and the
+     sync status are chips. Each of those three is held for 10 s here: the doc
+     must be editable long before that, and each chip paints once it answers.
+     The proposals answer carries one stack entry (the 0002 shape), so the
+     change stack has something to paint only if that answer was read. */
+  test("a slow assistant, proposal list or sync status never holds the editor back", async () => {
+    const HOLD = 10_000;
+    const SLOW = new Set(["/api/ai/sessions/current", "/api/ai/proposals", "/api/sync/status"]);
+    const PROPOSALS = { proposals: [], stack: [{ id: "prop_held", label: "held change", index: 1, revertable: true }] };
+    const p = await forgetBrowserState(await browser.newPage());
+    try {
+      await p.setRequestInterception(true);
+      p.on("request", (req) => {
+        const path = new URL(req.url()).pathname;
+        if (path === "/api/ai/proposals")
+          setTimeout(() => void req.respond({ status: 200, contentType: "application/json", body: JSON.stringify(PROPOSALS) }).catch(() => {}), HOLD);
+        else if (SLOW.has(path)) setTimeout(() => void req.continue().catch(() => {}), HOLD);
+        else void req.continue();
+      });
+      const t0 = Date.now();
+      await p.goto(srv.base + "/d/" + ANCHOR, { waitUntil: "domcontentloaded" });
+      await p.waitForSelector('#doc .bn-editor[contenteditable="true"]', { timeout: HOLD });
+      const editable = Date.now() - t0;
+      expect(`editable before the held reads answer: ${editable < HOLD - 2000}`).toBe("editable before the held reads answer: true");
+      // the visible app, not a boot screen over an editor, and an edit that lands
+      expect(await p.evaluate(() => [!document.getElementById("app")!.hidden, document.getElementById("boot")!.hidden])).toEqual([true, true]);
+      await (await p.waitForSelector("#doc .bn-inline-content", { timeout: 5000 }))!.click();
+      await new Promise((r) => setTimeout(r, 80)); // ProseMirror ignores a caret move for 50 ms after a view update
+      await p.keyboard.press("End");
+      await p.keyboard.type(" typed while the chips wait");
+      await p.waitForFunction(() => document.querySelector("#doc .bn-editor")!.textContent!.includes("typed while the chips wait"), { timeout: 3000 });
+      expect(Date.now() - t0 < HOLD - 1000).toBe(true);
+      const chips = () =>
+        p.evaluate(() => [document.getElementById("sessId")!.textContent, document.getElementById("stSyncTxt")!.textContent, document.getElementById("stack")!.hidden]);
+      expect(await chips()).toEqual(["—", "—", true]);
+      const session = (await srv.get("/api/ai/sessions/current")).body.id;
+      await p.waitForFunction((id) => document.getElementById("sessId")!.textContent === id, { timeout: HOLD + 5000 }, session);
+      await p.waitForFunction(() => document.getElementById("stSyncTxt")!.textContent !== "—", { timeout: 5000 });
+      await p.waitForFunction(() => !document.getElementById("stack")!.hidden && document.getElementById("stackCnt")!.textContent === "1", { timeout: 5000 });
+    } finally {
+      await p.close();
+    }
+  }, 60000);
 
   test("no uncaught page errors along any of it", () => {
     expect(`uncaught page errors: ${pageErrors.join(" | ")}`).toBe("uncaught page errors: ");

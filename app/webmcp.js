@@ -54,6 +54,11 @@ import { ZOOM_STEPS, setZoom, zoomFactor } from "./zoom.js";
     The status is inert; nothing here is on the wire. */
 const deny = (error, message, extra) => new api.ApiError(409, { error, message, ...extra });
 
+/** A generic "could not" from a path that reports its cause only as a toast.
+    When the last request found no network, that cause is the offline message,
+    and the agent reads it rather than the shrug. */
+const failed = (message) => (api.offline.now ? api.offlineError() : deny("failed", message));
+
 /** Wrap one tool's execute so it answers with data whatever happens. The
     extra fields of an error body (`rev` on a conflict, `count` on an
     ambiguous edit) travel with it; they are what the model corrects from. */
@@ -180,6 +185,7 @@ const nest = (path, value) => str(path).split(".").reduceRight((v, k) => ({ [k]:
    the boot-time answer saying the terminal is off. */
 async function terminalOn() {
   const st = await refreshTerminalStatus();
+  if (!st && api.offline.now) throw api.offlineError();
   if (!st || !st.enabled) throw deny("terminal-disabled", "The terminal is switched off in Settings.");
   if (!st.configured) throw deny("terminal-disabled", "No terminal password is set, so the terminal is off.");
   return st;
@@ -319,6 +325,8 @@ const TOOLS = [
     annotations: { readOnlyHint: true, untrustedContentHint: true },
     execute: async () => {
       await refreshTrash();
+      // that read found no network: the list on hand is stale
+      if (api.offline.now) throw api.offlineError();
       const t = state.trash;
       return { available: !!t.available, retentionDays: t.retentionDays, entries: t.entries };
     },
@@ -357,7 +365,11 @@ const TOOLS = [
     name: "terminal_status",
     description: "Report whether the terminal is switched on, has a password configured, is unlocked in this tab, and what is running. These are the four facts run_command needs.",
     annotations: { readOnlyHint: true },
-    execute: async () => (await refreshTerminalStatus()) || { error: "terminal-disabled", message: "This server serves no terminal." },
+    execute: async () => {
+      const st = await refreshTerminalStatus();
+      if (!st && api.offline.now) throw api.offlineError();
+      return st || { error: "terminal-disabled", message: "This server serves no terminal." };
+    },
   },
   {
     name: "list_commands",
@@ -381,7 +393,7 @@ const TOOLS = [
     execute: async ({ path, line }) => {
       if (!state.docPaths.has(path)) throw deny("not-found", "No such doc: " + path + ".");
       await openDoc(path, { force: true, line });
-      if (state.active !== path) throw deny("failed", "Could not open " + path + ".");
+      if (state.active !== path) throw failed("Could not open " + path + ".");
       return { path: state.active };
     },
   },
@@ -456,7 +468,7 @@ const TOOLS = [
   },
   {
     name: "write_doc",
-    description: "Replace a doc's whole markdown and save it. Pass the rev you read to be refused with rev-conflict if it moved since, or omit it to overwrite. The change is one step on the app's undo timeline and the open editor repaints.",
+    description: "Replace a doc's whole markdown and save it. Pass the rev you read to be refused with rev-conflict if it moved since, or omit it to overwrite. The change is one step on the app's undo timeline and the open editor repaints. Offline the write is kept on this device and answers queued: true; it is sent when the server is back.",
     inputSchema: schema(
       { path: DOC_PATH, markdown: MARKDOWN, rev: { type: "string", description: "The rev read_doc gave you, to write only if nothing changed since." } },
       ["path", "markdown"]
@@ -486,7 +498,7 @@ const TOOLS = [
       const rep = str(replace);
       const next = all === true ? parts.join(rep) : text.replace(needle, () => rep);
       const r = await replaceDocText(path, next);
-      return { path: r.path, rev: r.rev, replaced: all === true ? n : 1 };
+      return { path: r.path, rev: r.rev, replaced: all === true ? n : 1, ...(r.queued ? { queued: true } : null) };
     },
   },
   {
@@ -500,14 +512,16 @@ const TOOLS = [
   },
   {
     name: "save_doc",
-    description: "Write the open buffer to disk. Defaults to the doc on screen. Answers with whether it reached the server and the rev it now has.",
+    description: "Write the open buffer to disk. Defaults to the doc on screen. Answers with whether it reached the server and the rev it now has. Offline the buffer is kept on this device instead: saved is false and queued is true, and it is sent when the server is back.",
     inputSchema: schema({ path: DOC_PATH }),
     execute: async ({ path }) => {
       const p = path || state.active;
       if (!p) throw deny("no-active-doc", "No doc is open.");
       const saved = await saveDoc(p);
       const doc = state.docs.get(p);
-      return { path: p, saved: !!saved, rev: (doc && doc.rev) || null };
+      // `doc.queued`: on this device's outbox, not on the server
+      const queued = !!saved && !!doc && doc.queued != null;
+      return { path: p, saved: !!saved && !queued, ...(queued ? { queued } : null), rev: (doc && doc.rev) || null };
     },
   },
   {
@@ -526,7 +540,7 @@ const TOOLS = [
       if (/[\]\r\n]/.test(to)) throw deny("bad-path", 'A name cannot contain "]" or a line break.');
       if (findNode(to)) throw deny("exists", to + " already exists.");
       const r = await moveByPath(from, to);
-      if (!r) throw deny("failed", "The move was refused: the unsaved buffer could not be written first.");
+      if (!r) throw failed("The move was refused: the unsaved buffer could not be written first.");
       return { from, to: r.path || to, backlinksUpdated: r.backlinksUpdated || 0 };
     },
   },
@@ -542,7 +556,7 @@ const TOOLS = [
       const node = findNode(path);
       if (!node) throw deny("not-found", "No such doc or folder: " + path + ".");
       await settleBuffer();
-      if (!(await doDelete(path, node.type === "folder" ? "folder" : "doc", { force: true }))) throw deny("failed", "Could not delete " + path + ".");
+      if (!(await doDelete(path, node.type === "folder" ? "folder" : "doc", { force: true }))) throw failed("Could not delete " + path + ".");
       return { path, deleted: true, trash: !!state.trash.available };
     },
   },
@@ -692,7 +706,7 @@ const TOOLS = [
       const before = (state.session && state.session.id) || null;
       await startNewSession();
       const after = (state.session && state.session.id) || null;
-      if (!after || after === before) throw deny("failed", "Could not start a new session.");
+      if (!after || after === before) throw failed("Could not start a new session.");
       return { sessionId: after };
     },
   },

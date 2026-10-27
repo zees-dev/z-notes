@@ -185,7 +185,8 @@ export function initSecrets() {
     }
 
     try {
-      vault.worker = new Worker(new URL("./crypto-worker.js", import.meta.url), { type: "module" });
+      // the build does not rewrite `new Worker(new URL(…))`; the shell names the hashed entry
+      vault.worker = new Worker(JSON.parse($("#znotes-assets").textContent).worker, { type: "module" });
     } catch (err) {
       return disableSecrets("The crypto worker could not start: " + (err.message || err));
     }
