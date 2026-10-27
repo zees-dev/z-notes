@@ -626,7 +626,11 @@ Verified on this machine:
   37 s while it was issued), the shell headers, brotli and SSE passed through
   the proxy, and a headless Chromium on the tailnet registered the service
   worker, filled the replica with every doc and reopened offline. WebAPK
-  minting on the phone and Safari are unexercised.
+  minting on the phone and Safari are unexercised. Release 0.22.1 (the
+  `installed.navigationBar` setting, ADR 0043) was built and applied the same
+  way the same day; both addresses served the `standalone` manifest and both
+  vaults kept every doc. Its full screen is exercised only in headless
+  Chromium, not on an Android device.
 
 - **`docker build` was never run.** The `docker` CLI exists but no daemon is
   reachable (`/var/run/docker.sock` absent). The Dockerfile is therefore
