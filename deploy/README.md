@@ -158,8 +158,8 @@ This LAN name is the **break-glass** (section 7). The canonical address is the
 MagicDNS one, `https://znotes.tailb95e62.ts.net`, served by the Tailscale
 operator with its own certificate — it does not use this hostname, this
 certificate or these two files. If you move to another tailnet, change the name
-in `k3s/60-tailscale-ingress.yaml`, `ZNOTES_ORIGIN` in `20-deployment.yaml` and
-the redirect in `50-ingress.yaml` together.
+in `k3s/60-tailscale-ingress.yaml` and `ZNOTES_ORIGIN` in `20-deployment.yaml`
+together, and update the links that name it (the root README, the homepage tile).
 
 ## 5. Apply
 
@@ -267,7 +267,7 @@ once, with the pod stopped. Skip it entirely on a fresh install — an empty PVC
 just grows `/vaults/vault` on first boot.
 
 **1 — Make it recoverable.** Sync the vault — the statusbar control, or
-`curl -X POST https://znotes.k3s.lan/api/sync/now` — until sync status reads
+`curl -X POST https://znotes.tailb95e62.ts.net/api/sync/now` — until sync status reads
 `synced` with `ahead: 0`. Every note is then on the remote, and the notes half
 of this is recoverable from a `git clone` even if the volume evaporates. Then be
 clear-eyed about the other half: `.znotes/` is
@@ -359,7 +359,7 @@ want the new image; move them together.
 **6 — Verify, before you trust it.** Ask the app where its vaults are:
 
 ```sh
-curl -s https://znotes.k3s.lan/api/vaults | jq '.vaults[] | {id, root, remote, docCount}'
+curl -s https://znotes.tailb95e62.ts.net/api/vaults | jq '.vaults[] | {id, root, remote, docCount}'
 # or, without DNS/TLS in the way:
 # kubectl -n znotes port-forward deploy/znotes 4700:4700 & curl -s localhost:4700/api/vaults | jq
 ```

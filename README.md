@@ -4,8 +4,8 @@ A single-user markdown notes app where **files on disk are the source of
 truth** and the app is just a view over them. Edit in the app, edit in your
 editor, edit over ssh — it's all the same vault, and the app reconciles.
 
-One [Bun](https://bun.sh) process serves everything: a no-build vanilla-JS
-frontend, a JSON + SSE API, client-side encrypted secrets, git sync, an AI
+One [Bun](https://bun.sh) process serves everything: a built, installable,
+offline-capable frontend, a JSON + SSE API, client-side encrypted secrets, git sync, an AI
 edit relay and a gated terminal.
 
 ## What it does
@@ -28,8 +28,9 @@ edit relay and a gated terminal.
   [WebMCP](https://github.com/webmachinelearning/webmcp) tool wrapping the
   function the click calls, so an agent drives the app instead of scraping it.
   No tool decrypts a secret or takes a passphrase.
-- **Installable** — a PWA with proper icons, launch screen and phone-shaped
-  back-button behavior.
+- **Installable and offline** — a PWA with proper icons, launch screen and
+  phone-shaped back-button behavior. Installed from its canonical address it
+  opens, edits and creates docs offline, and syncs them when the network returns.
 - **One process, one replica** — sqlite + fs.watch + a git working tree.
   Deliberately not a multi-tenant system.
 
@@ -73,15 +74,24 @@ the shape the HTTP API uses.
 
 ## Deploy it
 
-`deploy/` has a production Dockerfile and k3s manifests with TLS via
-cert-manager, plus the reasoning behind every knob —
+The deployed app lives at **<https://znotes.tailb95e62.ts.net>**, its one
+canonical address (ADR [0042](docs/adr/0042-one-canonical-origin.md)): reachable
+on the tailnet with a publicly trusted certificate, and the only origin where it
+installs and works offline. Install it from there in Chrome on each device.
+`https://znotes.k3s.lan` is the LAN break-glass for when Tailscale is down: it
+works online and points back to the canonical address.
+
+`deploy/` has a production Dockerfile and k3s manifests — the Tailscale
+operator Ingress for the canonical address, Traefik and cert-manager for the
+break-glass — plus the reasoning behind every knob;
 [deploy/README.md](deploy/README.md) is the runbook.
 
 ## Development
 
 ```sh
-bun test             # full suite (~12 min: real servers + headless Chromium)
-bun run gates        # the six acceptance gates (~70 s) — run before commits
+bun test             # full suite (~5 min: real servers + headless Chromium)
+bun run build        # the frontend → dist/ (the image runs it)
+bun run gates        # the seven acceptance gates — run before commits
 bun run lint:docs    # docs/link/layering enforcement
 ```
 
@@ -91,8 +101,9 @@ The repo is documentation-heavy on purpose: [AGENTS.md](AGENTS.md) is the map,
 the specs that drove each change — including
 [the normative HTTP/SSE contract](docs/specs/done/0002-http-api-v0.md).
 
-There is exactly one runtime dependency, `age-encryption`. There is no
-frontend build step. Adding a dependency is an ADR-sized decision.
+Dependencies are exactly pinned build inputs — `age-encryption` and the
+BlockNote editor set; the runtime image has no `node_modules`. Adding a
+dependency is an ADR-sized decision.
 
 ## License
 
