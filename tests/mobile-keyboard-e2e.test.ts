@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, test, expect } from "bun:test";
 import type { Browser, Page } from "puppeteer-core";
 import { readVaultText, startServer, sleep, type TestServer } from "./helpers";
-import { launchTestBrowser, newAppPage, appDriver, pressChord } from "./browser";
+import { launchTestBrowser, newAppPage, appDriver, MOD, pressChord } from "./browser";
 
 async function tapToolbar(page: Page, label: string) {
   await page.tap(`[aria-label="${label}"]`);
@@ -95,7 +95,6 @@ test('canceled typing refreshes history availability for toolbar and keyboard st
   try {
     await viewport(page, 500);
     await page.tap('.bn-inline-content');
-    const mod = await page.evaluate(() => /Mac/.test(navigator.platform) ? 'Meta' : 'Control');
     const text = () => page.$eval('.bn-editor', e => e.textContent);
     await historyAvailable(page, false, false);
     // One history group can cancel its text edits while still holding a step.
@@ -106,7 +105,7 @@ test('canceled typing refreshes history availability for toolbar and keyboard st
     for (const via of ['toolbar', 'keyboard']) {
       for (const redo of [false, true]) {
         if (via === 'toolbar') await page.tap(`.z-block-toolbar [aria-label="${redo ? 'Redo' : 'Undo'}"]`);
-        else await pressChord(page, 'KeyZ', mod, ...(redo ? ['Shift'] : []));
+        else await pressChord(page, 'KeyZ', MOD, ...(redo ? ['Shift'] : []));
         await historyAvailable(page, redo, !redo);
         expect(await text()).toBe('Canceled typing');
       }
@@ -119,7 +118,6 @@ test('phone history controls recover deletions, retain focus and clear redo on a
   try {
     await viewport(page, 500);
     await page.tap('.bn-inline-content');
-    const mod = await page.evaluate(() => /Mac/.test(navigator.platform) ? 'Meta' : 'Control');
     const content = () => page.$$eval('.bn-editor [data-content-type]', nodes =>
       nodes.map(node => [node.getAttribute('data-content-type'), node.textContent]));
     const focused = () => page.$eval('.bn-editor', e => e.contains(document.activeElement));
@@ -147,7 +145,7 @@ test('phone history controls recover deletions, retain focus and clear redo on a
     expect(await content()).toEqual([['heading', 'Keep']]);
     await historyAvailable(page, true, false);
     expect(await focused()).toBe(true);
-    await pressChord(page, 'KeyZ', mod);
+    await pressChord(page, 'KeyZ', MOD);
     expect(await content()).toEqual(original);
     await historyAvailable(page, false, true);
     await page.keyboard.type(' replacement');

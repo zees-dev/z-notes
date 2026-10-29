@@ -28,7 +28,7 @@ import { type Browser, type Page } from "puppeteer-core";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { startServer, waitUntil, type SeedMap, type TestServer } from "./helpers";
-import { forgetBrowserState, launchTestBrowser, pressChord, waitForFocusedInput } from "./browser";
+import { forgetBrowserState, launchTestBrowser, MOD, pressChord, waitForFocusedInput } from "./browser";
 
 /* ------------------------------------------------------------------
    fixtures
@@ -327,9 +327,7 @@ async function typeInto(p: Page, selector: string, value: string) {
     el.focus();
     el.select?.();
   }, selector);
-  await p.keyboard.down("Meta");
-  await p.keyboard.press("KeyA");
-  await p.keyboard.up("Meta");
+  await pressChord(p, "KeyA");
   await p.keyboard.type(value, { delay: 4 });
 }
 
@@ -568,6 +566,8 @@ describe("e2e — sidebar rename (inline-create idiom)", () => {
 
     /* the open editor followed the doc rather than pointing at a dead path */
     await page.waitForFunction((p) => document.getElementById("stPath")!.textContent === p, { timeout: 10000 }, RENAME_TO);
+    /* the tree repaints from the next tree fetch, a round trip after the editor */
+    await page.waitForFunction((p) => document.querySelector<HTMLElement>("#tree .row.file.active")?.dataset.doc === p, { timeout: 10000 }, RENAME_TO).catch(() => {});
     const active = await page.evaluate(
       () => document.querySelector<HTMLElement>("#tree .row.file.active")?.dataset.doc ?? null
     );
@@ -978,11 +978,7 @@ describe("e2e — creation is context-aware and path-aware", () => {
   const HINT = "#tree .newhint";
 
   const chordN = async (shift: boolean) => {
-    await page.keyboard.down("Meta");
-    if (shift) await page.keyboard.down("Shift");
-    await page.keyboard.press("KeyN");
-    if (shift) await page.keyboard.up("Shift");
-    await page.keyboard.up("Meta");
+    await pressChord(page, "KeyN", MOD, ...(shift ? ["Shift"] : []));
     await waitForFocusedInput(page, NEWROW);
   };
   const ctx = () => page.$eval(NEWROW, (n) => n.getAttribute("aria-label")!);

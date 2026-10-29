@@ -29,6 +29,7 @@ import {
   launchTestBrowser,
   newAppPage,
   onSettings as isOnSettings,
+  MOD,
   pressChord,
   waitForApp,
   waitForFocusedInput,
@@ -76,7 +77,7 @@ const waitSettings = (want: boolean) => waitForSettings(page, want);
 
 /* the shared variadic chord — see tests/browser.ts */
 const chord = (code: string, shift = false) =>
-  shift ? pressChord(page, code, "Meta", "Shift") : pressChord(page, code);
+  shift ? pressChord(page, code, MOD, "Shift") : pressChord(page, code);
 
 /** ⌘N (⇧⌘N for a folder), settled — see `waitForFocusedInput` for why the wait
     is on the CARET and not on the node. */

@@ -56,7 +56,7 @@ import {
   type SeedMap,
   type TestServer,
 } from "./helpers";
-import { forgetBrowserState, launchTestBrowser, pressChord, waitForFocusedInput } from "./browser";
+import { forgetBrowserState, launchTestBrowser, MOD, pressChord, waitForFocusedInput } from "./browser";
 
 const PASSPHRASE = "correct horse battery staple mango velvet";
 const PLAIN = "AWS_SECRET_ACCESS_KEY=UICANARYALPHA\n";
@@ -592,7 +592,7 @@ describe("locking clears the clipboard (research §6)", () => {
         timeout: 10000,
         label: "the plaintext to reach the clipboard",
       });
-      await chord(p, "KeyL", "Meta", "Shift");
+      await chord(p, "KeyL", MOD, "Shift");
       await waitUntil(async () => (await p.evaluate(() => (window as any).__clip.at(-1))) === "", {
         timeout: 10000,
         label: "the clipboard to be cleared by the vault lock",
@@ -866,7 +866,7 @@ describe("encryption is bound to a recipient the vault can actually read", () =>
       writeVaultFile(vaultDir, ".znotes/vault.pub", foreignRecipient + "\n");
       await sleep(300);
       await clearToasts(p);
-      await chord(p, "KeyE", "Meta", "Shift");
+      await chord(p, "KeyE", MOD, "Shift");
       await sleep(1500);
 
       const said = (await toasts(p)).join(" | ");
@@ -1846,7 +1846,7 @@ describe("locking one tab locks the other one's blocks too", () => {
 
       /* the lock happens in A, and ONLY in A */
       await a.bringToFront();
-      await chord(a, "KeyL", "Meta", "Shift");
+      await chord(a, "KeyL", MOD, "Shift");
       await waitForLocks(a);
 
       /* …and B follows with no interaction of its own */
@@ -2551,10 +2551,9 @@ describe("a revealed secret that MOVES keeps its edit, and a re-encrypt mid-typi
 
       /* ciphertext maintenance is not an edit: undo steps over the prose, never
          over the armor, and a save on either side stores the same two fences */
-      const mod = await p.evaluate(() => (/Mac/.test(navigator.platform) ? "Meta" : "Control"));
       for (const redo of [false, true]) {
         await p.$eval(EDITOR, (node) => (node as HTMLElement).focus());
-        await chord(p, "KeyZ", mod, ...(redo ? ["Shift"] : []));
+        await chord(p, "KeyZ", MOD, ...(redo ? ["Shift"] : []));
         await p.waitForFunction(
           (want) => document.querySelector("#doc .bn-editor")!.textContent!.includes("TYPEDDURINGENCRYPTION") === want,
           { timeout: 10000, polling: 100 },

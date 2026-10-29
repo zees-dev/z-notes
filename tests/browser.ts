@@ -267,6 +267,9 @@ export function appDriver(page: Page, base: string) {
 
 export type AppDriver = ReturnType<typeof appDriver>;
 
+/** ⌘ on a Mac, Ctrl elsewhere: what the editor's `Mod-` bindings and a user's chords use. */
+export const MOD = process.platform === "darwin" ? "Meta" : "Control";
+
 /**
  * A modifier chord, held in order and released in reverse.
  *
@@ -278,7 +281,7 @@ export type AppDriver = ReturnType<typeof appDriver>;
  * this is the only one left; `appDriver.chord` delegates here.
  */
 export async function pressChord(p: Page, code: string, ...mods: string[]): Promise<void> {
-  const keys = mods.length ? mods : ["Meta"];
+  const keys = mods.length ? mods : [MOD];
   for (const m of keys) await p.keyboard.down(m);
   await p.keyboard.press(code);
   for (const m of [...keys].reverse()) await p.keyboard.up(m);

@@ -43,6 +43,7 @@ import {
   gotoSettings,
   leaveSettings as exitSettings,
   onSettings as isOnSettings,
+  MOD,
   pressChord,
   saveSettings,
   waitSettings as waitForSettings,
@@ -479,11 +480,7 @@ describe("ux — ⌘Z takes back a file operation, after asking", () => {
   /** ⌘Z / ⌘⇧Z with focus deliberately OUTSIDE any text surface. */
   async function fileZ(redo = false) {
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    await page.keyboard.down("Meta");
-    if (redo) await page.keyboard.down("Shift");
-    await page.keyboard.press("KeyZ");
-    if (redo) await page.keyboard.up("Shift");
-    await page.keyboard.up("Meta");
+    await pressChord(page, "KeyZ", MOD, ...(redo ? ["Shift"] : []));
     await sleep(300);
   }
   const confirm = async () => {
@@ -1006,11 +1003,7 @@ describe("ux — one undo timeline across documents and file operations", () => 
   /** ⌘Z / ⌘⇧Z from outside any text surface */
   async function step(redo = false) {
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    await page.keyboard.down("Meta");
-    if (redo) await page.keyboard.down("Shift");
-    await page.keyboard.press("KeyZ");
-    if (redo) await page.keyboard.up("Shift");
-    await page.keyboard.up("Meta");
+    await pressChord(page, "KeyZ", MOD, ...(redo ? ["Shift"] : []));
     await sleep(900);
   }
 
@@ -1469,7 +1462,8 @@ describe("ux — the sidebar context menu", () => {
     for (const [name, x, y] of spots) {
       await page.mouse.click(x, y, { button: "right" });
       await page.waitForFunction(() => !(document.getElementById("ctxMenu") as HTMLElement).hidden, { timeout: 5000 });
-      await sleep(120);
+      // its open transition, not a guess at how long it takes on this machine
+      await page.$eval("#ctxMenu", (m) => Promise.all(m.getAnimations().map((a) => a.finished)));
       const r = await page.evaluate(() => {
         const m = document.getElementById("ctxMenu") as HTMLElement;
         const b = m.getBoundingClientRect();

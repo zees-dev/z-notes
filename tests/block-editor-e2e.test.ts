@@ -12,7 +12,7 @@ import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, type Page } from "puppeteer-core";
-import { appDriver, launchTestBrowser, newAppPage, pressChord, waitForFocusedInput } from "./browser";
+import { appDriver, clickWhenHittable, launchTestBrowser, MOD, newAppPage, pressChord, waitForFocusedInput } from "./browser";
 import { readVaultText, sleep, startServer, waitUntil, type TestServer } from "./helpers";
 import { CORPUS } from "./markdown-corpus";
 
@@ -55,7 +55,6 @@ const settled = () => sleep(80);
 async function endOfFirst(type = "paragraph") {
   await page.click(`.bn-editor [data-content-type="${type}"]`);
   await settled();
-  await pressChord(page, "Home", "Control");
   await page.keyboard.press("End");
   await settled();
 }
@@ -97,7 +96,7 @@ async function dragBefore(selector: string, target: string) {
 test("heading conversion keeps the following paragraph separate after save and reload", async () => {
   await boot("# Title\nBody\n");
   await page.click('[data-content-type="heading"]');
-  await pressChord(page, "Digit0", "Meta", "Alt");
+  await pressChord(page, "Digit0", MOD, "Alt");
   await page.waitForFunction(() => !document.querySelector('[data-content-type="heading"]'));
   expect(await page.$$eval('[data-content-type="paragraph"]', nodes => nodes.map(node => node.textContent))).toEqual(["Title", "Body"]);
   await save();
@@ -272,8 +271,8 @@ test("native slash menu inserts a heading and floating toolbar formats selection
   await page.keyboard.type("Launch findings");
   expect(await page.$eval(".bn-editor h2", e => e.textContent)).toBe("Launch findings");
   await pressChord(page, "Home", "Shift");
-  await page.waitForSelector('.bn-formatting-toolbar [aria-label="Bold"]');
-  await page.click('.bn-formatting-toolbar [aria-label="Bold"]');
+  // the slash menu fades out over the toolbar as the toolbar fades in
+  await clickWhenHittable(page, '.bn-formatting-toolbar [aria-label="Bold"]');
   expect(await page.$eval(".bn-editor strong", e => e.textContent)).toBe("Launch findings");
   await save();
   expect(readVaultText(srv.vault, path)).toContain("## **Launch findings**");

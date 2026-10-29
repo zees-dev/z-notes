@@ -46,7 +46,7 @@ import {
   type SeedMap,
   type TestServer,
 } from "./helpers";
-import { launchTestBrowser, newAppPage, waitForApp } from "./browser";
+import { launchTestBrowser, newAppPage, pressChord, waitForApp } from "./browser";
 
 /* ------------------------------------------------------------------
    git plumbing for the fixtures — every call takes an explicit cwd that is a
@@ -989,9 +989,7 @@ describe("the tree", () => {
         expect(patches).toBe(0);
         expect((await srv.doc("notes/alpha.md")).status).toBe(200);
         expect((await srv.doc("@work-notes/work/alpha.md")).status).toBe(404);
-        await page.keyboard.down("Meta");
-        await page.keyboard.press("KeyZ");
-        await page.keyboard.up("Meta");
+        await pressChord(page, "KeyZ");
         await sleep(150);
         expect(await page.evaluate(() => document.getElementById("cfVeil")!.classList.contains("show"))).toBe(false);
 
