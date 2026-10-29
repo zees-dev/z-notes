@@ -137,6 +137,10 @@ export async function loadTree() {
   const r = await api.getTree();
   state.vault = r.vault;
   state.tree = r.tree;
+  /* Until the first `hello`, the epoch is the one this page was drawn from. A
+     boot from the replica, or a change before the stream opened, then reaches
+     the first `hello` as a gap and is re-read (resyncAfterGap). */
+  if (state.epoch == null && r.epoch != null) state.epoch = r.epoch;
   /* `vaults[]` is the whole picture; `vault`/`tree` are the primary's slice of
      it, kept for the header and for anything that only ever meant the primary.
      A server that answered without `vaults[]` still has one vault — draw it as

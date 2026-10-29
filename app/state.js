@@ -91,7 +91,7 @@ export const state = {
      replace the destination the first one is holding. */
   settingsGuard: false,
   events: null,
-  epoch: null, // vault epoch from the last `hello` — see resyncAfterGap()
+  epoch: null, // vault epoch from the last `hello`, or the boot tree's before it — see resyncAfterGap()
   /* The sidebar row the user last touched — { path, kind } — and the ONLY
      thing that makes ⌥N context-aware (see `createParent`). Set by a click or
      a focus on a tree row, cleared by `openDoc` so that opening a doc hands the

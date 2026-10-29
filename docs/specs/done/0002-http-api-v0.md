@@ -1702,7 +1702,8 @@ hole hangs for its full connect timeout and makes recovery strictly slower.
 
 `epoch` on `hello` is a monotonic vault revision, bumped on every `doc-changed` and
 persisted across restarts. The stream keeps no backlog, so a reconnecting client compares
-it with the epoch it last saw: unchanged ⇒ nothing was missed, different ⇒ re-read the tree
+it with the epoch it last saw (before its first `hello`, its tree's `epoch` — a page drawn
+from an offline copy has one too): unchanged ⇒ nothing was missed, different ⇒ re-read the tree
 and whatever doc is open. Settings do not move it — see `settings-changed` above.
 
 ---

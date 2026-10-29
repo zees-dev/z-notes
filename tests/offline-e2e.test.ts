@@ -376,3 +376,15 @@ test("13. text discarded after a refused save never reaches disk", async () => {
   await sleep(2000);
   expect(readVaultText(srv.vault, "note.md")).toBe(ORIGINAL);
 }, 60000);
+
+test("14. a page opened from the replica shows what changed elsewhere once it is online", async () => {
+  await boot();
+  await readyReplica();
+  await page.setOfflineMode(true);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await boot();
+  expect(await editorText()).toBe(ORIGINAL.trim());
+  expect((await srv.api("PUT", "/api/docs/note.md", { markdown: "Changed on another device\n" })).status).toBe(200);
+  await page.setOfflineMode(false);
+  await waitUntil(async () => (await editorText()) === "Changed on another device", { timeout: 15000, label: "the open doc re-read after the gap" });
+}, 60000);
