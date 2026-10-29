@@ -630,7 +630,11 @@ Verified on this machine:
   `installed.navigationBar` setting, ADR 0043) was built and applied the same
   way the same day; both addresses served the `standalone` manifest and both
   vaults kept every doc. Its full screen is exercised only in headless
-  Chromium, not on an Android device.
+  Chromium, not on an Android device. Release 0.22.2 (a page opened offline
+  re-reads what changed once it is online) was checked on the image itself
+  against a git-free copy of both vaults: an edit reached a second page within
+  1 s, a frozen page caught up within 1 s of resuming, and a page opened offline
+  showed the newer text 4 s after coming online.
 
 - **`docker build` was never run.** The `docker` CLI exists but no daemon is
   reachable (`/var/run/docker.sock` absent). The Dockerfile is therefore
