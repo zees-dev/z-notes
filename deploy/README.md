@@ -634,7 +634,9 @@ Verified on this machine:
   re-reads what changed once it is online) was checked on the image itself
   against a git-free copy of both vaults: an edit reached a second page within
   1 s, a frozen page caught up within 1 s of resuming, and a page opened offline
-  showed the newer text 4 s after coming online.
+  showed the newer text 4 s after coming online. Release 0.22.3 (the conflict
+  dialog says Take remote, with icons on both choices) was smoke-tested on its
+  image and applied the same way.
 
 - **`docker build` was never run.** The `docker` CLI exists but no daemon is
   reachable (`/var/run/docker.sock` absent). The Dockerfile is therefore
