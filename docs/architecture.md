@@ -125,8 +125,8 @@ entries. Two tiers, enforced by lint:
   `editor.js` owns the doc lifecycle: `renderDoc` mounts the island into
   `#doc`, holds the disk baseline, the exit guard, autosave and the CAS save
   keyed by the doc object (so a move mid-save follows the doc). Edit's phone
-  toolbar lives inside the island (Undo, Redo, Bullet, Numbered, Checklist,
-  Outdent, Indent, and a ⋯ position calibration), docked on
+  toolbar lives inside the island (Undo, Redo, Outdent, Indent, Bullet, Numbered,
+  Checklist, and a ⋯ position calibration), docked on
   `--visual-bottom`, the visible viewport's bottom edge that
   `wireVisualViewport` publishes beside `--kb`.
 - **Boot and release** — `boot.js` is the entry the shell loads: it imports

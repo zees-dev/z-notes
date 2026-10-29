@@ -272,18 +272,21 @@ test('toolbar calibration preserves the caret, animates, persists and keeps the 
     expect(await bottom()).toBeCloseTo(500, 0);
     await tapToolbar(page, 'Move toolbar down');
     expect(await page.evaluate(() => localStorage.getItem('znotes.toolbarOffset'))).toBe('8');
+    // Undo and Redo are icons; ⇧Tab and Tab follow them.
+    expect(await page.$$eval('.z-toolbar-actions button', buttons => buttons.map(b => b.getAttribute('aria-label') + (b.querySelector('svg') && !b.textContent ? ' icon' : ''))))
+      .toEqual(['Undo icon', 'Redo icon', 'Outdent', 'Indent', 'Bullet list', 'Numbered list', 'Checklist']);
     for (const width of [320, 360, 390]) {
       await touchViewport(page, width);
       await viewport(page, 500);
       await page.$eval('.z-toolbar-actions', e => { e.scrollLeft = 0; });
-      for (const label of ['Undo', 'Redo']) {
+      for (const label of ['Undo', 'Redo', 'Outdent', 'Indent']) {
         expect(await hittable(page, `.z-block-toolbar [aria-label="${label}"]`)).toBe(true);
       }
       expect(await page.$eval('[aria-label="Toolbar options"]', e => {
         const r = e.getBoundingClientRect();
         return r.right <= innerWidth && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
       })).toBe(true);
-      for (const label of ['Bullet list', 'Numbered list', 'Checklist', 'Outdent', 'Indent']) {
+      for (const label of ['Bullet list', 'Numbered list', 'Checklist']) {
         expect(await page.$eval(`[aria-label="${label}"]`, e => {
           e.scrollIntoView({ block: 'nearest', inline: 'nearest' });
           const r = e.getBoundingClientRect();

@@ -2408,7 +2408,8 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      uncovered. */
   .z-block-toolbar { --toolbar-floor: calc(100dvh - 36px - env(safe-area-inset-bottom, 0px)); --toolbar-motion: calc((var(--dur-1) + var(--dur-2)) / 2); position: fixed; left: 0; right: 0; top: clamp(100px, calc(min(var(--visual-bottom, 100dvh), var(--toolbar-floor)) + var(--toolbar-offset, 0px)), 100%); bottom: auto; transform: translateY(-100%); margin: 0; z-index: 5; transition: top var(--toolbar-motion) var(--ease); }
   .z-toolbar-actions { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; }
-  .z-block-toolbar .z-toolbar-more { display: grid; place-items: center; min-width: 36px; margin-left: auto; }
+  .z-block-toolbar :is(.z-toolbar-icon, .z-toolbar-more) { display: grid; place-items: center; min-width: 36px; }
+  .z-block-toolbar .z-toolbar-more { margin-left: auto; }
   .z-toolbar-options { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; position: absolute; bottom: 100%; right: 0; left: 0; transition: grid-template-rows var(--toolbar-motion) var(--ease), opacity var(--toolbar-motion) var(--ease), visibility var(--toolbar-motion); }
   .z-toolbar-options[data-open="true"] { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
   .z-toolbar-options > div { overflow: hidden; min-height: 0; }

@@ -60,25 +60,27 @@ async function registerWorker() {
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (accepted) location.reload();
   });
+  const reload = document.createElement("button");
+  reload.className = "btn";
+  reload.textContent = "Reload";
+  /* A tap anywhere on the notice is Reload, the button's own click included:
+     it bubbles here. */
+  document.getElementById("toast").addEventListener("click", async () => {
+    if (!document.getElementById("toastTxt").contains(reload)) return;
+    /* saved, or at least on the device, before the page goes — and typing
+       that landed during that save gets a second pass. Text still at risk
+       after it (a full device, a refused save) keeps the page, and so does
+       a settings draft — it lives in memory only (the unload guard's read). */
+    await flushBuffer();
+    if (exitDiff()) await flushBuffer();
+    if (exitDiff()) return notice("Not reloaded — unsaved changes are not on this device yet. A new version is ready ", reload);
+    commitFocusedNumber();
+    if (settingsDirty()) return notice("Not reloaded — settings changes are unsaved. A new version is ready ", reload);
+    accepted = true;
+    reg.waiting?.postMessage({ type: "skip-waiting" });
+  });
   const offer = () => {
-    if (!reg.waiting || !navigator.serviceWorker.controller) return;
-    const reload = document.createElement("button");
-    reload.className = "btn";
-    reload.textContent = "Reload";
-    reload.addEventListener("click", async () => {
-      /* saved, or at least on the device, before the page goes — and typing
-         that landed during that save gets a second pass. Text still at risk
-         after it (a full device, a refused save) keeps the page, and so does
-         a settings draft — it lives in memory only (the unload guard's read). */
-      await flushBuffer();
-      if (exitDiff()) await flushBuffer();
-      if (exitDiff()) return notice("Not reloaded — unsaved changes are not on this device yet. A new version is ready ", reload);
-      commitFocusedNumber();
-      if (settingsDirty()) return notice("Not reloaded — settings changes are unsaved. A new version is ready ", reload);
-      accepted = true;
-      reg.waiting?.postMessage({ type: "skip-waiting" });
-    });
-    notice("A new version is ready ", reload);
+    if (reg.waiting && navigator.serviceWorker.controller) notice("A new version is ready ", reload);
   };
   offer();
   reg.addEventListener("updatefound", () => {

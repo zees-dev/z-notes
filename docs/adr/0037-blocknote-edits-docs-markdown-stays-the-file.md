@@ -72,16 +72,17 @@ is ordinary Markdown files and stays one; the server never sees plaintext.
   Edit and Source; Source keeps ADR 0032's editor, the text-run timeline,
   Tab/⇧Tab, the keybar and encrypt-selection. Persisted ids stay `preview`
   and `raw`; the WebMCP enum is unchanged.
-- **The editing toolbar is a phone's.** The Undo / Redo / Bullet / Numbered /
-  Checklist / Outdent / Indent row is drawn only at phone widths, and there
-  only while the island has focus — the focus that raises the soft keyboard. A desktop
+- **The editing toolbar is a phone's.** The Undo / Redo (icons) / Outdent /
+  Indent / Bullet / Numbered / Checklist row is drawn only at phone widths, and
+  there only while the island has focus — the focus that raises the soft keyboard. A desktop
   never sees it: Tab, ⇧Tab and the Markdown shortcuts are its verbs, and the
   ordinary row it used to get above the doc was chrome without a job
   (amended 2026-09-15; the cutover had shipped it at every width).
   Undo and Redo share BlockNote's keyboard history, with availability queried
   from its history commands on all editor transactions, including history
   steps that leave the text unchanged; taps retain editor focus.
-  History leads the horizontally scrollable row to stay visible at 320px;
+  History, then Outdent and Indent (⇧Tab, Tab), lead the horizontally scrollable
+  row to stay visible at 320px;
   the existing formatting actions remain reachable and ⋯ calibration stays fixed.
 - **A source adapter keeps the bytes.** `SourceSession` parses the doc into
   top-level MDAST groups with positions. An untouched doc serialises to its

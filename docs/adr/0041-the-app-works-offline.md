@@ -26,9 +26,9 @@ missing is a copy on the device and a way to send edits back.
   are served cache-first. It never intercepts `/api`, `/events`, `/healthz` or
   `/sw.js`. An install that finds a different build id in `/` throws, to retry.
 - **A new release waits for the user.** The worker never calls `skipWaiting()`
-  itself. The page shows "A new version is ready"; Reload first flushes the dirty
-  buffer, then activates the worker and reloads. An open page keeps loading its
-  own build's lazy chunks.
+  itself. The page shows "A new version is ready"; Reload (a tap anywhere on that
+  notice) first flushes the dirty buffer, then activates the worker and reloads.
+  An open page keeps loading its own build's lazy chunks.
 - **Kill switch.** `ZNOTES_SW=off` makes `/sw.js` a worker that deletes the
   `znotes-` caches, unregisters itself and navigates its windows. It never
   touches IndexedDB, and `Clear-Site-Data` is never sent: either would wipe the

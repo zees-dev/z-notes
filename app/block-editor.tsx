@@ -488,8 +488,12 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
   function HistoryButtons() {
     const { undo, redo } = useEditorState({ editor, selector: () => ({ undo: canUndo(), redo: canRedo() }) });
     return <>
-      <button type="button" aria-label="Undo" disabled={!undo} onClick={() => { editor.undo(); editor.focus(); }}>Undo</button>
-      <button type="button" aria-label="Redo" disabled={!redo} onClick={() => { editor.redo(); editor.focus(); }}>Redo</button>
+      <button className="z-toolbar-icon" type="button" aria-label="Undo" disabled={!undo} onClick={() => { editor.undo(); editor.focus(); }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+      </button>
+      <button className="z-toolbar-icon" type="button" aria-label="Redo" disabled={!redo} onClick={() => { editor.redo(); editor.focus(); }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+      </button>
     </>;
   }
   /* A handle drag selects its block, and the formatting toolbar that selection
@@ -512,13 +516,13 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       ], query)} />
     </BlockNoteView>
     <Toolbar>
-      {/* History leads the scrollable row so both recovery actions are visible at 320px. */}
+      {/* History, then ⇧Tab and Tab, lead the scrollable row so all four are visible at 320px. */}
       <HistoryButtons />
+      <button type="button" aria-label="Outdent" onClick={() => { editor.unnestBlock(); editor.focus(); }}>←</button>
+      <button type="button" aria-label="Indent" onClick={() => { editor.nestBlock(); editor.focus(); }}>→</button>
       <button type="button" aria-label="Bullet list" onClick={() => list('bulletListItem')}>• List</button>
       <button type="button" aria-label="Numbered list" onClick={() => list('numberedListItem')}>1. List</button>
       <button type="button" aria-label="Checklist" onClick={() => list('checkListItem')}>☑ Tasks</button>
-      <button type="button" aria-label="Outdent" onClick={() => { editor.unnestBlock(); editor.focus(); }}>←</button>
-      <button type="button" aria-label="Indent" onClick={() => { editor.nestBlock(); editor.focus(); }}>→</button>
     </Toolbar>
   </>));
   return {

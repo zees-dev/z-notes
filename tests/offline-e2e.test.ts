@@ -282,7 +282,7 @@ test("8. a new build waits for Reload and saves the dirty buffer before navigati
   page.on("framenavigated", frame => {
     if (frame === page.mainFrame()) { navigations++; diskAtNavigation = readVaultText(srv.vault, "note.md"); }
   });
-  await page.click("#toastTxt button");
+  await page.click("#toast .ok"); // anywhere on the notice, not just its button
   await waitUntil(() => held.length > 0, { label: "Reload's held save" });
   // A held request cannot reach disk. Reload must remain on this document.
   await sleep(1000);
