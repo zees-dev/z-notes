@@ -118,7 +118,7 @@ export function confirmOk() {
  */
 export function conflictDialog(path, diskText, mineText) {
   state.conflict = { path: path, disk: diskText, mine: mineText, mode: "conflict" };
-  $("#cxTitle").textContent = "This doc changed on disk";
+  $("#cxTitle").textContent = "This doc changed remotely";
   $("#cxPath").textContent = path;
   $("#cxBody").textContent =
     "Someone — another device, another editor, or a rename that rewrote a [[link]] here — wrote this doc while you were typing. Nothing has been overwritten.";
@@ -374,7 +374,7 @@ export function changedLineDiff(disk, mine) {
   ];
 }
 
-/** Take disk: throw the buffer away, deliberately, on the user's say-so. */
+/** Take remote: throw the buffer away, deliberately, on the user's say-so. */
 export async function conflictTakeDisk() {
   const c = state.conflict;
   closeConflict();

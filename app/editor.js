@@ -1063,10 +1063,10 @@ async function doSaveDoc(doc, opts) {
       const dirty = (path === state.active && state.dirty) || (disk != null && disk !== mine);
       if (dirty) {
         if (disk != null) conflictDialog(path, disk, mine);
-        else toast("This doc changed on disk — your unsaved text was kept");
+        else toast("This doc changed remotely — your unsaved text was kept");
         return false;
       }
-      toast("This doc changed on disk — reloading");
+      toast("This doc changed remotely — reloading");
       const fresh = await api.getDoc(path, { overlay: false }).catch(() => null);
       if (fresh) {
         delete doc.queued;
