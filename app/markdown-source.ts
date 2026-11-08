@@ -33,12 +33,30 @@ const safeUrl = (url: string) => {
 };
 const text = (value: string, styles: Record<string, boolean | string> = {}): Inline => ({ type: 'text', text: value, styles });
 /* A line inside a quote or list item, without that container's prefix: the
-   serializer writes the prefix again when it reprints the container. */
-type Strip = (line: string) => string;
-const keep: Strip = line => line;
+   serializer writes the prefix again when it reprints the container.
+   `col` is where the rest starts on the real line: tabs stop every 4 columns
+   from the line's start, as CommonMark measures indentation. */
+type Strip = (line: string) => { rest: string; col: number };
+const keep: Strip = line => ({ rest: line, col: 0 });
+const advance = (col: number, c: string) => c === '\t' ? col + 4 - col % 4 : col + 1;
+const columns = (text: string, col = 0) => [...text].reduce(advance, col);
+const quoted = (outer: Strip): Strip => line => {
+  const { rest, col } = outer(line), prefix = rest.match(/^ {0,3}> ?/)?.[0] ?? '';
+  return { rest: rest.slice(prefix.length), col: columns(prefix, col) };
+};
+/* Whitespace up to column `to`; a tab that crosses it leaves its remainder as spaces. */
+const indented = (outer: Strip, to: number): Strip => line => {
+  let { rest, col } = outer(line), i = 0;
+  for (; i < rest.length && col < to && (rest[i] === ' ' || rest[i] === '\t'); i++) {
+    const next = advance(col, rest[i]);
+    if (next > to) return { rest: ' '.repeat(next - to) + rest.slice(i + 1), col: to };
+    col = next;
+  }
+  return { rest: rest.slice(i), col };
+};
 const verbatim = (node: Node, source: string, strip: Strip): Inline => {
   const [first, ...rest] = source.slice(node.position!.start.offset, node.position!.end.offset).split('\n');
-  return { type: 'verbatim', props: { source: [first, ...rest.map(strip)].join('\n') } };
+  return { type: 'verbatim', props: { source: [first, ...rest.map(line => strip(line).rest)].join('\n') } };
 };
 function inlines(nodes: Node[], source: string, strip: Strip, styles: Record<string, boolean | string> = {}, wiki = true): Inline[] {
   return nodes.flatMap((node): Inline[] => {
@@ -68,27 +86,21 @@ function inlines(nodes: Node[], source: string, strip: Strip, styles: Record<str
   });
 }
 /* A container's first paragraph is its block's text; everything after it nests. */
-/* Columns, with tabs at 4-column stops, as CommonMark measures indentation. */
-const columns = (text: string) => [...text].reduce((col, c) => c === '\t' ? col + 4 - col % 4 : col + 1, 0);
-const expandTabs = (line: string) => line.replace(/^[ \t]+/, lead => ' '.repeat(columns(lead)));
-/* The column a list item's content starts at: its marker, then 1–4 columns of
-   space (one when the item is empty or opens with indented code). A task's box is content. */
-function itemWidth(node: Node, source: string, strip: Strip): number {
-  const start = node.position!.start.offset, end = source.indexOf('\n', start);
-  const line = strip(source.slice(source.lastIndexOf('\n', start - 1) + 1, end < 0 ? undefined : end)).replace(/\r$/, '');
-  const [, lead = '', marker = '', gap = ''] = line.match(/^([ \t]*)([-+*]|\d{1,9}[.)])([ \t]*)/) || [];
-  const markerEnd = columns(lead + marker), pad = columns(lead + marker + gap) - markerEnd;
-  return markerEnd + (pad >= 1 && pad <= 4 && line.length > (lead + marker + gap).length ? pad : 1);
+/* The column a list item's content starts at, from its own marker: then 1–4
+   columns of space (one when the item is empty or opens with indented code).
+   A task's box is content. */
+function itemColumn(node: Node, source: string): number {
+  const start = node.position!.start.offset;
+  const markerCol = columns(source.slice(source.lastIndexOf('\n', start - 1) + 1, start));
+  const [, marker = '', gap = '', after = ''] = source.slice(start).match(/^([-+*]|\d{1,9}[.)])([ \t]*)([^\r\n]?)/) || [];
+  const markerEnd = markerCol + marker.length, pad = columns(gap, markerEnd) - markerEnd;
+  return pad >= 1 && pad <= 4 && after ? markerEnd + pad : markerEnd + 1;
 }
 function container(type: string, node: Node, source: string, spread: Map<string, boolean>, strip: Strip, props: SourceBlock['props'] = {}): SourceBlock {
   const [first, ...rest] = node.children || [];
   const lead = first?.type === 'paragraph';
   // A quote's lines open with `>`; an item's continue at its content's column.
-  const width = node.type === 'blockquote' ? 0 : itemWidth(node, source, strip);
-  const inner: Strip = node.type === 'blockquote' ? line => strip(line).replace(/^ {0,3}> ?/, '') : line => {
-    const expanded = expandTabs(strip(line)), indent = expanded.match(/^ */)![0].length;
-    return expanded.slice(Math.min(indent, width));
-  };
+  const inner = node.type === 'blockquote' ? quoted(strip) : indented(strip, itemColumn(node, source));
   return block(type, lead ? inlines(first.children || [], source, inner) : [], props, (lead ? rest : node.children || []).flatMap(n => importNode(n, source, spread, inner)));
 }
 function importNode(node: Node, source: string, spread: Map<string, boolean>, strip: Strip = keep): SourceBlock[] {

@@ -290,7 +290,10 @@ test("retained lists that become adjacent join one run; item-level looseness cou
 test('a multi-line verbatim span inside a quote or list item survives repeated edits of its container', () => {
   const cases: [string, string][] = [['> hi\n>\n> <div>\n> x\n> </div>\n', '<div>\nx\n</div>'], ['- item\n\n  <div>\n  x\n  </div>\n', '<div>\nx\n</div>'], ['> a <span\n> x>b\n', '<span\nx>'], ['- a <span\n  x>b\n', '<span\nx>'], ['> - in\n>\n>   <div>\n>   y\n>   </div>\n', '<div>\ny\n</div>'],
     // the marker's own indent, a task's box and a tab are the container's, never the span's
-    [' - item\n\n   <pre>\n   a\n     b\n   </pre>\n', '<pre>\na\n  b\n</pre>'], ['>  - item\n>\n>    <pre>\n>    a\n>    </pre>\n', '<pre>\na\n</pre>'], ['- [ ] item\n\n  <div>\n    x\n  </div>\n', '<div>\n  x\n</div>'], ['-\titem\n\n\t<div>\n\t  x\n\t</div>\n', '<div>\n  x\n</div>']];
+    [' - item\n\n   <pre>\n   a\n     b\n   </pre>\n', '<pre>\na\n  b\n</pre>'], ['>  - item\n>\n>    <pre>\n>    a\n>    </pre>\n', '<pre>\na\n</pre>'], ['- [ ] item\n\n  <div>\n    x\n  </div>\n', '<div>\n  x\n</div>'], ['-\titem\n\n\t<div>\n\t  x\n\t</div>\n', '<div>\n  x\n</div>'],
+    // an item opening on its parent's line measures its own marker; a tab stops from the real line's start
+    ['1. - a\n\n     <pre>\n     x\n       y\n     </pre>\n', '<pre>\nx\n  y\n</pre>'], ['- 1. a\n\n     <pre>\n     x\n       y\n     </pre>\n', '<pre>\nx\n  y\n</pre>'],
+    ['> -\ta\n>\n>   <pre>\n>   x\n>     y\n>   </pre>\n', '<pre>\nx\n  y\n</pre>'], ['- 1. a <span\n     x  y>b\n', '<span\nx  y>']];
   for (const [raw, expected] of cases) {
     let session = new SourceSession(raw);
     const html = (s: SourceSession) => JSON.stringify(s.blocks).match(/"source":"([^"]*)"/)?.[1];
