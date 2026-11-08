@@ -295,7 +295,11 @@ test('a multi-line verbatim span inside a quote or list item survives repeated e
     ['1. - a\n\n     <pre>\n     x\n       y\n     </pre>\n', '<pre>\nx\n  y\n</pre>'], ['- 1. a\n\n     <pre>\n     x\n       y\n     </pre>\n', '<pre>\nx\n  y\n</pre>'],
     ['> -\ta\n>\n>   <pre>\n>   x\n>     y\n>   </pre>\n', '<pre>\nx\n  y\n</pre>'], ['- 1. a <span\n     x  y>b\n', '<span\nx  y>'],
     // a quote's prefix may be wider on the marker line than on the lines after it
-    [' > - a\n>\n>   <pre>\n>   x\n>     y\n>   </pre>\n', '<pre>\nx\n  y\n</pre>'], [' > - a\n>   - b\n>\n>     <pre>\n>     x\n>       y\n>     </pre>\n', '<pre>\nx\n  y\n</pre>']];
+    [' > - a\n>\n>   <pre>\n>   x\n>     y\n>   </pre>\n', '<pre>\nx\n  y\n</pre>'], [' > - a\n>   - b\n>\n>     <pre>\n>     x\n>       y\n>     </pre>\n', '<pre>\nx\n  y\n</pre>'],
+    // a tab after `>` gives the quote its optional space and keeps the rest
+    ['>\t- a\n>\n>\t  <pre>\n>\t  x\n>\t    y\n>\t  </pre>\n', '<pre>\nx\n  y\n</pre>'], ['> - a\n>\n>\t<pre>\n>\tx\n>\t  y\n>\t</pre>\n', '<pre>\nx\n  y\n</pre>'], ['>\t- a <span\n>\t  x  y>b\n', '<span\nx  y>'],
+    // a reprinted quote starts at the margin, as a reprinted list does
+    [' > - a\n >\n >   <pre>\n >   x\n >     y\n >   </pre>\n', '<pre>\nx\n  y\n</pre>']];
   for (const [raw, expected] of cases) {
     let session = new SourceSession(raw);
     const html = (s: SourceSession) => JSON.stringify(s.blocks).match(/"source":"([^"]*)"/)?.[1];

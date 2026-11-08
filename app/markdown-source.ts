@@ -40,9 +40,14 @@ type Strip = (line: string) => { rest: string; col: number };
 const keep: Strip = line => ({ rest: line, col: 0 });
 const advance = (col: number, c: string) => c === '\t' ? col + 4 - col % 4 : col + 1;
 const columns = (text: string, col = 0) => [...text].reduce(advance, col);
+/* `>` and one optional column of space; a tab gives that column and keeps the rest as spaces. */
 const quoted = (outer: Strip): Strip => line => {
-  const { rest, col } = outer(line), prefix = rest.match(/^ {0,3}> ?/)?.[0] ?? '';
-  return { rest: rest.slice(prefix.length), col: columns(prefix, col) };
+  const { rest, col } = outer(line), marker = rest.match(/^ {0,3}>/)?.[0];
+  if (marker === undefined) return { rest, col };
+  const after = rest.slice(marker.length), at = columns(marker, col);
+  if (after[0] === ' ') return { rest: after.slice(1), col: at + 1 };
+  if (after[0] === '\t') return { rest: ' '.repeat(advance(at, '\t') - at - 1) + after.slice(1), col: at + 1 };
+  return { rest: after, col: at };
 };
 /* Whitespace up to `width` columns past the outer prefix; a tab that crosses
    that column leaves its remainder as spaces. */
@@ -394,8 +399,8 @@ export class SourceSession {
         if (this.requiresEnd(source)) throw new Error('This block must remain last');
       }
       if (i === 0 && normalizeLeading) { source = emit(blocks.slice(i, i + count)); unchanged = false; }
-      // A reprinted list sets its own indent: the old marker's would misalign every continuation line.
-      const outdent = (gap: string) => !retained && listType(b) ? gap.replace(/[ \t]+$/, '') : gap;
+      // A reprinted list or quote sets its own indent: the old one would misalign every continuation line.
+      const outdent = (gap: string) => !retained && (listType(b) || b.type === 'quote') ? gap.replace(/[ \t]+$/, '') : gap;
       if (i === 0) append(outdent(this.groups.length && groupIndex === 0 ? this.body.slice(0, this.groups[0].start) : ''));
       else {
         let separator = previous >= 0 && groupIndex === previous + 1 ? this.body.slice(this.groups[previous].end, this.groups[groupIndex].start) : '\n\n';

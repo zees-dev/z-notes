@@ -55,6 +55,9 @@ editor exists to prevent.
 - A reprinted quote or list writes its own prefix and indent: a tab or a
   lazy continuation line becomes the standard spaces or `> `, and an indented
   marker starts at the margin. What the span holds is unchanged.
+- Known limit: in a quote, an HTML block indented 1-3 spaces after a list,
+  but not far enough to belong to its last item, joins that item when the
+  quote is reprinted; its text stays, its indentation can shift.
 - A nested secret whose container used a non-standard indent is reprinted
   with the standard one when it is re-encrypted.
 - HTML and images show as their source, in the doc's muted monospace, not
