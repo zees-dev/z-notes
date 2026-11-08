@@ -638,7 +638,10 @@ Verified on this machine:
   dialog says Take remote, with icons on both choices) was smoke-tested on its
   image and applied the same way. Release 0.22.4 (a tap anywhere on the update
   notice reloads; the phone toolbar has icon Undo/Redo, then Outdent/Indent) was
-  smoke-tested on its image and applied the same way.
+  smoke-tested on its image and applied the same way. Release 0.23.0 (no
+  protected Markdown, ADR 0044; the foldable sidebar, ADR 0045) was smoke-tested
+  on its image at 882x1104: a list ending in a bare `-` opened as bullets, not a
+  raw panel, and the tree was a column. It was applied the same way.
 
 - **`docker build` was never run.** The `docker` CLI exists but no daemon is
   reachable (`/var/run/docker.sock` absent). The Dockerfile is therefore
