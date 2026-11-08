@@ -31,6 +31,10 @@ island is no longer bundled by the server at boot or served from `/vendor`; it
 is one chunk graph of the build, under `/assets/`, named by `#znotes-assets`.
 Everything about the editor itself stands.
 
+Amended by [0044](0044-nothing-is-protected-markdown.md), 2026-11-08: there
+are no protected blocks; every node imports, and what the editor has no form
+for is a verbatim span that keeps its bytes.
+
 Amended by [0039](0039-edit-is-the-only-doc-surface.md), 2026-09-29: Source is
 gone. A protected block's door is "Edit", in place; a failed bundle load shows
 a Reload note, not Source; the persisted `preview`/`raw` ids and the WebMCP

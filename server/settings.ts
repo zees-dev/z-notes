@@ -67,6 +67,7 @@ export const NUMBERS: Record<string, NumberSpec> = {
 /** Settings that are strictly true/false, healed and validated as a group. */
 export const BOOLEANS = [
   "installed.navigationBar",
+  "layout.foldableSidebar",
   "editor.confirmBeforeExit",
   "git.autoSync",
   "terminal.enabled",
@@ -104,6 +105,7 @@ export const DEFAULTS = {
   density: "comfy",
   colorScheme: "system",
   installed: { navigationBar: true }, // ADR 0043
+  layout: { foldableSidebar: true }, // ADR 0045
   editor: {
     autosaveSeconds: 10,
     tabSize: 2,
@@ -1279,7 +1281,7 @@ function mergeOneLevel(base: Json, patch: Json): Json {
 }
 
 const SCALAR_ORDER = ["theme", "density", "colorScheme"];
-const SECTION_ORDER = ["installed", "editor", "trash", "upload", "git", "secrets", "ai", "terminal"];
+const SECTION_ORDER = ["installed", "layout", "editor", "trash", "upload", "git", "secrets", "ai", "terminal"];
 
 /* ---------- the file is the STARTUP surface, so it documents itself ----------
    settings.toml is how a fresh install is configured before anything has a UI:
@@ -1291,6 +1293,7 @@ const SECTION_ORDER = ["installed", "editor", "trash", "upload", "git", "secrets
 
 const SECTION_DOC: Record<string, string> = {
   installed: "The app installed to a home screen, on a touch screen. A browser tab and a desktop window ignore it.",
+  layout: "The shell across screen sizes.",
   editor: "Editor behaviour.",
   trash: "Recoverable-delete retention. Expired entries are permanently removed by the scheduled sweep.",
   upload: "Files dropped onto the sidebar tree.",
@@ -1307,6 +1310,8 @@ const KEY_DOC: Record<string, string> = {
   colorScheme: "system | dark | light. `system` follows the OS and repaints live.",
   "installed.navigationBar":
     "Keep the system navigation and status bars. Off runs the app full screen; a tap brings it back after Back or a swipe leaves it.",
+  "layout.foldableSidebar":
+    "Keep the file tree beside the doc on an unfolded foldable or a tablet (600-1023px wide, at least 480px tall). Off makes it the phone's drawer.",
   "editor.autosaveSeconds": "Write to disk this long after you stop typing.",
   "editor.tabSize": "Tab width in code blocks.",
   "editor.confirmBeforeExit": "Ask before leaving edits that have not reached disk; off saves them first.",

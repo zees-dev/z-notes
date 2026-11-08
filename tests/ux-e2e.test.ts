@@ -1137,17 +1137,17 @@ describe("ux — Esc unwinds one layer at a time", () => {
      has something of its own to close — a slash menu, the caret it blurs — and
      every one of those presses arrives at the app already handled. The presses
      it does NOT claim are the app's, and they were being swallowed: focus on a
-     protected block's Edit button is inside `.bn-container`, so no
+     secret block's button is inside `.bn-container`, so no
      number of presses reached the chat panel (which is not a veil). */
   test("Edit hands back the Escape it has not claimed", async () => {
-    const PROTECTED_DOC = "esc-protected.md";
+    const SECRET_DOC = "esc-secret.md";
     await srv
-      .api("POST", "/api/docs", { path: PROTECTED_DOC, type: "doc", markdown: "---\ntitle: esc\n---\n\nText here.\n" })
+      .api("POST", "/api/docs", { path: SECRET_DOC, type: "doc", markdown: "```age\n-----BEGIN AGE ENCRYPTED FILE-----\nYWdl\n-----END AGE ENCRYPTED FILE-----\n```\n\nText here.\n" })
       .catch(() => {});
-    await app.clickDoc(PROTECTED_DOC);
-    await page.waitForSelector("#doc .z-source-block button", { timeout: 15000 });
+    await app.clickDoc(SECRET_DOC);
+    await page.waitForSelector("#doc .secret button", { timeout: 15000 });
 
-    await page.$eval("#doc .z-source-block button", (b) => (b as HTMLElement).focus());
+    await page.$eval("#doc .secret button", (b) => (b as HTMLElement).focus());
     expect(`focus inside the island, chat open: ${await chatOpen()}`).toBe("focus inside the island, chat open: true");
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.getElementById("app")!.classList.contains("chat-open"), {

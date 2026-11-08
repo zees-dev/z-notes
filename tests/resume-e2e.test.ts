@@ -88,9 +88,8 @@ describe("a doc with CR line endings renders — and boots", () => {
           failed: document.querySelectorAll("#doc .note.bad").length,
         };
       });
-      /* the nested quote is syntax the adapter will not round-trip, so it is a
-         protected `source` block rather than a render failure */
-      expect(rendered).toEqual({ types: "quote|source|paragraph", quoted: "quotedand more", breaks: 1, failed: 0 });
+      /* the nested quote nests quote blocks (ADR 0044), not a render failure */
+      expect(rendered).toEqual({ types: "quote|quote|quote|paragraph", quoted: "quotedand more", breaks: 1, failed: 0 });
       expect(errs).toEqual([]);
       /* and not one byte of it was rewritten by being read */
       expect((await srv.get("/api/docs/" + CRLF)).body.markdown).toBe(CRLF_SRC);

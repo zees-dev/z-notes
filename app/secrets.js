@@ -736,12 +736,11 @@ function armorOffset(md, armor, ord) {
 
     A STRING `ord` is a mounted block's stable island id, which survives both
     identical ciphertext and a drag: the island owns the model then, so the swap
-    goes through it and the offset is read back from the new markdown.
-    @returns the offset the swap happened at, or -1 if the block is gone. */
+    goes through it, and a nested block's container may be reindented by it.
+    @returns the offset the swap happened at (0 for an island id), or -1 if the block is gone. */
 function replaceArmorInDoc(doc, oldArmor, newArmor, ord) {
   if (typeof ord === "string") {
-    const replaced = replaceVisualSecret(doc.path, ord, newArmor);
-    return replaced ? doc.markdown.indexOf(newArmor) : -1;
+    return replaceVisualSecret(doc.path, ord, newArmor) ? 0 : -1;
   }
   const at = armorOffset(doc.markdown, oldArmor, ord);
   if (at < 0) return -1;

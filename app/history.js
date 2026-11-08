@@ -4,8 +4,8 @@
    Not one per document, and not one per kind of thing. A person's session is a
    single ordered list of things they did — rewrote a.md, deleted b.md — and ⌘Z
    walks back up that list whatever the next step turns out to be, taking them
-   to the document it is about. It holds file operations, agent writes and
-   protected-block edits; typing in Edit is the island's own history, and ⌘Z
+   to the document it is about. It holds file operations and agent
+   writes; typing in Edit is the island's own history, and ⌘Z
    reaches this timeline once that has nothing left (ADR 0014, amended by 0039).
 
    The app owns the timeline. This module owns nothing else: it is a leaf

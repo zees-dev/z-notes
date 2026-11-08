@@ -53,11 +53,11 @@ has happened or is likely, because agents invent synonyms.
   "Preview" for the editor.
 - **source group** — one top-level Markdown node with its byte range, the
   unit `app/markdown-source.ts` preserves: an untouched group keeps its
-  bytes, an edited one is re-serialised. A **protected block** is a group the
-  adapter cannot edit visually (frontmatter, nested secrets, unsupported
-  syntax); its **Edit** button opens exactly that block's Markdown in a
-  textarea in place, and Done splices it back into the block's byte range.
-  *Banned:* "chunk", "segment".
+  bytes, an edited one is re-serialised. *Banned:* "chunk", "segment".
+- **verbatim span** — Markdown the editor has no form for (HTML, an image, a
+  reference, a footnote, an unsafe link), shown as its source text inside its
+  line and written back byte for byte (ADR 0044). *Retired:* "protected
+  block", "Protected Markdown" — every group imports now.
 
 ## Text size
 

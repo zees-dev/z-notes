@@ -1760,6 +1760,10 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
      1024–1279 laptop   sidebar = COLUMN, chat = right overlay
      >= 1280 desktop    sidebar = COLUMN, chat = COLUMN (the classic three-pane)
 
+   One setting overrides the drawer: 600–1023 wide and at least 480 tall is an
+   unfolded foldable (or a tablet), and with `layout.foldableSidebar` on its
+   sidebar is a COLUMN (`.fold-dock`, ADR 0045). Height enters only there.
+
    The previous rule put every one of those widths into the three-pane layout
    with the chat open: measured, a 768px window gave a 172px document column
    and a ~120px measure, and 820px gave 224px. Both are now full-width.
@@ -1774,6 +1778,19 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 @media (max-width: 1023px) {
   .only-drawer { display: inline-flex !important; }
   .no-drawer { display: none !important; }
+}
+
+/* ---- an unfolded foldable: the sidebar is a COLUMN below --w-dock ----
+   `fold-dock` is shell.js's (applyFoldableSidebar, ADR 0045): 600–1023 wide,
+   480 tall, `layout.foldableSidebar` on. It undoes the drawer of both bands
+   below, so it sits after neither and wins on specificity. The column gives
+   way to the measure: never more than 36% of the width. */
+@media (max-width: 1023px) {
+  .app.fold-dock, .app.fold-dock.chat-open { grid-template-columns: min(var(--sidebar-w), 36vw) minmax(0, 1fr); }
+  .app.fold-dock.sidebar-collapsed, .app.fold-dock.sidebar-collapsed.chat-open { grid-template-columns: 0px minmax(0, 1fr); }
+  .app.fold-dock .sidebar { position: static; width: auto; transform: none; box-shadow: none; transition: none; pointer-events: auto; }
+  .app.fold-dock .only-drawer { display: none !important; }
+  .app.fold-dock .no-drawer { display: inline-flex !important; }
 }
 
 /* ---- 768–1279: the chat is a right-hand OVERLAY, not a column ----
@@ -2372,17 +2389,15 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .z-code-copy:hover { background: var(--btn-hover-bg); }
 /* the secret block's own DOM, injected into a non-editable node view */
 .z-secret-host { width: 100%; min-width: 0; font-family: var(--font); }
-/* a protected source group — frontmatter, or syntax the adapter will not
-   round-trip — shown as the bytes it is, with an Edit button */
-.z-source-block { width: 100%; border: var(--bd); border-radius: var(--r); background: var(--panel-2); padding: 10px; color: var(--muted); font: 12px var(--mono); }
-.z-source-block pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12em; overflow-y: auto; }
-/* that block's Markdown in place, and the confirm dialog's text field
-   (`confirmDialog` opts.field): plain text, grown to fit */
-.z-source-edit, #cfField {
+/* a verbatim span — Markdown with no editor form (HTML, an image, a footnote),
+   shown as written inside its line */
+.z-verbatim { color: var(--muted); font: .86em var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* the confirm dialog's text field (`confirmDialog` opts.field): plain text, grown to fit */
+#cfField {
   display: block; width: 100%; min-height: 5lh; field-sizing: content; resize: none; margin: 8px 0; padding: 7px 9px;
   border: var(--input-bd); border-radius: var(--r-sm); outline: none; background: var(--input-bg); color: var(--input-fg); font: 12px/1.5 var(--mono);
 }
-.z-source-edit:focus, #cfField:focus { border-color: var(--accent); box-shadow: var(--sh-focus); }
+#cfField:focus { border-color: var(--accent); box-shadow: var(--sh-focus); }
 
 /* ---- the block toolbar (ADR 0034's Edit half) ----
    A phone's only (ADR 0037): it DOCKS on the soft keyboard's top edge, which

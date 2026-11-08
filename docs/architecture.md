@@ -102,15 +102,14 @@ entries. Two tiers, enforced by lint:
   `editor.js` from the URL `#znotes-assets` names (`warmEditor()` starts it
   before the tree loads); a load that fails leaves a Reload note
   and nothing editable. It imports npm packages and `markdown-source.ts` only;
-  `mountEditor(host, options)` takes callbacks (`onChange`, `onSourceEdit`,
+  `mountEditor(host, options)` takes callbacks (`onChange`,
   `onNewSecret`, `renderSecret`, `copyText`, `resolveWikiLink`, `onWikiLink`,
   `onError`) and returns a controller (`setMarkdown`, `revealLine`,
   `anchorLine`, `getSecrets`, `replaceSecret`, `insertSecret`, `destroy`). The
   adapter (`SourceSession`) owns format conversion: top-level MDAST groups
   with byte ranges, untouched groups verbatim, edited groups through the
-  standard serialiser, protected blocks for what it cannot edit (edited in
-  place as Markdown and spliced back by byte range), ciphertext blocks for
-  age fences. Extra whitespace between top-level groups imports as ordinary
+  standard serialiser, verbatim spans for what it has no form for (ADR 0044),
+  ciphertext blocks for age fences, nested or not. Extra whitespace between top-level groups imports as ordinary
   empty paragraphs with zero-width source groups: three/four newlines map to
   one, five/six to two. Retained separators preserve the original bytes;
   newly inserted empty paragraphs add two newlines each. Same-family list

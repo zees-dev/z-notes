@@ -13,7 +13,7 @@ import { $, $$, apiFail, clearStickyToast, dirname, notice, toast, vaultOf, with
 import { adoptVaultSync, closeCtx, loadTree, renderTree, revealFolder } from "./tree.js";
 import { closeConfirm, closeConflict, confirmDialog } from "./dialogs.js";
 import { adoptTrash, refreshTrash } from "./trash.js";
-import { closeExitGuard, commitVisualDrafts, destroyEditor, exitDiff, guardExit, markDirty, navGate, openDoc, renderDoc, saveDoc, setBaseline, viewedPath } from "./editor.js";
+import { closeExitGuard, destroyEditor, exitDiff, guardExit, markDirty, navGate, openDoc, renderDoc, saveDoc, setBaseline, viewedPath } from "./editor.js";
 import { closePP, retargetSecrets } from "./secrets.js";
 import { closeEffort, closePal, renderChat, updateSessionUI } from "./chat.js";
 import { adoptSettings, cacheLook, commitFocusedNumber, exitSettings, guardSettingsExit, paintAiStatus, paintGitRemote, paintVaults, settingAt, settingsDirty, showSettings } from "./settings.js";
@@ -393,10 +393,8 @@ export function connect() {
             /* The SAME doc object is retargeted, never a copy: the mounted
                editor's callbacks, the pending autosave and any in-flight save
                all hold it, and a clean buffer can still take typing while the
-               tree request below is on the wire. A draft joins the buffer, as a
-               step recorded under the NEW path. */
+               tree request below is on the wire. */
             state.docs.set(d.to, Object.assign(cached, { path: d.to, name: d.to.split("/").pop() }));
-            commitVisualDrafts();
             destroyEditor(); // visual secret ids are released against the OLD path
             retargetSecrets(d.path, d.to);
             state.active = d.to;
@@ -1500,14 +1498,28 @@ export const app = $("#app");
      W_SHEET   768   below: sidebar drawer + chat BOTTOM SHEET, no ⌘ chords
      W_DOCK   1024   below: the sidebar is a DRAWER, not a column
      W_TRIPANE 1280  at or above: the chat is a COLUMN, not an overlay
+
+   One exception, a setting (ADR 0045): W_FOLD up to W_DOCK is an unfolded
+   foldable (or a tablet), Android's medium window class, and with
+   `layout.foldableSidebar` on its sidebar is a column after all. Height enters
+   only there, so a landscape phone (under H_FOLD tall) is not mistaken for one.
    ------------------------------------------------------------------ */
 const W_SHEET = 768;
 const W_DOCK = 1024;
 const W_TRIPANE = 1280;
+const W_FOLD = 600;
+const H_FOLD = 480;
 /** Phone: the chat is a bottom sheet and there is no hardware keyboard to assume. */
 export const isSheet = () => window.innerWidth < W_SHEET;
 /** Phone or tablet: the sidebar is off-canvas, so `nav-open` means something. */
-export const isDrawer = () => window.innerWidth < W_DOCK;
+export const isDrawer = () => window.innerWidth < W_DOCK && !app.classList.contains("fold-dock");
+/** Dock or undock the sidebar of the fold band (ADR 0045): at load, on resize and on save. */
+export function applyFoldableSidebar() {
+  const w = window.innerWidth;
+  const docked = w >= W_FOLD && w < W_DOCK && window.innerHeight >= H_FOLD && settingAt("layout.foldableSidebar") !== false;
+  if (docked) closeNav();
+  app.classList.toggle("fold-dock", docked);
+}
 /** The chat takes width from the document rather than covering it. */
 export const isTriPane = () => window.innerWidth >= W_TRIPANE;
 
