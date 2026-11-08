@@ -31,7 +31,9 @@ editor exists to prevent.
   block HTML, an image, a reference link, a footnote, a link whose scheme
   the editor may not make actionable, an ambiguous escaped wiki-link. It is
   an inline atom showing its source as text, never rendered markup, and it
-  is written back byte for byte however its paragraph is edited.
+  is written back byte for byte however its paragraph is edited. Inside a
+  quote or list item it holds its lines without the container's prefix,
+  which the container writes again.
 - **Frontmatter is a code block** (`yaml` or `toml`) that is written back as
   the frontmatter it was and must stay first.
 - **A nested secret is a secret block** inside its list item or quote.
@@ -48,7 +50,8 @@ editor exists to prevent.
 
 - Editing a group that held a hard break, a link title, a fence meta, table
   alignment or an ordered task writes the standard form: a soft line break,
-  no title, no meta, no alignment, a bullet task.
+  no title, no meta, no alignment, a bullet task, and a wiki-link without the
+  emphasis around it.
 - A nested secret whose container used a non-standard indent is reprinted
   with the standard one when it is re-encrypted.
 - HTML and images show as their source, in the doc's muted monospace, not

@@ -32,8 +32,15 @@ const safeUrl = (url: string) => {
   return !/^[a-z][a-z0-9+.-]*:/i.test(normalized) || /^(https?|mailto|tel):/i.test(normalized);
 };
 const text = (value: string, styles: Record<string, boolean | string> = {}): Inline => ({ type: 'text', text: value, styles });
-const verbatim = (node: Node, source: string): Inline => ({ type: 'verbatim', props: { source: source.slice(node.position!.start.offset, node.position!.end.offset) } });
-function inlines(nodes: Node[], source: string, styles: Record<string, boolean | string> = {}, wiki = true): Inline[] {
+/* A line inside a quote or list item, without that container's prefix: the
+   serializer writes the prefix again when it reprints the container. */
+type Strip = (line: string) => string;
+const keep: Strip = line => line;
+const verbatim = (node: Node, source: string, strip: Strip): Inline => {
+  const [first, ...rest] = source.slice(node.position!.start.offset, node.position!.end.offset).split('\n');
+  return { type: 'verbatim', props: { source: [first, ...rest.map(strip)].join('\n') } };
+};
+function inlines(nodes: Node[], source: string, strip: Strip, styles: Record<string, boolean | string> = {}, wiki = true): Inline[] {
   return nodes.flatMap((node): Inline[] => {
     if (node.type === 'text') {
       if (!wiki) return [text(node.value || '', styles)];
@@ -42,7 +49,7 @@ function inlines(nodes: Node[], source: string, styles: Record<string, boolean |
         // MDAST decodes escapes and entities. An ambiguous mixture keeps its bytes.
         const rawLinks = Array.from(raw.matchAll(/(?<!\\)(?:\\\\)*(\[\[[^\]\\\n]+\]\])/g), match => match[1]);
         if (!rawLinks.length) return [text(node.value || '', styles)];
-        if (JSON.stringify(rawLinks) !== JSON.stringify(node.value?.match(/\[\[[^\]\n]+\]\]/g))) return [verbatim(node, source)];
+        if (JSON.stringify(rawLinks) !== JSON.stringify(node.value?.match(/\[\[[^\]\n]+\]\]/g))) return [verbatim(node, source, strip)];
       }
       return (node.value || '').split(/(\[\[[^\]\n]+\]\])/).filter(Boolean).map(value => value.startsWith('[[') && value.endsWith(']]') ? { type: 'wikiLink', props: { target: value.slice(2, -2) } } : text(value, styles));
     }
@@ -50,25 +57,28 @@ function inlines(nodes: Node[], source: string, styles: Record<string, boolean |
     // The editor draws every line break alike, so a hard one comes back soft.
     if (node.type === 'break') return [text('\n', styles)];
     const style = ({ strong: 'bold', emphasis: 'italic', delete: 'strike' } as Record<string, string>)[node.type];
-    if (style) return inlines(node.children || [], source, { ...styles, [style]: true }, wiki);
+    if (style) return inlines(node.children || [], source, strip, { ...styles, [style]: true }, wiki);
     // A scheme the editor may not make actionable is still the file's bytes:
     // verbatim, never an anchor. A link's title has no editor form either.
     if (node.type === 'link' && safeUrl(node.url || '')) {
-      const content = inlines(node.children || [], source, styles, false);
+      const content = inlines(node.children || [], source, strip, styles, false);
       if (content.every(item => item.type === 'text')) return [{ type: 'link', href: node.url || '', content }];
     }
-    return [verbatim(node, source)];
+    return [verbatim(node, source, strip)];
   });
 }
 /* A container's first paragraph is its block's text; everything after it nests. */
-function container(type: string, node: Node, source: string, spread: Map<string, boolean>, props: SourceBlock['props'] = {}): SourceBlock {
+function container(type: string, node: Node, source: string, spread: Map<string, boolean>, strip: Strip, props: SourceBlock['props'] = {}): SourceBlock {
   const [first, ...rest] = node.children || [];
   const lead = first?.type === 'paragraph';
-  return block(type, lead ? inlines(first.children || [], source) : [], props, (lead ? rest : node.children || []).flatMap(n => importNode(n, source, spread)));
+  // A quote's lines open with `>`; an item's continue at its content's column.
+  const width = first ? first.position!.start.column - node.position!.start.column : 0;
+  const inner: Strip = node.type === 'blockquote' ? line => strip(line).replace(/^ {0,3}> ?/, '') : line => strip(line).replace(new RegExp(`^[ \\t]{0,${width}}`), '');
+  return block(type, lead ? inlines(first.children || [], source, inner) : [], props, (lead ? rest : node.children || []).flatMap(n => importNode(n, source, spread, inner)));
 }
-function importNode(node: Node, source: string, spread: Map<string, boolean>): SourceBlock[] {
+function importNode(node: Node, source: string, spread: Map<string, boolean>, strip: Strip = keep): SourceBlock[] {
   const children = node.children || [];
-  if (node.type === 'paragraph' || node.type === 'heading') return [block(node.type, inlines(children, source), node.type === 'heading' ? { level: node.depth || 1 } : {})];
+  if (node.type === 'paragraph' || node.type === 'heading') return [block(node.type, inlines(children, source, strip), node.type === 'heading' ? { level: node.depth || 1 } : {})];
   if (node.type === 'thematicBreak') return [block('divider')];
   if (node.type === 'code') {
     if (node.lang === 'age') return [block('secret', undefined, { ciphertext: node.value || '' })];
@@ -76,10 +86,10 @@ function importNode(node: Node, source: string, spread: Map<string, boolean>): S
     if (node.lang === 'mermaid' && (node.value || '').trim()) return [block('diagram', node.value || '')];
     return [block('codeBlock', [text(node.value || '')], { language: node.lang || 'text' })];
   }
-  if (node.type === 'blockquote') return [container('quote', node, source, spread)];
+  if (node.type === 'blockquote') return [container('quote', node, source, spread, strip)];
   if (node.type === 'list') return children.map((item, index) => {
     // An ordered task has no editor form: it is a task, numbered by its file until edited.
-    const imported = container(typeof item.checked === 'boolean' ? 'checkListItem' : node.ordered ? 'numberedListItem' : 'bulletListItem', item, source, spread, typeof item.checked === 'boolean' ? { checked: item.checked } : node.ordered ? { start: (node.start ?? 1) + index } : {});
+    const imported = container(typeof item.checked === 'boolean' ? 'checkListItem' : node.ordered ? 'numberedListItem' : 'bulletListItem', item, source, spread, strip, typeof item.checked === 'boolean' ? { checked: item.checked } : node.ordered ? { start: (node.start ?? 1) + index } : {});
     // Looseness is the source list's, not the editor's: BlockNote has no prop
     // for it, so an edited item is reprinted from what the file already said.
     // A blank line inside one item makes the whole list loose, whatever the list node says.
@@ -87,8 +97,8 @@ function importNode(node: Node, source: string, spread: Map<string, boolean>): S
     return imported;
   });
   // Column alignment has no editor form: an edited table loses it.
-  if (node.type === 'table') return [block('table', { type: 'tableContent', headerRows: 1, rows: children.map(row => ({ cells: (row.children || []).map(cell => inlines(cell.children || [], source)) })) })];
-  return [block('paragraph', [verbatim(node, source)])];
+  if (node.type === 'table') return [block('table', { type: 'tableContent', headerRows: 1, rows: children.map(row => ({ cells: (row.children || []).map(cell => inlines(cell.children || [], source, strip)) })) })];
+  return [block('paragraph', [verbatim(node, source, strip)])];
 }
 function inlineNodes(content: SourceBlock['content']): Node[] {
   if (typeof content === 'string') return [{ type: 'text', value: content }];
@@ -180,7 +190,9 @@ function secretSlices(source: string): SecretSlice[] {
       const ciphertext = source.slice(bodyStart, bodyEnd);
       const indent = ciphertext.match(/^[ \t>]*/)?.[0] || (closing ? source.slice(lastLine, lastLine + closing.index!) : '');
       found.push({ start, end, bodyStart, bodyEnd, ciphertext, indent });
-    } else for (const child of node.children || []) visit(child);
+      // Only containers that import as blocks hold secret blocks; a fence inside
+      // a verbatim span (a footnote) is that span's text.
+    } else if (['root', 'blockquote', 'list', 'listItem'].includes(node.type)) for (const child of node.children || []) visit(child);
   };
   visit(parse(source));
   return found;

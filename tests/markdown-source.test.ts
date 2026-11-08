@@ -287,3 +287,21 @@ test("retained lists that become adjacent join one run; item-level looseness cou
   const inner = new SourceSession("- a\n\n  - a1\n- b\n");
   expect(inner.serialize([...clone(inner.blocks), item("bulletListItem", "c")])).toBe("- a\n  - a1\n\n- b\n\n- c\n");
 });
+test('a multi-line verbatim span inside a quote or list item survives repeated edits of its container', () => {
+  for (const raw of ['> hi\n>\n> <div>\n> x\n> </div>\n', '- item\n\n  <div>\n  x\n  </div>\n', '> a <span\n> x>b\n', '- a <span\n  x>b\n', '> - in\n>\n>   <div>\n>   y\n>   </div>\n']) {
+    let session = new SourceSession(raw);
+    const html = (s: SourceSession) => JSON.stringify(s.blocks).match(/"source":"([^"]*)"/)?.[1];
+    const before = html(session);
+    for (const n of [1, 2]) {
+      const blocks = clone(session.blocks);
+      const first = blocks[0].content as import('../app/markdown-source').Inline[];
+      if (first.length) first.push({ type: 'text', text: String(n), styles: {} }); else prose(blocks[0], String(n));
+      session = new SourceSession(session.serialize(blocks));
+      expect(html(session)).toBe(before);
+    }
+  }
+});
+test('a fence inside a verbatim footnote is not a secret block and does not shift the nested ones', () => {
+  const s = new SourceSession('> note[^1]\n>\n> [^1]: foot\n>\n>     ```age\n>     FOOT\n>     ```\n>\n> ```age\n> MINE\n> ```\n');
+  expect(s.secrets().map(secret => secret.ciphertext)).toEqual(['> MINE']);
+});
