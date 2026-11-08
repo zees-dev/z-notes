@@ -15,7 +15,7 @@ import { refreshTrash } from "./trash.js";
 import { guardExit, openDoc } from "./editor.js";
 import { applyLockPolicy, clearKeyFields, clearTerminalSecretFields, initSecrets, paintVaultKey } from "./secrets.js";
 import { updateSessionUI } from "./chat.js";
-import { SETTINGS_SECTIONS, app, applyNavigationBar, canPopBack, closeNav, homeTarget, isDrawer, isTriPane, paintHome, paintSync, routeSettings, syncNow, toggleChat } from "./shell.js";
+import { SETTINGS_SECTIONS, app, applyFoldableSidebar, applyNavigationBar, canPopBack, closeNav, homeTarget, isDrawer, isTriPane, paintHome, paintSync, routeSettings, syncNow, toggleChat } from "./shell.js";
 import { paintTerminal, refreshTerminalStatus } from "./terminal.js";
 
 /* ============================================================
@@ -1459,6 +1459,7 @@ function applySavedSettings(paths) {
   applyLockPolicy(); // the crypto worker's idle / hidden / session clocks
   paintHome(); // editor.homeDoc — the vault button's target and title
   if (paths.indexOf("installed.navigationBar") >= 0) applyNavigationBar();
+  if (paths.indexOf("layout.foldableSidebar") >= 0) applyFoldableSidebar();
   // the container Edit's code blocks inherit their tab width from (renderDoc)
   if (paths.indexOf("editor.tabSize") >= 0) $("#doc").style.tabSize = String(settingAt("editor.tabSize"));
   if (state.session) {

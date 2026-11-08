@@ -51,15 +51,31 @@ test('deleting and reordering never resurrects groups; undo preserves original',
 test('literal Markdown punctuation is escaped by standard serializer', () => { const s = new SourceSession('before\n'); const b = clone(s.blocks); prose(b[0], '# title *literal* [no](link)'); const result = new SourceSession(s.serialize(b)); expect(result.blocks[0].type).toBe('paragraph'); expect(result.blocks[0].content).toEqual(b[0].content); });
 test('edited nested task list keeps hierarchy and contiguous siblings', () => { const s = new SourceSession('- [ ] first\n  - nested\n- [x] second\n\nAfter\n'); const b = clone(s.blocks); b[0].props.checked = true; const out = s.serialize(b); expect(out).toContain('- [x] first'); expect(out).toContain('  - nested'); expect(out).toEndWith('\n\nAfter\n'); });
 test('wiki atoms are excluded from code and links', () => { const s = new SourceSession('[[a]] `[[b]]` [x [[c]]](https://example.com)'); const content = s.blocks[0].content as Array<{type: string}>; expect(content.filter(x => x.type === 'wikiLink')).toHaveLength(1); });
-test('metadata movement and protected transformations are rejected', () => { const s = new SourceSession('---\na: b\n---\n\ntext'); expect(() => s.serialize([...s.blocks].reverse())).toThrow(); const b = clone(s.blocks); b[0].type = 'paragraph'; expect(() => s.serialize(b)).toThrow(); });
+test('frontmatter is a code block that stays first and is written back as metadata', () => { const s = new SourceSession('---\na: b\n---\n\ntext'); expect([s.blocks[0].type, s.blocks[0].props.language]).toEqual(['codeBlock', 'yaml']); expect(() => s.serialize([...s.blocks].reverse())).toThrow('Metadata must remain first'); const b = clone(s.blocks); b[0].content = [{ type: 'text', text: 'a: c', styles: {} }]; expect(s.serialize(b)).toBe('---\na: c\n---\n\ntext'); });
 test('duplicate secret edits target stable IDs after reorder', () => { const s = new SourceSession('```age\nSAME\n```\n\n```age\nSAME\n```\n'); const b = clone(s.blocks).reverse(); const id = b[0].id; const out = s.replaceSecret(id, 'NEW', b); expect(out).toBe('```age\nNEW\n```\n\n```age\nSAME\n```\n'); expect(s.ranges(b).get(id)?.line).toBe(1); });
 test('wiki syntax survives edits in its paragraph', () => { const s = new SourceSession('[[a]] before'); const b = clone(s.blocks); (b[0].content as import('../app/markdown-source').Inline[]).push({ type: 'text', text: ' after', styles: {} }); expect(s.serialize(b)).toBe('[[a]] before after'); });
 test('editing preserves native CRLF separators and final newline', () => { const s = new SourceSession('one\r\n\r\n\r\ntwo\r\n'); const b = clone(s.blocks); prose(b[0], 'new'); expect(s.serialize(b)).toBe('new\r\n\r\n\r\ntwo\r\n'); });
 test('split and join do not reintroduce deleted list items', () => { const s = new SourceSession('- first\n- second\n- third\n\nAfter'); const b = clone(s.blocks); b[1].type = 'paragraph'; expect(s.serialize(b)).toBe('- first\n\nsecond\n\n- third\n\nAfter'); expect(s.serialize([b[0], b[2], b[3]])).toBe('- first\n- third\n\nAfter'); });
-test('nested secrets and unsupported inlines protect their whole source group', () => { for (const raw of ['- before\n\n  ```age\n  ARMOR\n  ```\n', '> ```age\n> ARMOR\n> ```\n', '![alt](image.png)\n', 'one  \ntwo\n']) { const s = new SourceSession(raw); expect(s.blocks[0].type).toBe('source'); expect(s.serialize(s.blocks)).toBe(raw); } });
-test('links the editor may not make actionable keep their bytes, unreachable', () => { for (const raw of ['See [repo](ssh://git@host/x.git) here.', '[bad](javascript:alert)']) { const s = new SourceSession(raw); expect(s.blocks[0].type).toBe('source'); expect(s.blocks[0].content).toBeUndefined(); expect(s.serialize(s.blocks)).toBe(raw); } });
+test('no group is protected: nested secrets, images, HTML, breaks and empty items import as blocks', () => {
+  const cases: [string, string[]][] = [['- before\n\n  ```age\n  ARMOR\n  ```\n', ['bulletListItem', 'secret']], ['> ```age\n> ARMOR\n> ```\n', ['quote', 'secret']], ['![alt](image.png)\n', ['paragraph']], ['one  \ntwo\n', ['paragraph']], ['<div>x</div>\n', ['paragraph']], ['---\n', ['divider']], ['- a\n-\n', ['bulletListItem', 'bulletListItem']], ['[^1]: note\n', ['paragraph']]];
+  for (const [raw, types] of cases) { const s = new SourceSession(raw); const flat = (blocks: SourceBlock[]): string[] => blocks.flatMap(b => [b.type, ...flat(b.children)]); expect(flat(s.blocks)).toEqual(types); expect(s.serialize(s.blocks)).toBe(raw); expect(new SourceSession(s.serialize(clone(s.blocks))).blocks.length).toBe(s.blocks.length); }
+  expect(new SourceSession('one  \ntwo').blocks[0].content).toEqual([{ type: 'text', text: 'one', styles: {} }, { type: 'text', text: '\n', styles: {} }, { type: 'text', text: 'two', styles: {} }]);
+});
+test('an emptied list item is written as a bare marker and reads back as the same list', () => {
+  const s = new SourceSession('- a\n- b\n\nAfter\n'); const b = clone(s.blocks); b.splice(2, 0, { id: 'fresh', type: 'bulletListItem', props: {}, content: [], children: [] });
+  const out = s.serialize(b); expect(out).toBe('- a\n- b\n-\n\nAfter\n');
+  expect(new SourceSession(out).blocks.map(block => block.type)).toEqual(['bulletListItem', 'bulletListItem', 'bulletListItem', 'paragraph']);
+});
+test('verbatim spans keep their bytes when the text around them is edited', () => {
+  const s = new SourceSession('Logo <img src="x.png"> and ![alt](a.png) [ref][id] [t](https://e.com "Title")\n\n[id]: https://example.com\n');
+  const content = s.blocks[0].content as import('../app/markdown-source').Inline[];
+  expect(content.filter(item => item.type === 'verbatim').map(item => (item as { props: { source: string } }).props.source)).toEqual(['<img src="x.png">', '![alt](a.png)', '[ref][id]']);
+  const b = clone(s.blocks); (b[0].content as import('../app/markdown-source').Inline[]).unshift({ type: 'text', text: 'New ', styles: {} });
+  expect(s.serialize(b)).toBe('New Logo <img src="x.png"> and ![alt](a.png) [ref][id] [t](https://e.com)\n\n[id]: https://example.com\n');
+});
+test('links the editor may not make actionable keep their bytes, unreachable', () => { for (const raw of ['See [repo](ssh://git@host/x.git) here.', '[bad](javascript:alert)']) { const s = new SourceSession(raw); const content = s.blocks[0].content as import('../app/markdown-source').Inline[]; expect(content.some(item => item.type === 'link')).toBe(false); expect(content.some(item => item.type === 'verbatim')).toBe(true); const b = clone(s.blocks); (b[0].content as import('../app/markdown-source').Inline[]).push({ type: 'text', text: '!', styles: {} }); expect(s.serialize(b)).toBe(raw + '!'); } });
 test('unsupported visual formatting is rejected', () => { const s = new SourceSession('text'); const b = clone(s.blocks); (b[0].content as import('../app/markdown-source').Inline[])[0] = { type: 'text', text: 'text', styles: { underline: true } }; expect(() => s.serialize(b)).toThrow(); });
-test('nested age controls preserve prefixes and identify duplicate protected groups', () => {
+test('nested secrets keep their prefixes and stable identities through replacement', () => {
   for (const prefix of ['  ', '> ']) {
     const raw = prefix === '  ' ? '- item\n\n  ```age\n  OLD\n  ```' : '> ```age\n> OLD\n> ```';
     const s = new SourceSession(raw + '\n\nBetween\n\n' + raw + '\n');
@@ -69,10 +85,12 @@ test('nested age controls preserve prefixes and identify duplicate protected gro
     expect(secrets[0].ciphertext).toBe(prefix + 'OLD');
     expect(secrets[0].indent).toBe(prefix);
     const out = s.replaceSecret(secrets[0].id, prefix + 'NEW\n' + prefix + 'MORE', b);
-    expect(out).toBe(raw.replace(prefix + 'OLD', prefix + 'NEW\n' + prefix + 'MORE') + '\n\nBetween\n\n' + raw + '\n');
+    // A nested fence is reprinted with its container; the copy after it keeps its bytes.
+    expect(out).toContain(prefix + 'NEW\n' + prefix + 'MORE');
+    expect(out).toEndWith('\n\nBetween\n\n' + raw + '\n');
+    expect(s.secrets(b).map(secret => secret.ciphertext)).toEqual([prefix + 'NEW\n' + prefix + 'MORE', prefix + 'OLD']);
     expect(s.secrets(b)[0].id).toBe(secrets[0].id);
     expect(s.serialize(s.blocks)).toBe(s.markdown);
-    expect(s.sourceParts(b[0].id, b).filter(part => 'secret' in part)).toHaveLength(1);
   }
 });
 test('top-level indented age replacement preserves fence and body prefixes', () => {
@@ -80,16 +98,6 @@ test('top-level indented age replacement preserves fence and body prefixes', () 
   const b = clone(s.blocks);
   expect(s.secrets(b)[0].ciphertext).toBe('  OLD');
   expect(s.replaceSecret(b[0].id, '  NEW', b)).toBe('  ```age\n  NEW\n  ```\n');
-});
-test('duplicated protected groups support secret replacement and remain protected', () => {
-  const raw = '> ```age\n> OLD\n> ```';
-  const s = new SourceSession(raw + '\n');
-  const duplicate = { ...structuredClone(s.blocks[0]), id: 'duplicate-source' };
-  const blocks = [...clone(s.blocks), duplicate];
-  const secret = s.secrets(blocks).find(entry => entry.blockId === duplicate.id)!;
-  expect(s.replaceSecret(secret.id, '> NEW', blocks)).toBe(raw + '\n\n' + raw.replace('OLD', 'NEW') + '\n');
-  duplicate.props.source = '> arbitrary change';
-  expect(() => s.serialize(blocks)).toThrow('Protected source');
 });
 test('changing a heading to prose keeps separate paragraphs at a tight boundary', () => {
   for (const newline of ['\n', '\r\n']) {
@@ -116,12 +124,12 @@ test('moving an unclosed supported code block closes it without swallowing prose
   expect(new SourceSession(output).blocks.map(block => block.type)).toEqual(['codeBlock', 'paragraph']);
   expect(session.serialize(session.blocks)).toBe(session.markdown);
 });
-test('ordered tasks stay protected rather than turning into unordered tasks', () => {
+test('ordered tasks are tasks that keep their numbering until edited', () => {
   const raw = '3. [ ] first\n4. [x] second\n\nAfter';
   const session = new SourceSession(raw);
-  expect(session.blocks[0].type).toBe('source');
+  expect(session.blocks.map(block => block.type)).toEqual(['checkListItem', 'checkListItem', 'paragraph']);
   const blocks = clone(session.blocks);
-  prose(blocks[1], 'Changed');
+  prose(blocks[2], 'Changed');
   expect(session.serialize(blocks)).toBe(raw.replace('After', 'Changed'));
 });
 test('escaped and entity wiki punctuation stays literal after nearby edits', () => {
@@ -143,17 +151,16 @@ test('automatic trailing empty paragraphs do not close or move EOF-dependent blo
     expect(session.serialize(blocks)).toBe(session.markdown);
     prose(blocks[0], 'Changed');
     expect(session.serialize(blocks)).toBe(session.markdown.replace('Before', 'Changed'));
-    expect(session.sourceParts(blocks[1].id, blocks).length).toBeGreaterThan(0);
     if (blocks[1].type !== 'codeBlock') {
       prose(blocks[2], 'Following prose');
       expect(() => session.serialize(blocks)).toThrow('must remain last');
     }
   }
 });
-test('ambiguous escaped and genuine wiki mixtures stay protected', () => {
+test('ambiguous escaped and genuine wiki mixtures keep their bytes', () => {
   const raw = '\\[\\[literal\\]\\] and [[actual]]';
   const session = new SourceSession(raw);
-  expect(session.blocks[0].type).toBe('source');
+  expect((session.blocks[0].content as import('../app/markdown-source').Inline[]).map(item => item.type)).toEqual(['verbatim']);
   expect(session.serialize(session.blocks)).toBe(raw);
 });
 test('reordering delimiters cannot turn visible blocks into frontmatter', () => {
@@ -200,10 +207,9 @@ test('ordered lists starting at zero retain their start when text changes', () =
   prose(blocks[1], 'changed');
   expect(session.serialize(blocks)).toBe('0. zero\n1. changed\n');
 });
-test('normalizing a protected leading delimiter preserves its opaque remainder', () => {
+test('normalizing a leading delimiter preserves the verbatim remainder', () => {
   const protectedGroup = '+++\r\n![image](<some image.png>) [[target]]';
   const session = new SourceSession(`Before\r\n\r\n${protectedGroup}\r\n\r\n+++\r\n\r\nAfter`);
-  expect(session.blocks[1].type).toBe('source');
   const output = session.serialize([session.blocks[1], session.blocks[2], session.blocks[0], session.blocks[3]]);
   expect(output).toStartWith('\\' + protectedGroup);
   expect(new SourceSession(output).blocks).toHaveLength(4);
@@ -229,11 +235,16 @@ test('a BOM stays the first bytes of the file, whatever is edited above it', () 
   const above: SourceBlock = { id: 'fresh-first', type: 'paragraph', props: {}, content: [{ type: 'text', text: 'Top', styles: {} }], children: [] };
   expect(session.serialize([above, ...clone(session.blocks)])).toBe('\uFEFFTop\n\n' + raw.slice(1));
 });
-test('a list item may not carry a non-list child out to Markdown', () => {
-  const session = new SourceSession('- item\n- second\n');
+test('list items and quotes carry any child out to Markdown and back; prose does not nest', () => {
+  const session = new SourceSession('- item\n- second\n\n> quote\n');
   const blocks = clone(session.blocks);
-  blocks[0].children = [{ id: 'child-paragraph', type: 'paragraph', props: {}, content: [{ type: 'text', text: 'A paragraph', styles: {} }], children: [] }];
-  expect(() => session.serialize(blocks)).toThrow('Only list items can nest');
+  const child: SourceBlock = { id: 'child-paragraph', type: 'paragraph', props: {}, content: [{ type: 'text', text: 'A paragraph', styles: {} }], children: [] };
+  blocks[0].children = [child]; blocks[2].children = [{ ...child, id: 'quote-child' }];
+  const out = session.serialize(blocks);
+  expect(out).toBe('- item\n\n  A paragraph\n- second\n\n> quote\n>\n> A paragraph\n');
+  expect(new SourceSession(out).blocks.map(block => [block.type, block.children.map(c => c.type)])).toEqual([['bulletListItem', ['paragraph']], ['bulletListItem', []], ['quote', ['paragraph']]]);
+  const prose = new SourceSession('Text\n'); const nested = clone(prose.blocks); nested[0].children = [child];
+  expect(() => prose.serialize(nested)).toThrow('Only list items and quotes can nest');
 });
 test('an edited list leaves its neighbour list, its separators and its looseness alone', () => {
   const session = new SourceSession('1. a\n\n* b\n* c\n\n\nafter\n');

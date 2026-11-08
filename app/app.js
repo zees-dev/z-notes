@@ -25,7 +25,7 @@ import { applyTextHistory, autoGrow, closeExitGuard, ensureLoaded, exitGuardDisc
 import { changeVaultPassphrase, closePP, doPassphraseOk, initSecrets, keyHint, lockVault, newSecret, paintVaultChip, ppHint, repaintSecretsUI, secretsCall, vault } from "./secrets.js";
 import { closeEffort, closePal, loadProposals, loadSession, openEffort, openPal, palInputChanged, palMove, palOpen, palSetMode, renderChat, sendMessage, startNewSession } from "./chat.js";
 import { applyColorScheme, applyDensity, applyLook, applyTheme, checkAiEndpoint, clearSettingsError, coerceNumberSetting, commitFocusedNumber, discardSettingsDraft, leaveSettings, markSeg, openSettings, paintSaveState, paintSettings, pinLookFromUrl, pushSettings, saveSettings, savedValue, setDraft, settingsDirty, clearDraft, showSettings } from "./settings.js";
-import { CLOSERS, VEILS, app, bootDoc, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, recountBlocked, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc, applyNavigationBar } from "./shell.js";
+import { CLOSERS, VEILS, app, bootDoc, closeNav, closeSess, connect, dismissChat, dismissTop, flushBuffer, goHome, healAfterGap, hide, initChatOpen, isDrawer, isOpen, isSheet, isTriPane, onPop, overlayOpen, openNav, openSess, paintSync, recountBlocked, routeVeil, seedHistory, syncNow, syncScrim, toggleChat, trapTab, urlDoc, urlSettings, wireVisualViewport, openFirstDoc, applyNavigationBar, applyFoldableSidebar } from "./shell.js";
 import { refreshTerminalStatus, submitTerminal, termClear, termRunningId, termWrite, terminalHistory, terminalLock, terminalSavePassword, terminalStop, terminalUnlock } from "./terminal.js";
 import { initZoom } from "./zoom.js";
 import { registerWebMcpTools } from "./webmcp.js";
@@ -601,9 +601,9 @@ function wire() {
        it has something of its own to close — a slash menu, a drag menu, the
        caret it blurs — and every one of those arrives here `defaultPrevented`,
        so that press is spent. An Escape the island did NOT claim (focus on a
-       protected block's Edit button, a portalled surface with no menu
-       up) is the app's layer key, as it is on every other surface: it was
-       swallowed here instead, and no number of presses reached the chat panel
+       secret block's button, a portalled surface with no menu up) is the
+       app's layer key, as it is on every other surface: it was swallowed here
+       instead, and no number of presses reached the chat panel
        or the context menu, which are not veils. */
     const escapeLayer = e.key === "Escape" && !e.defaultPrevented;
     if (inEditor && !appChord && !escapeLayer && !VEILS.some(isOpen)) return;
@@ -764,6 +764,7 @@ function wire() {
        Dropping it at 768 stranded a tablet's open drawer as dead state — the
        CSS still had the sidebar off-canvas, and the class that brings it back
        had just been removed underneath it. */
+    applyFoldableSidebar();
     if (!isDrawer()) closeNav();
     syncScrim();
   });
@@ -886,6 +887,7 @@ export async function start() {
   state.meta = s.meta;
   paintSettings();
   applyNavigationBar();
+  applyFoldableSidebar();
 
   const q = new URLSearchParams(location.search);
   const urlTheme = q.get("theme");

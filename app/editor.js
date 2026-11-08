@@ -80,7 +80,6 @@ export function exitDiff() {
     const rows = buf === doc.diskText ? [] : changedLineDiff(doc.diskText, buf);
     return [{ marker: "+", text: "An edit that cannot be written as Markdown (undo it, or discard)" }, ...rows];
   }
-  if (visual?.hasDraft()) return [{ marker: "+", text: "A protected block being edited (saving keeps it)" }, ...changedLineDiff(doc.diskText, buf)];
   /* bytes saved on this device are not at risk: replay sends them */
   if (buf === doc.diskText || onDevice(doc)) {
     return [...state.reveal.values()].some((e) => e.path === doc.path && e.dirty)
@@ -392,8 +391,6 @@ export function insertVisualSecret(path, armor) {
   return visualPath === path && !!visual?.insertSecret(armor);
 }
 
-export const commitVisualDrafts = () => visual?.commitDrafts();
-
 /** The island, fetched once per page. Its URL is the CONTENT-ADDRESSED entry
     the shell names in `#znotes-assets` beside a modulepreload for it, so the
     import usually resolves against a request the parser already started. A
@@ -448,15 +445,6 @@ async function renderVisual(doc, host) {
         markDirty();
         updateMeta();
       },
-      /* A protected block's Markdown, replaced in place; the autosave writes
-         it. No `flushSecretEdits` first: `markdown` was cut before any flush
-         and would put the old armor back. A revealed, edited secret rides the
-         re-render in `state.reveal`, and the save re-encrypts it. */
-      onSourceEdit(markdown) {
-        setDocText(doc, markdown);
-        markDirty();
-      },
-      onDraft: markDirty,
       onNewSecret: newSecret,
       /* The document on screen is not expressible as Markdown (nesting or
          formatting the adapter cannot re-import). Saying so beats a document
@@ -618,9 +606,8 @@ export async function ensureLoaded(path) {
 const onDevice = (doc) => doc.queued != null && doc.markdown === doc.queued;
 
 /**
- * New text for a doc that no keystroke typed — an agent's write, a protected
- * block edited in place — as ONE step on the shared timeline, so ⌘Z takes it
- * back like any other edit (ADR 0014). The step starts from what the pane
+ * New text for a doc that no keystroke typed, an agent's write, as ONE step on
+ * the shared timeline, so ⌘Z takes it back like any other edit (ADR 0014). The step starts from what the pane
  * holds, so unsaved typing is neither dropped nor folded into it, and an open
  * pane repaints where the reader was.
  */
@@ -650,8 +637,6 @@ export async function replaceDocText(path, markdown, rev) {
       message: "This doc changed since that rev — read it again before writing.",
       rev: doc.rev,
     });
-  /* an open draft is its own step, before the write — not discarded under it */
-  if (visualPath === path) commitVisualDrafts();
   setDocText(doc, String(markdown == null ? "" : markdown));
   /* silent: the pane already shows the new text, and a toast about a write
      nobody in this tab asked for is the app talking to itself */
@@ -967,12 +952,6 @@ async function doSaveDoc(doc, opts) {
      turned back into ciphertext here, before a single byte is serialized.
      There is no path from this function to a plaintext request body. */
   try {
-    /* An open draft is an unsaved edit: a save applies it before the flush (whose
-       armor its splice would undo); an autosave waits rather than remount the island. */
-    if (visualPath === doc.path && visual?.hasDraft()) {
-      if (opts.auto) return markDirty(), false;
-      commitVisualDrafts();
-    }
     await flushSecretEdits(doc);
   } catch (err) {
     return false;

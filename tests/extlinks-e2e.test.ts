@@ -111,11 +111,12 @@ function readLinks() {
       wiki: [...editor.querySelectorAll("button.wiki-link")].map((b) => b.getAttribute("data-target")),
       codeText: (editor.querySelector(".bn-inline-content code") as HTMLElement | null)?.textContent ?? "",
       codeHasAnchor: !!editor.querySelector(".bn-inline-content code a"),
-      /* the block the image line landed in, and whether it is protected */
+      /* the block the image line landed in; the image itself is a verbatim span */
       imageType: blocks.find((b) => (b.textContent ?? "").includes("![alt]"))?.dataset.contentType ?? "(none)",
-      /* the javascript: line is a protected block: its bytes are shown, never an anchor */
+      /* the javascript: link is a verbatim span: its bytes are shown, never an anchor */
       evilType: blocks.find((b) => (b.textContent ?? "").includes("javascript:alert(1)"))?.dataset.contentType ?? "(none)",
       evilHasAnchor: !!blocks.find((b) => (b.textContent ?? "").includes("javascript:alert(1)"))?.querySelector("a"),
+      verbatim: [...editor.querySelectorAll(".z-verbatim")].map((v) => v.textContent ?? ""),
       bareText: textOf("bare "),
       angleText: textOf("angle "),
     };
@@ -160,15 +161,17 @@ describe("external links render as real links in Edit", () => {
     expect(`a javascript: anchor exists: ${hrefs.some((h) => h.startsWith("javascript:"))}`).toBe(
       "a javascript: anchor exists: false"
     );
-    /* the scheme gate refuses the link: the line stays a protected block with
-       its bytes intact, and nothing in it is an anchor */
-    expect(`the evil line: anchor ${m.evilHasAnchor}, block ${m.evilType}`).toBe("the evil line: anchor false, block source");
+    /* the scheme gate refuses the link: it stays a verbatim span with its bytes
+       intact, and nothing in its line is an anchor */
+    expect(`the evil line: anchor ${m.evilHasAnchor}, block ${m.evilType}`).toBe("the evil line: anchor false, block paragraph");
+    expect(`the evil link is verbatim: ${m.verbatim.some((v) => v.includes("javascript:alert(1)"))}`).toBe("the evil link is verbatim: true");
     expect(`code span kept the URL as text: ${m.codeText === "https://example.com/lit" && !m.codeHasAnchor}`).toBe(
       "code span kept the URL as text: true"
     );
     expect(`the wikilink is still a pill: ${m.wiki.join(",")}`).toBe("the wikilink is still a pill: inbox");
-    /* image syntax is not half-rendered: the group is protected, bytes and all */
-    expect(`the image line's block: ${m.imageType}`).toBe("the image line's block: source");
+    /* image syntax is not half-rendered: it is a verbatim span, bytes and all */
+    expect(`the image line's block: ${m.imageType}`).toBe("the image line's block: paragraph");
+    expect(`the image is verbatim: ${m.verbatim.some((v) => v.startsWith("![alt]"))}`).toBe("the image is verbatim: true");
   }, 60000);
 
   test("clicking a link in Edit does not take the app anywhere", async () => {

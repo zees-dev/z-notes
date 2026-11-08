@@ -138,13 +138,22 @@ describe("e2e — layout", () => {
    * take the document's measure below 520px (~45 characters), and where the
    * viewport itself cannot afford 520px the document gets essentially all of it.
    * Measured with the assistant OPEN at every width, because that is the state
-   * the failure lived in.
+   * the failure lived in. And with `layout.foldableSidebar` off: on, 600–1023
+   * docks the tree as a column and trades this floor for navigation (ADR 0045,
+   * asserted in foldable-sidebar-e2e).
    */
   const FLOOR = 520;
   const MEASURE_WIDTHS = [360, 390, 430, 600, 768, 820, 1024, 1280, 1440, 1920];
 
+  const foldableSidebar = async (on: boolean) => {
+    expect((await srv.api("PUT", "/api/settings", { layout: { foldableSidebar: on } })).status).toBe(200);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await waitForApp(page);
+  };
+
   test("the document keeps a usable measure at every width, with the assistant OPEN", async () => {
     const seen: string[] = [];
+    await foldableSidebar(false);
     try {
       for (const width of MEASURE_WIDTHS) {
         await page.setViewport({ width, height: 900 });
@@ -195,6 +204,7 @@ describe("e2e — layout", () => {
       console.log("    measure floor: " + seen.join(" · "));
       await page.setViewport({ width: 1440, height: 900 });
       await sleep(260);
+      await foldableSidebar(true);
     }
   }, 180000);
 
@@ -227,6 +237,7 @@ describe("e2e — layout", () => {
       )}`
     ).toBe("after reload, chat-open: false");
     /* and the doc has the width back, at the width that used to lose it */
+    await foldableSidebar(false);
     await page.setViewport({ width: 768, height: 900 });
     await sleep(300);
     const measure = await page.evaluate(() => {
@@ -237,6 +248,8 @@ describe("e2e — layout", () => {
     expect(`768px measure with the assistant remembered closed: ${measure >= FLOOR ? "ok" : measure + "px"}`).toBe(
       "768px measure with the assistant remembered closed: ok"
     );
+    await page.setViewport({ width: 1440, height: 900 });
+    await foldableSidebar(true);
 
     /* leave the suite in the state the rest of it expects */
     await page.evaluate(() => {

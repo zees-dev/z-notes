@@ -1,7 +1,9 @@
 /* ============================================================
    markdown-source.ts — Markdown/source identity at the editor boundary.
    Untouched AST groups keep their bytes; only edited groups pass through
-   the standard serializer. No editor state or decrypted secrets live here.
+   the standard serializer. Every node imports: what the editor has no form
+   for is a verbatim span, shown as written and written back byte for byte.
+   No editor state or decrypted secrets live here.
    ============================================================ */
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { toMarkdown } from 'mdast-util-to-markdown';
@@ -12,79 +14,88 @@ import { frontmatterFromMarkdown, frontmatterToMarkdown } from 'mdast-util-front
 
 export type Inline = { type: 'text'; text: string; styles: Record<string, boolean | string> } |
   { type: 'link'; href: string; content: Inline[] } |
-  { type: 'wikiLink'; props: { target: string } };
+  { type: 'wikiLink'; props: { target: string } } |
+  { type: 'verbatim'; props: { source: string } };
 export type TableContent = { type: 'tableContent'; rows: { cells: (Inline[] | { type: 'tableCell'; content: Inline[]; props?: Record<string, unknown> })[] }[]; headerRows?: number };
 export type SourceBlock = { id: string; type: string; props: Record<string, string | number | boolean>; content?: Inline[] | TableContent | string; children: SourceBlock[] };
-type Node = { type: string; children?: Node[]; value?: string; url?: string; title?: string | null; depth?: number; ordered?: boolean; spread?: boolean; start?: number | null; checked?: boolean | null; lang?: string | null; meta?: string | null; align?: (string | null)[]; position?: { start: { offset: number }; end: { offset: number } } };
+type Node = { type: string; children?: Node[]; value?: string; url?: string; title?: string | null; depth?: number; ordered?: boolean; spread?: boolean; start?: number | null; checked?: boolean | null; lang?: string | null; position?: { start: { offset: number }; end: { offset: number } } };
 type Group = { start: number; end: number; blocks: SourceBlock[]; snapshot: string };
 export type SecretIdentity = { id: string; blockId: string; ciphertext: string; indent: string; start: number; end: number; line: number };
 type SecretSlice = { start: number; end: number; bodyStart: number; bodyEnd: number; ciphertext: string; indent: string };
+type Frontmatter = 'yaml' | 'toml';
 let nextId = 0;
 const block = (type: string, content?: SourceBlock['content'], props: SourceBlock['props'] = {}, children: SourceBlock[] = []): SourceBlock => ({ id: `md-${++nextId}`, type, props, ...(content === undefined ? {} : { content }), children });
 const parse = (value: string) => fromMarkdown(value, { extensions: [gfm(), frontmatter(['yaml', 'toml'])], mdastExtensions: [gfmFromMarkdown(), frontmatterFromMarkdown(['yaml', 'toml'])] }) as unknown as Node;
-const print = (nodes: Node[]) => toMarkdown({ type: 'root', children: nodes } as Parameters<typeof toMarkdown>[0], { extensions: [gfmToMarkdown(), frontmatterToMarkdown(['yaml', 'toml'])], bullet: '-', fences: true, listItemIndent: 'one', handlers: { wikiLink: (node: { value?: string }) => node.value || '' } }).replace(/\n$/, '');
+const print = (nodes: Node[]) => toMarkdown({ type: 'root', children: nodes } as Parameters<typeof toMarkdown>[0], { extensions: [gfmToMarkdown(), frontmatterToMarkdown(['yaml', 'toml'])], bullet: '-', fences: true, listItemIndent: 'one', handlers: { wikiLink: (node: { value?: string }) => node.value || '', verbatim: (node: { value?: string }) => node.value || '' } }).replace(/\n$/, '');
 const safeUrl = (url: string) => {
   const normalized = url.replace(/[\u0000-\u0020]/g, '');
   return !/^[a-z][a-z0-9+.-]*:/i.test(normalized) || /^(https?|mailto|tel):/i.test(normalized);
 };
 const text = (value: string, styles: Record<string, boolean | string> = {}): Inline => ({ type: 'text', text: value, styles });
+const verbatim = (node: Node, source: string): Inline => ({ type: 'verbatim', props: { source: source.slice(node.position!.start.offset, node.position!.end.offset) } });
 function inlines(nodes: Node[], source: string, styles: Record<string, boolean | string> = {}, wiki = true): Inline[] {
   return nodes.flatMap((node): Inline[] => {
     if (node.type === 'text') {
       if (!wiki) return [text(node.value || '', styles)];
       const raw = source.slice(node.position!.start.offset, node.position!.end.offset);
       if (raw !== node.value && /\[\[[^\]\n]+\]\]/.test(node.value || '')) {
-        // MDAST decodes escapes and entities. Ambiguous mixtures stay protected.
+        // MDAST decodes escapes and entities. An ambiguous mixture keeps its bytes.
         const rawLinks = Array.from(raw.matchAll(/(?<!\\)(?:\\\\)*(\[\[[^\]\\\n]+\]\])/g), match => match[1]);
         if (!rawLinks.length) return [text(node.value || '', styles)];
-        if (JSON.stringify(rawLinks) !== JSON.stringify(node.value?.match(/\[\[[^\]\n]+\]\]/g))) throw new Error('Mixed escaped wiki-links are edited as protected Markdown');
+        if (JSON.stringify(rawLinks) !== JSON.stringify(node.value?.match(/\[\[[^\]\n]+\]\]/g))) return [verbatim(node, source)];
       }
-      if (Object.keys(styles).length && /\[\[[^\]\n]+\]\]/.test(node.value || '')) throw new Error('Styled wiki-links are edited as protected Markdown');
       return (node.value || '').split(/(\[\[[^\]\n]+\]\])/).filter(Boolean).map(value => value.startsWith('[[') && value.endsWith(']]') ? { type: 'wikiLink', props: { target: value.slice(2, -2) } } : text(value, styles));
     }
     if (node.type === 'inlineCode') return [text(node.value || '', { ...styles, code: true })];
-    if (node.type === 'break') throw new Error('Hard breaks are edited as protected Markdown');
+    // The editor draws every line break alike, so a hard one comes back soft.
+    if (node.type === 'break') return [text('\n', styles)];
     const style = ({ strong: 'bold', emphasis: 'italic', delete: 'strike' } as Record<string, string>)[node.type];
     if (style) return inlines(node.children || [], source, { ...styles, [style]: true }, wiki);
-    // A scheme the editor may not make actionable is still the file's bytes: the
-    // group stays protected rather than losing its destination on the next edit.
-    if (node.type === 'link' && !node.title) {
-      if (!safeUrl(node.url || '')) throw new Error('This link scheme is edited as protected Markdown');
-      return [{ type: 'link', href: node.url || '', content: inlines(node.children || [], source, styles, false) }];
+    // A scheme the editor may not make actionable is still the file's bytes:
+    // verbatim, never an anchor. A link's title has no editor form either.
+    if (node.type === 'link' && safeUrl(node.url || '')) {
+      const content = inlines(node.children || [], source, styles, false);
+      if (content.every(item => item.type === 'text')) return [{ type: 'link', href: node.url || '', content }];
     }
-    throw new Error(`Unsupported inline ${node.type}`);
+    return [verbatim(node, source)];
   });
 }
-function importNode(node: Node, source: string, spread: Map<string, boolean>, nested = false): SourceBlock[] {
+/* A container's first paragraph is its block's text; everything after it nests. */
+function container(type: string, node: Node, source: string, spread: Map<string, boolean>, props: SourceBlock['props'] = {}): SourceBlock {
+  const [first, ...rest] = node.children || [];
+  const lead = first?.type === 'paragraph';
+  return block(type, lead ? inlines(first.children || [], source) : [], props, (lead ? rest : node.children || []).flatMap(n => importNode(n, source, spread)));
+}
+function importNode(node: Node, source: string, spread: Map<string, boolean>): SourceBlock[] {
   const children = node.children || [];
   if (node.type === 'paragraph' || node.type === 'heading') return [block(node.type, inlines(children, source), node.type === 'heading' ? { level: node.depth || 1 } : {})];
+  if (node.type === 'thematicBreak') return [block('divider')];
   if (node.type === 'code') {
-    if (node.meta || (nested && node.lang === 'age')) throw new Error('Protected code');
     if (node.lang === 'age') return [block('secret', undefined, { ciphertext: node.value || '' })];
     // An empty fence has no diagram in it: the block would paint its own "add one" placeholder over bytes the file does not have.
     if (node.lang === 'mermaid' && (node.value || '').trim()) return [block('diagram', node.value || '')];
     return [block('codeBlock', [text(node.value || '')], { language: node.lang || 'text' })];
   }
-  if (node.type === 'blockquote' && children.length === 1 && children[0].type === 'paragraph') return [block('quote', inlines(children[0].children || [], source))];
+  if (node.type === 'blockquote') return [container('quote', node, source, spread)];
   if (node.type === 'list') return children.map((item, index) => {
-    const parts = item.children || [];
-    if (node.ordered && typeof item.checked === 'boolean') throw new Error('Ordered tasks are edited as protected Markdown');
-    if (!parts.length || parts[0].type !== 'paragraph' || parts.slice(1).some(n => n.type !== 'list')) throw new Error('Complex list');
-    const imported = block(typeof item.checked === 'boolean' ? 'checkListItem' : node.ordered ? 'numberedListItem' : 'bulletListItem', inlines(parts[0].children || [], source), typeof item.checked === 'boolean' ? { checked: item.checked } : node.ordered ? { start: (node.start ?? 1) + index } : {}, parts.slice(1).flatMap(n => importNode(n, source, spread, true)));
+    // An ordered task has no editor form: it is a task, numbered by its file until edited.
+    const imported = container(typeof item.checked === 'boolean' ? 'checkListItem' : node.ordered ? 'numberedListItem' : 'bulletListItem', item, source, spread, typeof item.checked === 'boolean' ? { checked: item.checked } : node.ordered ? { start: (node.start ?? 1) + index } : {});
     // Looseness is the source list's, not the editor's: BlockNote has no prop
     // for it, so an edited item is reprinted from what the file already said.
     // A blank line inside one item makes the whole list loose, whatever the list node says.
     spread.set(imported.id, !!node.spread || (node.children || []).some(child => !!child.spread));
     return imported;
   });
-  if (node.type === 'table' && !node.align?.some(Boolean)) return [block('table', { type: 'tableContent', headerRows: 1, rows: children.map(row => ({ cells: (row.children || []).map(cell => inlines(cell.children || [], source)) })) })];
-  throw new Error(`Unsupported ${node.type}`);
+  // Column alignment has no editor form: an edited table loses it.
+  if (node.type === 'table') return [block('table', { type: 'tableContent', headerRows: 1, rows: children.map(row => ({ cells: (row.children || []).map(cell => inlines(cell.children || [], source)) })) })];
+  return [block('paragraph', [verbatim(node, source)])];
 }
 function inlineNodes(content: SourceBlock['content']): Node[] {
   if (typeof content === 'string') return [{ type: 'text', value: content }];
   if (!Array.isArray(content)) return [];
   return content.flatMap((item): Node[] => {
     if (item.type === 'wikiLink') return [{ type: 'wikiLink', value: `[[${item.props.target}]]` }];
+    if (item.type === 'verbatim') return [{ type: 'verbatim', value: item.props.source }];
     if (item.type === 'link') return safeUrl(item.href) ? [{ type: 'link', url: item.href, children: inlineNodes(item.content) }] : inlineNodes(item.content);
     if (item.type !== 'text') throw new Error('Unsupported inline content');
     if (Object.entries(item.styles).some(([key, value]) => value && !['bold', 'italic', 'strike', 'code'].includes(key))) throw new Error('This formatting has no Markdown form');
@@ -94,9 +105,19 @@ function inlineNodes(content: SourceBlock['content']): Node[] {
   });
 }
 export const listItemTypes = ['bulletListItem', 'numberedListItem', 'checkListItem'];
+/** The block with this id, at any depth. */
+export function findBlock<T extends { id: string; children: T[] }>(blocks: readonly T[], id: string): T | undefined {
+  for (const b of blocks) { const hit = b.id === id ? b : findBlock(b.children, id); if (hit) return hit; }
+}
+/** The blocks Markdown can nest others under. */
+export const nestingTypes = [...listItemTypes, 'quote'];
 const listType = (b: SourceBlock) => listItemTypes.includes(b.type);
 const plain = (content: SourceBlock['content']): string => typeof content === 'string' ? content : Array.isArray(content) ? content.map(x => x.type === 'text' ? x.text : '').join('') : '';
-function exportNodes(blocks: readonly SourceBlock[], loose: (block: SourceBlock) => boolean = () => false): Node[] {
+const empty = (content: SourceBlock['content']) => !Array.isArray(content) || !content.length;
+function exportNodes(blocks: readonly SourceBlock[], loose: (block: SourceBlock) => boolean = () => false, frontmatter: (block: SourceBlock) => Frontmatter | undefined = () => undefined): Node[] {
+  const nested = (b: SourceBlock) => exportNodes(b.children, loose);
+  // A container whose text is empty opens on its first child, as it was read.
+  const lead = (b: SourceBlock) => [...(empty(b.content) && b.children.length ? [] : [{ type: 'paragraph', children: inlineNodes(b.content) }]), ...nested(b)];
   const nodes: Node[] = [];
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
@@ -106,22 +127,22 @@ function exportNodes(blocks: readonly SourceBlock[], loose: (block: SourceBlock)
       let spread = false;
       do {
         const item = blocks[i];
-        // Only list items nest under a list item: any other child comes back from
-        // Markdown as an unimportable group ('Complex list'), so it never goes out.
-        if (item.children.some(child => !listType(child))) throw new Error('Only list items can nest');
         spread = spread || loose(item);
-        items.push({ type: 'listItem', spread: false, checked: item.type === 'checkListItem' ? !!item.props.checked : null, children: [{ type: 'paragraph', children: inlineNodes(item.content) }, ...exportNodes(item.children, loose)] });
+        items.push({ type: 'listItem', spread: false, checked: item.type === 'checkListItem' ? !!item.props.checked : null, children: lead(item) });
         i++;
       } while (i < blocks.length && listType(blocks[i]) && (blocks[i].type === 'numberedListItem') === ordered);
       i--;
       nodes.push({ type: 'list', spread, ordered, start: ordered ? Number(b.props.start ?? 1) : undefined, children: items });
       continue;
     }
-    if (b.children.length) throw new Error('Only list items can nest');
+    if (b.type === 'quote') { nodes.push({ type: 'blockquote', children: lead(b) }); continue; }
+    if (b.children.length) throw new Error('Only list items and quotes can nest');
+    const metadata = b.type === 'codeBlock' ? frontmatter(b) : undefined;
+    if (metadata) { nodes.push({ type: metadata, value: plain(b.content) }); continue; }
     switch (b.type) {
       case 'paragraph': nodes.push({ type: 'paragraph', children: inlineNodes(b.content) }); break;
       case 'heading': nodes.push({ type: 'heading', depth: Number(b.props.level || 1), children: inlineNodes(b.content) }); break;
-      case 'quote': nodes.push({ type: 'blockquote', children: [{ type: 'paragraph', children: inlineNodes(b.content) }] }); break;
+      case 'divider': nodes.push({ type: 'thematicBreak' }); break;
       case 'codeBlock': nodes.push({ type: 'code', lang: String(b.props.language || '') === 'text' ? null : String(b.props.language || ''), value: plain(b.content) }); break;
       case 'diagram': nodes.push({ type: 'code', lang: 'mermaid', value: plain(b.content) }); break;
       case 'secret': nodes.push({ type: 'code', lang: 'age', value: String(b.props.ciphertext || '') }); break;
@@ -136,7 +157,7 @@ function exportNodes(blocks: readonly SourceBlock[], loose: (block: SourceBlock)
 }
 // Only Markdown-bearing props participate: BlockNote fills in presentation defaults.
 function semantic(blocks: readonly SourceBlock[]): string {
-  return JSON.stringify(blocks.map(b => ({ id: b.id, type: b.type, props: Object.fromEntries((({ heading: ['level'], numberedListItem: ['start'], checkListItem: ['checked'], codeBlock: ['language'], secret: ['ciphertext'], source: ['source', 'metadata'] } as Record<string, string[]>)[b.type] || []).map(k => [k, b.props[k] ?? (k === 'start' ? 1 : undefined)])), content: b.type === 'diagram' ? plain(b.content) : b.type === 'source' || b.type === 'secret' ? null : b.type === 'table' ? inlineTable(b.content as TableContent) : inlineNodes(b.content), children: JSON.parse(semantic(b.children || [])) })));
+  return JSON.stringify(blocks.map(b => ({ id: b.id, type: b.type, props: Object.fromEntries((({ heading: ['level'], numberedListItem: ['start'], checkListItem: ['checked'], codeBlock: ['language'], secret: ['ciphertext'] } as Record<string, string[]>)[b.type] || []).map(k => [k, b.props[k] ?? (k === 'start' ? 1 : undefined)])), content: b.type === 'diagram' ? plain(b.content) : b.type === 'secret' || b.type === 'divider' ? null : b.type === 'table' ? inlineTable(b.content as TableContent) : inlineNodes(b.content), children: JSON.parse(semantic(b.children || [])) })));
 }
 function inlineTable(table: TableContent) { return table.rows.map(row => row.cells.map(cell => inlineNodes(Array.isArray(cell) ? cell : cell.content))); }
 
@@ -170,7 +191,8 @@ export class SourceSession {
   readonly markdown: string;
   private readonly groups: Group[];
   private readonly snapshot: string;
-  private readonly allowedSource = new Map<string, Set<string>>();
+  /* Frontmatter is a code block in the editor, written back as the metadata it was. */
+  private readonly frontmatter = new Map<string, Frontmatter>();
   private readonly secretSource = new Map<string, Map<string, string>>();
   private readonly endRequired = new Map<string, boolean>();
   private readonly listSpread = new Map<string, boolean>();
@@ -203,10 +225,9 @@ export class SourceSession {
           gaps.push({ start: offset, end: offset, blocks, snapshot: semantic(blocks) });
         }
       }
-      const metadata = node.type === 'yaml' || node.type === 'toml';
-      let blocks: SourceBlock[];
-      try { blocks = importNode(node, body, this.listSpread); } catch { blocks = [block('source', undefined, { source: body.slice(start, end), metadata })]; }
-      if (blocks[0].type === 'source') this.allowedSource.set(blocks[0].id, new Set([semantic(blocks)]));
+      const metadata = node.type === 'yaml' || node.type === 'toml' ? node.type : undefined;
+      const blocks = metadata ? [block('codeBlock', [text(node.value || '')], { language: metadata })] : importNode(node, body, this.listSpread);
+      if (metadata) this.frontmatter.set(blocks[0].id, metadata);
       if (blocks[0].type === 'secret') {
         const raw = body.slice(start, end);
         const secret = secretSlices(raw)[0];
@@ -214,7 +235,7 @@ export class SourceSession {
         this.secretSource.set(blocks[0].id, new Map([[String(blocks[0].props.ciphertext), raw]]));
       }
       // A following MDAST sibling already proves this retained group can end.
-      if (index < nodes.length - 1 && ['source', 'secret', 'codeBlock', 'diagram'].includes(blocks[0].type)) this.endRequired.set(body.slice(start, end), false);
+      if (index < nodes.length - 1) this.endRequired.set(body.slice(start, end), false);
       return [...gaps, { start, end, blocks, snapshot: semantic(blocks) }];
     });
     this.blocks = this.groups.flatMap(g => g.blocks);
@@ -228,6 +249,7 @@ export class SourceSession {
     }
     return this.endRequired.get(source)!;
   }
+  isFrontmatter(blockId: string): boolean { return this.frontmatter.has(blockId); }
   requiresEndBlock(blockId: string): boolean {
     const group = this.groups.find(group => group.blocks.some(block => block.id === blockId));
     return !!group && this.requiresEnd(this.body.slice(group.start, group.end));
@@ -241,23 +263,18 @@ export class SourceSession {
     const ranges = new Map<string, { start: number; end: number; line: number }>();
     const known = new Map(this.groups.flatMap((g, index) => g.blocks.map(b => [b.id, { g, index }] as const)));
     const seen = new Set<string>();
-    const validate = (items: readonly SourceBlock[], depth: number) => { for (const b of items) {
+    const validate = (items: readonly SourceBlock[]) => { for (const b of items) {
       if (seen.has(b.id)) throw new Error('Duplicate block identity'); seen.add(b.id);
       const original = known.get(b.id)?.g;
       if (b.props.textAlignment && b.props.textAlignment !== 'left') throw new Error('Alignment has no Markdown form');
       if (['textColor', 'backgroundColor'].some(key => b.props[key] && b.props[key] !== 'default')) throw new Error('Colors have no Markdown form');
-      if (this.allowedSource.has(b.id) && !this.allowedSource.get(b.id)!.has(semantic([b]))) throw new Error('Protected source changes only through its Edit button');
       if (original?.blocks[0].type === 'secret' && b.type !== 'secret') throw new Error('A secret block cannot change type');
-      if (['source', 'secret'].includes(b.type) && depth) throw new Error('Protected blocks cannot be nested');
-      if (b.type === 'source' && b.props.metadata && blocks[0]?.id !== b.id) throw new Error('Metadata must remain first');
-      validate(b.children || [], depth + 1);
-      // Duplicate/paste creates a new identity whose first accepted source is
-      // its protected baseline; only replaceSecret may authorize later edits.
-      if (b.type === 'source' && !this.allowedSource.has(b.id)) this.allowedSource.set(b.id, new Set([semantic([b])]));
+      if (this.frontmatter.has(b.id) && b.type === 'codeBlock' && blocks[0]?.id !== b.id) throw new Error('Metadata must remain first');
+      validate(b.children || []);
     } };
-    validate(blocks, 0);
-    if (end < blocks.length && last && (last.type === 'source' ? this.requiresEnd(String(last.props.source)) : ['secret', 'codeBlock', 'diagram'].includes(last.type) && this.requiresEndBlock(last.id))) blocks = blocks.slice(0, end);
-    const emit = (items: readonly SourceBlock[]) => print(exportNodes(items, item => this.listSpread.get(item.id) === true));
+    validate(blocks);
+    if (end < blocks.length && last && this.requiresEndBlock(last.id)) blocks = blocks.slice(0, end);
+    const emit = (items: readonly SourceBlock[]) => print(exportNodes(items, item => this.listSpread.get(item.id) === true, item => this.frontmatter.get(item.id)));
     /* The group this block still opens unchanged, if it does: its bytes are kept
        verbatim, so nothing printed may reach across it. */
     const retainedGroup = (index: number) => {
@@ -301,8 +318,7 @@ export class SourceSession {
       let count = 1, source: string, groupIndex = -1, unchanged = false, retained = true;
       if (held) {
         count = held.g.blocks.length; source = this.body.slice(held.g.start, held.g.end); groupIndex = held.index; unchanged = true;
-      } else if (b.type === 'source') { source = String(b.props.source); groupIndex = entry?.index ?? -1; }
-      else if (b.type === 'secret' && this.secretSource.get(b.id)?.has(String(b.props.ciphertext))) {
+      } else if (b.type === 'secret' && this.secretSource.get(b.id)?.has(String(b.props.ciphertext))) {
         source = this.secretSource.get(b.id)!.get(String(b.props.ciphertext))!;
         groupIndex = entry?.index ?? -1;
       }
@@ -314,17 +330,13 @@ export class SourceSession {
         retained = false;
         if (entry && entry.g.blocks.every((x, n) => blocks[i + n]?.id === x.id) && count === entry.g.blocks.length) groupIndex = entry.index;
       }
-      if (retained && i + count < blocks.length && ['source', 'secret', 'codeBlock', 'diagram'].includes(b.type) && this.requiresEnd(source)) {
-        if (b.type === 'source' || b.type === 'secret') throw new Error('This block must remain last');
-        source = emit(blocks.slice(i, i + count)); unchanged = false;
+      // A group that runs to the end of the file (an unclosed fence, an open
+      // HTML comment) would swallow whatever follows: reprinting closes a fence.
+      if (i + count < blocks.length && this.requiresEnd(source)) {
+        if (retained && b.type !== 'secret') { source = emit(blocks.slice(i, i + count)); unchanged = false; }
+        if (this.requiresEnd(source)) throw new Error('This block must remain last');
       }
-      if (i === 0 && normalizeLeading) {
-        if (b.type === 'source') {
-          const opening = source.match(/^[^\r\n]*/)![0];
-          source = print(parse(opening).children || []) + source.slice(opening.length);
-        } else source = emit(blocks.slice(i, i + count));
-        unchanged = false;
-      }
+      if (i === 0 && normalizeLeading) { source = emit(blocks.slice(i, i + count)); unchanged = false; }
       if (i === 0) append(this.groups.length && groupIndex === 0 ? this.body.slice(0, this.groups[0].start) : '');
       else {
         let separator = previous >= 0 && groupIndex === previous + 1 ? this.body.slice(this.groups[previous].end, this.groups[groupIndex].start) : '\n\n';
@@ -343,7 +355,7 @@ export class SourceSession {
     }
     if (blocks.length && this.groups.length) markdown += this.body.slice(this.groups.at(-1)!.end);
     if (semantic(blocks) === this.snapshot) markdown = this.markdown;
-    else if (!normalizeLeading && !blocks[0]?.props.metadata && /^(?:\uFEFF)?(?:---|\+\+\+)/.test(markdown) && ['yaml', 'toml'].includes(parse(markdown).children?.[0]?.type || '')) {
+    else if (!normalizeLeading && !(blocks[0] && blocks[0].type === 'codeBlock' && this.frontmatter.has(blocks[0].id)) && /^(?:\uFEFF)?(?:---|\+\+\+)/.test(markdown) && ['yaml', 'toml'].includes(parse(markdown).children?.[0]?.type || '')) {
       // A relocated delimiter can acquire meaning from a later delimiter.
       // Only canonicalize its spelling when the combined doc becomes metadata.
       return this.render(blocks, true);
@@ -351,48 +363,45 @@ export class SourceSession {
     return { markdown, ranges };
   }
   ranges(blocks: readonly SourceBlock[] = this.blocks) { return this.render(blocks).ranges; }
+  /* Every secret block, nested or not, in document order. A run of blocks shares
+     one byte range, and its fences are that range's age fences, in order. */
   secrets(blocks: readonly SourceBlock[] = this.blocks, rendered = this.render(blocks)): SecretIdentity[] {
-    return blocks.flatMap(b => {
-      if (!['source', 'secret'].includes(b.type)) return [];
+    const runs = new Map<{ start: number; end: number; line: number }, SourceBlock[]>();
+    const visit = (b: SourceBlock) => {
       const range = rendered.ranges.get(b.id)!;
+      if (b.type === 'secret') runs.set(range, [...(runs.get(range) || []), b]);
+      b.children.forEach(visit);
+    };
+    blocks.forEach(visit);
+    return [...runs].flatMap(([range, secrets]) => {
       const source = rendered.markdown.slice(range.start, range.end);
-      return secretSlices(source).map((secret, ordinal) => ({
-        id: b.type === 'secret' ? b.id : `${b.id}:secret:${ordinal}`,
-        blockId: b.id, ciphertext: secret.ciphertext, indent: secret.indent,
-        start: range.start + secret.start, end: range.start + secret.end,
-        line: range.line + source.slice(0, secret.start).split('\n').length - 1,
-      }));
+      const slices = secretSlices(source);
+      return secrets.flatMap((b, ordinal) => {
+        const secret = slices[ordinal];
+        return secret ? [{
+          id: b.id, blockId: b.id, ciphertext: secret.ciphertext, indent: secret.indent,
+          start: range.start + secret.start, end: range.start + secret.end,
+          line: range.line + source.slice(0, secret.start).split('\n').length - 1,
+        }] : [];
+      });
     });
   }
-  sourceParts(blockId: string, blocks: readonly SourceBlock[] = this.blocks): Array<{ source: string } | { secret: SecretIdentity }> {
-    const rendered = this.render(blocks), range = rendered.ranges.get(blockId);
-    if (!range) return [];
-    const parts: Array<{ source: string } | { secret: SecretIdentity }> = [];
-    let cursor = range.start;
-    for (const secret of this.secrets(blocks, rendered).filter(s => s.blockId === blockId)) {
-      if (secret.start > cursor) parts.push({ source: rendered.markdown.slice(cursor, secret.start) });
-      parts.push({ secret }); cursor = secret.end;
-    }
-    if (cursor < range.end) parts.push({ source: rendered.markdown.slice(cursor, range.end) });
-    return parts;
-  }
   replaceSecret(id: string, ciphertext: string, blocks: readonly SourceBlock[] = this.blocks): string {
-    const rendered = this.render(blocks), secrets = this.secrets(blocks, rendered);
-    const identity = secrets.find(secret => secret.id === id);
+    const rendered = this.render(blocks);
+    const identity = this.secrets(blocks, rendered).find(secret => secret.id === id);
     if (!identity) throw new Error('Secret block no longer exists');
-    const target = blocks.find(b => b.id === identity.blockId)!;
-    const range = rendered.ranges.get(target.id)!;
-    const source = rendered.markdown.slice(range.start, range.end);
-    const ordinal = secrets.filter(secret => secret.blockId === target.id).findIndex(secret => secret.id === id);
-    const slice = secretSlices(source)[ordinal];
-    const next = source.slice(0, slice.bodyStart) + ciphertext + source.slice(slice.bodyEnd);
-    if (target.type === 'source') {
-      target.props.source = next;
-      this.allowedSource.get(target.id)!.add(semantic([target]));
-    } else {
+    const target = findBlock(blocks, id)!;
+    if (blocks.includes(target)) {
+      // A top-level fence keeps its own bytes around the new body.
+      const range = rendered.ranges.get(target.id)!;
+      const source = rendered.markdown.slice(range.start, range.end);
+      const slice = secretSlices(source)[0];
       target.props.ciphertext = ciphertext;
       if (!this.secretSource.has(target.id)) this.secretSource.set(target.id, new Map());
-      this.secretSource.get(target.id)!.set(ciphertext, next);
+      this.secretSource.get(target.id)!.set(ciphertext, source.slice(0, slice.bodyStart) + ciphertext + source.slice(slice.bodyEnd));
+    } else {
+      // A nested fence is reprinted with its container, which indents it again.
+      target.props.ciphertext = ciphertext.split('\n').map(line => line.startsWith(identity.indent) ? line.slice(identity.indent.length) : line).join('\n');
     }
     return this.serialize(blocks);
   }

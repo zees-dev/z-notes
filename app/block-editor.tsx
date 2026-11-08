@@ -16,7 +16,7 @@ import { Plugin, PluginKey, type EditorState } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import mermaid from 'mermaid';
 import '@blocknote/mantine/style.css';
-import { listItemTypes, SourceSession, type SourceBlock, type SecretIdentity } from './markdown-source';
+import { findBlock, listItemTypes, nestingTypes, SourceSession, type SourceBlock, type SecretIdentity } from './markdown-source';
 
 /* A fence is untrusted input (ADR 0010): a vault syncs over git and the AI relay
    writes docs. The diagram block initializes mermaid once, lazily; claiming that
@@ -50,10 +50,6 @@ export type { SecretIdentity } from './markdown-source';
 export interface EditorOptions {
   markdown: string;
   onChange(markdown: string): void;
-  /** A protected block's Markdown was replaced in place; the argument is the whole doc. */
-  onSourceEdit(markdown: string): void;
-  /** A protected block's open draft changed: its text is an unsaved edit. */
-  onDraft(): void;
   /** The user asked for a new secret (slash menu). The app encrypts and calls insertSecret. */
   onNewSecret(): void;
   renderSecret(secret: SecretIdentity): HTMLElement;
@@ -84,10 +80,6 @@ export interface EditorController {
       (ADR 0014). */
   canUndo(): boolean;
   canRedo(): boolean;
-  /** Whether a protected block's in-place edit is open: its text is in no buffer. */
-  hasDraft(): boolean;
-  /** Done every open protected-block edit, so its text reaches the buffer. */
-  commitDrafts(): void;
 }
 
 /* `I.copy`, the shell's glyph — restated rather than imported, because the
@@ -178,67 +170,8 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
   let stale = false;
   let replacing = false;
   let destroyed = false;
-  /* Every armor this mount re-encrypted, oldest first, with its block: a
-     protected block's draft opened before a save still holds the old armor, and
-     Done must not restore it. */
-  const reencrypted: { blockId: string; from: string; to: string }[] = [];
-  const drafts = new Map<string, { draft: string; close(): void }>();
-  /* Every open draft lands in one splice: the app reloads the island from the
-     result, which ends every edit, so a draft left out would be lost. */
-  function commit() {
-    const ranges = session.ranges(blocks());
-    const next = [...drafts].map(([id, { draft }]) => ({
-      range: ranges.get(id)!,
-      text: reencrypted.reduce((text, { blockId, from, to }) => blockId === id ? text.replaceAll(from, to) : text, draft),
-    })).sort((a, b) => b.range.start - a.range.start)
-      .reduce((doc, { range, text }) => doc.slice(0, range.start) + text + doc.slice(range.end), markdown);
-    if (next !== markdown) options.onSourceEdit(next);
-    else for (const { close } of [...drafts.values()]) close();
-  }
   const nodeFor = (id: string) => host.querySelector(`[data-id="${CSS.escape(id)}"]`);
   const scrollPane = () => host.closest<HTMLElement>('.scroll');
-  const source = createReactBlockSpec({
-    type: 'source', content: 'none', propSchema: { source: { default: '' }, metadata: { default: false } },
-  }, {
-    render: ({ block }) => {
-      const [draft, setDraft] = useState<string | null>(null);
-      // Every render, so the entry holds the latest draft.
-      useEffect(() => {
-        if (draft === null) return;
-        drafts.set(block.id, { draft, close: () => setDraft(null) });
-        return () => { drafts.delete(block.id); };
-      });
-      return <div className="z-source-block" contentEditable={false}>
-        <strong>{block.props.metadata ? 'Metadata' : 'Protected Markdown'}</strong>
-        {draft === null ? <>
-          {session.sourceParts(block.id, blocks()).map((part, index) => 'secret' in part
-            ? <SecretDOM key={part.secret.id} identity={part.secret} render={options.renderSecret} />
-            : <pre key={index}>{part.source}</pre>)}
-          <button type="button" onClick={() => setDraft(block.props.source)}>Edit</button>
-        </> : <>
-          <textarea className="z-source-edit" spellCheck={false} autoComplete="off" data-gramm="false" autoFocus value={draft}
-            onChange={event => { setDraft(event.target.value); options.onDraft(); }} onKeyDown={event => {
-              if (event.key === 'Escape') setDraft(null);
-              else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) commit();
-              else return;
-              // These two are the draft's, never a shell layer's.
-              event.preventDefault();
-              event.stopPropagation();
-            }} />
-          <button type="button" onClick={commit}>Done</button>
-          <button type="button" onClick={() => setDraft(null)}>Cancel</button>
-        </>}
-      </div>;
-    },
-    toExternalHTML: ({ block }) => <pre>{block.props.source}</pre>,
-  })();
-  const renderSourceView = source.implementation.render;
-  source.implementation.render = function (block, editor) {
-    if (this.renderType === 'nodeView') return renderSourceView.call(this, block, editor);
-    const dom = document.createElement('pre');
-    dom.textContent = block.props.source;
-    return { dom };
-  };
   const secret = createReactBlockSpec({
     type: 'secret', content: 'none', propSchema: { ciphertext: { default: '' } },
   }, {
@@ -265,7 +198,16 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
     },
     toExternalHTML: ({ inlineContent }) => <span>[[{inlineContent.props.target}]]</span>,
   });
-  const { paragraph, heading, bulletListItem, numberedListItem, checkListItem, quote, table } = defaultBlockSpecs;
+  /* Markdown with no editor form (HTML, an image, a reference, a footnote): its
+     source as written, an atom the file gets back byte for byte. Text only — a
+     fence or tag in a synced vault is untrusted (ADR 0010). */
+  const verbatim = createReactInlineContentSpec({
+    type: 'verbatim', content: 'none', propSchema: { source: { default: '' } },
+  }, {
+    render: ({ inlineContent }) => <span className="z-verbatim" contentEditable={false}>{inlineContent.props.source}</span>,
+    toExternalHTML: ({ inlineContent }) => <span>{inlineContent.props.source}</span>,
+  });
+  const { paragraph, heading, bulletListItem, numberedListItem, checkListItem, quote, table, divider } = defaultBlockSpecs;
   const codeBlock = { ...defaultBlockSpecs.codeBlock, implementation: { ...defaultBlockSpecs.codeBlock.implementation } };
   const renderCode = codeBlock.implementation.render;
   codeBlock.implementation.render = function (block, editor) {
@@ -291,8 +233,8 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
   };
   const { bold, italic, strike, code } = defaultStyleSpecs;
   const schema = BlockNoteSchema.create({
-    blockSpecs: { paragraph, heading, bulletListItem, numberedListItem, checkListItem, quote, codeBlock, table, source, secret, diagram: createReactDiagramBlockSpec() },
-    inlineContentSpecs: { ...defaultInlineContentSpecs, wikiLink },
+    blockSpecs: { paragraph, heading, bulletListItem, numberedListItem, checkListItem, quote, codeBlock, table, divider, secret, diagram: createReactDiagramBlockSpec() },
+    inlineContentSpecs: { ...defaultInlineContentSpecs, wikiLink, verbatim },
     styleSpecs: { bold, italic, strike, code },
   });
   type EditorBlock = typeof schema.PartialBlock;
@@ -344,8 +286,8 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
   });
   /* BlockNote's Backspace at the start of a list item makes it a paragraph,
      which the guard below refuses when the item is nested or has children
-     (only list items nest), so the key did nothing. A nested item outdents one
-     level per press instead; a top-level parent becomes the paragraph and its
+     (only list items and quotes nest), so the key did nothing. A nested item
+     outdents one level per press instead; a top-level parent becomes the paragraph and its
      children stay a list below it. Default priority runs ahead of BlockNote's
      own shortcuts. */
   const listBackspace = Extension.create({
@@ -402,12 +344,10 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
     _tiptapOptions: { extensions: [linkCopy, listBackspace, multiLineInput] },
   });
   let snapshot = JSON.stringify(editor.document);
-  let sourceValues = new Map(session.blocks.filter(block => block.type === 'source').map(block => [block.id, new Set([block.props.source])]));
   function blocks(): SourceBlock[] { return editor.document as unknown as SourceBlock[]; }
   function changed() {
     if (replacing || destroyed) return;
     const current = blocks();
-    for (const block of current) if (block.type === 'source' && !sourceValues.has(block.id)) sourceValues.set(block.id, new Set([block.props.source]));
     let next: string;
     // The editor swallows a throw from its own listener, and the doc would then
     // follow the screen no further, silently. The last good markdown stands.
@@ -423,15 +363,14 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
   const unsubscribe = editor.onChange(changed);
   const unguard = editor.onBeforeChange(({ tr }) => {
     if (replacing || !tr.docChanged) return;
-    const previous = new Map(blocks().filter(block => block.type === 'source' || block.type === 'secret').map(block => [block.id, block]));
+    const previous = new Map(blocks().filter(block => block.type === 'secret').map(block => [block.id, block]));
     let valid = true;
-    const seen = new Set<string>();
     let lastContent = tr.doc.firstChild?.lastChild;
     tr.doc.firstChild?.forEach(node => {
       // BlockNote keeps an empty paragraph after a final nonparagraph block.
       if (node.childCount !== 1 || node.firstChild?.type.name !== 'paragraph' || node.firstChild.childCount) lastContent = node;
     });
-    tr.doc.descendants((node, pos) => {
+    tr.doc.descendants(node => {
       if (['textColor', 'backgroundColor'].some(key => node.attrs[key] && node.attrs[key] !== 'default')) valid = false;
       if (node.attrs.textAlignment && node.attrs.textAlignment !== 'left') valid = false;
       if ((node.attrs.colspan || 1) !== 1 || (node.attrs.rowspan || 1) !== 1) valid = false;
@@ -439,27 +378,14 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       const id = String(node.attrs.id);
       const content = node.firstChild!;
       const old = previous.get(id);
-      // Some protected Markdown consumes all following source, even across blank lines.
-      if (node !== lastContent && (
-        content.type.name === 'source' && session.requiresEnd(String(content.attrs.source)) ||
-        content.type.name === 'secret' && session.requiresEndBlock(id)
-      )) valid = false;
-      if (content.attrs.metadata && tr.doc.firstChild?.firstChild?.attrs.id !== id) valid = false;
-      // Only a list item nests, and only list items nest under it: any other
-      // child comes back from Markdown as a group the adapter cannot import.
-      if (node.childCount > 1) {
-        if (!listItemTypes.includes(content.type.name)) valid = false;
-        else node.child(1).forEach(child => { if (!listItemTypes.includes(child.firstChild!.type.name)) valid = false; });
-      }
-      const isProtected = content.type.name === 'source' || content.type.name === 'secret';
-      if (isProtected && (tr.doc.resolve(pos).depth !== 1 || node.childCount > 1)) valid = false;
-      if (old) {
-        seen.add(id);
-        if (content.type.name !== old.type) valid = false;
-        if (old.type === 'source' && !sourceValues.get(id)?.has(content.attrs.source)) valid = false;
-      }
+      // An unclosed secret fence or HTML comment consumes all following source,
+      // even across blank lines; reprinting closes only a code fence.
+      if (node !== lastContent && !['codeBlock', 'diagram'].includes(content.type.name) && session.requiresEndBlock(id)) valid = false;
+      if (session.isFrontmatter(id) && content.type.name === 'codeBlock' && tr.doc.firstChild?.firstChild?.attrs.id !== id) valid = false;
+      // Markdown nests only under a list item or a quote.
+      if (node.childCount > 1 && !nestingTypes.includes(content.type.name)) valid = false;
+      if (old && content.type.name !== old.type) valid = false;
     });
-    for (const [id, block] of previous) if (block.props?.metadata && !seen.has(id)) valid = false;
     return valid;
   });
   function list(type: 'bulletListItem' | 'numberedListItem' | 'checkListItem') {
@@ -527,7 +453,7 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
   </>));
   return {
     destroy() {
-      destroyed = true; unsubscribe(); unguard(); root.unmount(); drafts.clear();
+      destroyed = true; unsubscribe(); unguard(); root.unmount();
       for (const type of dragEvents) document.removeEventListener(type, dragging, true);
     },
     getMarkdown() { return markdown; },
@@ -541,7 +467,6 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
         stale = false;
         editor.replaceBlocks(editor.document, (session.blocks.length ? session.blocks : [{ type: 'paragraph' }]) as EditorBlock[]);
         snapshot = JSON.stringify(editor.document);
-        sourceValues = new Map(session.blocks.filter(block => block.type === 'source').map(block => [block.id, new Set([block.props.source])]));
       } finally { replacing = false; }
     },
     focus() { editor.focus(); },
@@ -553,7 +478,7 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       const node = nodeFor(block.id);
       const pane = anchor === undefined ? null : node && scrollPane();
       if (!pane) node?.scrollIntoView({ block: 'center' });
-      if (block.type !== 'source' && block.type !== 'secret') editor.setTextCursorPosition(block.id, 'start');
+      if (block.type !== 'secret' && block.type !== 'divider') editor.setTextCursorPosition(block.id, 'start');
       // The carried offset is the contract of a re-render, so it is applied
       // last: the caret's own scrolling must not win over it.
       if (pane) pane.scrollTop = Math.max(0, Math.min(
@@ -575,17 +500,12 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
     },
     canUndo,
     canRedo,
-    hasDraft: () => drafts.size > 0,
-    commitDrafts: commit,
     getSecrets() { return session.secrets(blocks()); },
     replaceSecret(id, ciphertext) {
       const next = structuredClone(blocks());
-      const identity = session.secrets(next).find(secret => secret.id === id);
-      if (!identity) return false;
-      if (identity.ciphertext) reencrypted.push({ blockId: identity.blockId, from: identity.ciphertext, to: ciphertext });
+      if (!session.secrets(next).some(secret => secret.id === id)) return false;
       session.replaceSecret(id, ciphertext, next);
-      const block = next.find(block => block.id === identity.blockId)!;
-      if (block.type === 'source') sourceValues.get(block.id)?.add(block.props.source);
+      const block = findBlock(next, id)!;
       replacing = true;
       try {
         editor.transact(tr => {
@@ -599,7 +519,7 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       return true;
     },
     insertSecret(ciphertext) {
-      // A protected block never nests, so it follows the list the cursor is in.
+      // A new secret follows the top-level block the cursor is in.
       let at = editor.getTextCursorPosition().block;
       for (let parent = editor.getParentBlock(at); parent; parent = editor.getParentBlock(parent)) at = parent;
       const secret: EditorBlock = { type: 'secret', props: { ciphertext } };

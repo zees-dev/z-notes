@@ -62,7 +62,9 @@ smallest replacement that keeps the behaviour, not a second editor.
   plaintext is in the page only while the dialog is up and never in the file,
   `doc.markdown`, the editor model, a request or the clipboard. It stays a
   human gesture: no tool creates a secret (ADR 0031).
-- **A protected block is edited in place.** Its "Edit" button swaps the
+- **A protected block is edited in place.** (Retired by
+  [ADR 0044](0044-nothing-is-protected-markdown.md): there are no protected
+  blocks.) Its "Edit" button swaps the
   block's view for a textarea holding exactly that block's Markdown, secrets
   as ciphertext; a revealed secret inside it keeps its pending change until
   the next save re-encrypts it, and a ⌘Z past that save restores the old

@@ -4,7 +4,7 @@
 
    Every claim here needs the real island in a real browser: a visual edit
    rewrites only the source group it touched (frontmatter, ciphertext and
-   unsupported HTML keep their bytes), a protected block edits in place, the
+   unsupported HTML keep their bytes), nothing is shown as protected Markdown, the
    slash menu / formatting toolbar / drag handles are the native ones, a failed
    bundle says so — and the round-trip corpus opens in Edit unchanged.
    ============================================================ */
@@ -131,7 +131,7 @@ test("blank paragraphs inserted with Enter survive repeated save/reload and rema
   expect(await page.$$eval('[data-content-type="paragraph"]', nodes => nodes.map(node => node.textContent))).toEqual(["Text", "Restored paragraph", "Other text"]);
 }, 35000);
 
-test("unfinished protected HTML rejects following text and native moves without advancing the doc", async () => {
+test("unfinished verbatim HTML rejects following text and native moves without advancing the doc", async () => {
   const initialErrors = errors.length;
   await boot("Editable prose\n\n<!-- unfinished");
   await endOfFirst();
@@ -142,12 +142,12 @@ test("unfinished protected HTML rejects following text and native moves without 
   await page.click(".bn-trailing-block");
   const before = await page.$eval(".bn-editor", element => element.textContent);
   const paragraphs = await blocks("paragraph");
-  expect(paragraphs).toHaveLength(2);
+  expect(paragraphs).toHaveLength(3);
   await paragraphs.at(-1)!.click();
   await page.keyboard.type("must not follow");
   expect(await currentMarkdown()).toBe(saved);
   expect(await page.$eval(".bn-editor", element => element.textContent)).toBe(before);
-  await dragBefore('[data-content-type="source"]', '[data-content-type="paragraph"]');
+  await dragBefore('[data-content-type="paragraph"]:has(.z-verbatim)', '[data-content-type="paragraph"]');
   expect(await currentMarkdown()).toBe(saved);
   expect(await page.$eval(".bn-editor", element => element.textContent)).toBe(before);
   expect(await page.$eval('.bn-editor [data-content-type]', element => element.textContent)).toBe("Editable prose changed");
@@ -156,7 +156,7 @@ test("unfinished protected HTML rejects following text and native moves without 
   await save();
   expect(readVaultText(srv.vault, path)).toBe("Editable prose changed again\n\n<!-- unfinished");
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForSelector('[data-content-type="source"]');
+  await page.waitForSelector(".z-verbatim");
   expect(await currentMarkdown()).toBe("Editable prose changed again\n\n<!-- unfinished");
   expect(errors.slice(initialErrors)).toEqual([]);
 }, 35000);
@@ -173,94 +173,23 @@ test("native moving unfinished code closes its fence and preserves following pro
   expect(await page.$eval('[data-content-type="paragraph"]', element => element.textContent)).toBe("Prose stays separate");
 }, 35000);
 
-test("a protected block edits in place: Done replaces only its bytes and keeps every open draft, ⌘Z restores them, Esc and Cancel change nothing", async () => {
-  const original = "---\ntitle: Original\n---\n\n# Heading\n\nProse  \nnext line\n\n<div>opaque</div>\n";
-  const changed = original.replace("title: Original", "title: Changed").replace("opaque", "opaque!");
-  await boot(original);
-  // The frontmatter's Edit is the first button: metadata must remain first.
-  // A draft is its textarea followed by Done and Cancel.
-  async function draft(from = "Original", to = "Changed") {
-    await page.click(".z-source-block button");
-    await waitForFocusedInput(page, ".z-source-edit");
-    await page.$eval(".z-source-edit", (element, from) => {
-      const field = element as HTMLTextAreaElement;
-      const at = field.value.indexOf(from);
-      field.setSelectionRange(at, at + from.length);
-    }, from);
-    await page.keyboard.type(to);
-    expect(await page.$eval(".z-source-edit", e => (e as HTMLTextAreaElement).value)).toBe(`---\ntitle: ${to}\n---`);
-  }
-  for (const leave of ["Escape", "Cancel"]) {
-    await draft();
-    if (leave === "Escape") await page.keyboard.press("Escape");
-    else await page.click(".z-source-edit + button + button");
-    await page.waitForFunction(() => !document.querySelector(".z-source-edit"));
-    expect(await currentMarkdown()).toBe(original);
-  }
-  await draft();
-  // A second open draft must survive the first one's Done.
-  await page.$$eval(".z-source-block button", buttons => (buttons.at(-1) as HTMLButtonElement).click());
-  await page.waitForFunction(() => document.querySelectorAll(".z-source-edit").length === 2 && document.activeElement === document.querySelectorAll(".z-source-edit")[1]);
+test("an emptied bullet saves as a bullet and reopens as one: no group is ever protected Markdown", async () => {
+  await boot("- Transfer money\n- Buy stuff\n\nAfter\n");
+  await (await blocks("bulletListItem")).at(-1)!.click();
+  await settled();
   await page.keyboard.press("End");
-  for (const _ of "</div>") await page.keyboard.press("ArrowLeft");
-  await page.keyboard.type("!");
-  await page.click(".z-source-edit + button");
-  await waitUntil(async () => await currentMarkdown() === changed, { label: "the block edit applied" });
+  await page.keyboard.press("Enter");
   await save();
-  expect(readVaultText(srv.vault, path)).toBe(changed);
-  await pressChord(page, "KeyZ");
-  await waitUntil(async () => await currentMarkdown() === original, { label: "the block edit undone" });
-  await save();
-  expect(readVaultText(srv.vault, path)).toBe(original);
-  // An open draft is an unsaved edit: ⌘S writes it.
-  await draft();
-  await save();
-  expect(readVaultText(srv.vault, path)).toBe(original.replace("title: Original", "title: Changed"));
-  // An agent write over an open draft keeps the draft as its own undo step.
-  await draft("Changed", "Agent");
-  await page.evaluate(async p => { await (await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src)).replaceDocText(p, "agent\n"); }, path);
-  await pressChord(page, "KeyZ");
-  await waitUntil(async () => await currentMarkdown() === original.replace("title: Original", "title: Agent"), { label: "the draft kept under the agent write" });
+  expect(readVaultText(srv.vault, path)).toBe("- Transfer money\n- Buy stuff\n-\n\nAfter\n");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector('[data-content-type="bulletListItem"]');
+  expect(await page.$$eval('[data-content-type="bulletListItem"]', nodes => nodes.map(node => node.textContent))).toEqual(["Transfer money", "Buy stuff", ""]);
+  // Frontmatter, a rule, a hard break, HTML and an image: blocks and spans, never a source panel.
+  await boot("---\ntitle: T\n---\n\nOne  \ntwo\n\n---\n\n<div>x</div>\n\nSee ![alt](a.png)\n");
+  expect(await page.$$eval(".bn-editor [data-content-type]", nodes => nodes.map(node => node.getAttribute("data-content-type")))).toEqual(["codeBlock", "paragraph", "divider", "paragraph", "paragraph"]);
+  expect(await page.$$eval(".z-verbatim", nodes => nodes.map(node => node.textContent))).toEqual(["<div>x</div>", "![alt](a.png)"]);
+  expect(await page.$(".z-source-block, [data-content-type=\"source\"]")).toBeNull();
 }, 40000);
-
-test("leaving saves an open protected-block draft, which survives an external write", async () => {
-  const app = appDriver(page, srv.base);
-  const draft = async (text: string) => {
-    await app.clickDoc(path);
-    await page.click(".z-source-block button");
-    await waitForFocusedInput(page, ".z-source-edit");
-    await page.keyboard.type(text);
-  };
-  await boot("<div>opaque</div>\n");
-  await page.click(".z-source-block button");
-  await waitForFocusedInput(page, ".z-source-edit");
-  await page.keyboard.type(" drafted");
-  await page.click('#tree [data-doc="other.md"]');
-  await app.waitVeil("xgVeil", true);
-  expect(await page.$eval("#xgDiff", e => e.textContent)).toContain("protected block");
-  await page.click('[data-act="xg-save"]');
-  await app.settled("other.md");
-  expect(readVaultText(srv.vault, path)).toContain("drafted");
-  /* With the guard off, the automatic save carries the draft too. */
-  expect((await srv.api("PUT", "/api/settings", { editor: { confirmBeforeExit: false } })).status).toBe(200);
-  try {
-    await waitUntil(() => page.evaluate(async () => (await import((document.querySelector("script[src^='/assets/boot.']") as HTMLScriptElement).src)).state.settings.editor.confirmBeforeExit === false), { label: "guard off" });
-    await draft(" unasked");
-    await page.click('#tree [data-doc="other.md"]');
-    await app.settled("other.md");
-    expect(readVaultText(srv.vault, path)).toContain("unasked");
-  } finally {
-    expect((await srv.api("PUT", "/api/settings", { editor: { confirmBeforeExit: true } })).status).toBe(200);
-  }
-  await draft(" kept");
-  const sse = await srv.sse();
-  const mark = sse.all.length;
-  writeFileSync(join(srv.vault, path), "<div>external</div>\n");
-  await sse.waitFor("doc-changed", { from: mark });
-  sse.close();
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  expect(await page.$eval(".z-source-edit", e => (e as HTMLTextAreaElement).value)).toContain("kept");
-}, 45000);
 
 test("native slash menu inserts a heading and floating toolbar formats selection", async () => {
   await boot("");
@@ -568,28 +497,22 @@ test("editor requests remain local and normal interactions have no uncaught erro
   expect(errors).toEqual([]);
 });
 
-test("a copied protected source transaction leaves prose editable and saves both copies", async () => {
-  await boot("<div>protected source</div>\n\nEditable prose\n");
+test("a copied verbatim span leaves prose editable and saves both copies", async () => {
+  await boot("<div>kept as written</div>\n\nEditable prose\n");
   // Exercise the native transaction boundary used by clipboard/block duplication.
   await page.$eval(".tiptap", element => {
     const view = (element as unknown as { editor: { view: import("@tiptap/pm/view").EditorView } }).editor.view;
-    let source: { node: import("@tiptap/pm/model").Node; pos: number } | undefined;
-    view.state.doc.descendants((node, pos) => {
-      if (node.type.name === "blockContainer" && node.firstChild?.type.name === "source") source = { node, pos };
-    });
-    if (!source) throw new Error("Missing protected source block");
-    const { node, pos } = source;
-    const duplicate = node.type.create({ ...node.attrs, id: crypto.randomUUID() }, node.content);
-    view.dispatch(view.state.tr.insert(pos + node.nodeSize, duplicate));
+    const first = view.state.doc.firstChild!.firstChild!;
+    const duplicate = first.type.create({ ...first.attrs, id: crypto.randomUUID() }, first.content);
+    view.dispatch(view.state.tr.insert(1 + first.nodeSize, duplicate));
   });
-  await page.waitForFunction(() => document.querySelectorAll('[data-content-type="source"]').length === 2);
-  await page.click('[data-content-type="paragraph"]');
+  await page.waitForFunction(() => document.querySelectorAll(".z-verbatim").length === 2);
+  await page.click('[data-content-type="paragraph"]:not(:has(.z-verbatim))');
   await page.keyboard.press("End");
   await page.keyboard.type(" remains editable");
-  expect(await page.$eval('[data-content-type="paragraph"]', e => e.textContent)).toBe("Editable prose remains editable");
   await save();
   const saved = readVaultText(srv.vault, path);
-  expect(saved.match(/<div>protected source<\/div>/g)).toHaveLength(2);
+  expect(saved.match(/<div>kept as written<\/div>/g)).toHaveLength(2);
   expect(saved).toContain("Editable prose remains editable");
 }, 35000);
 
