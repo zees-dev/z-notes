@@ -23,8 +23,7 @@ edit relay and gated terminal.
   gates` = five acceptance suites plus `mermaid-e2e` and `offline-e2e`: a fence is untrusted input
   (ADR 0010) and its hardening must not regress quietly; an offline edit must never be lost.
 - `deploy/` — Dockerfile + k3s manifests; `deploy/README.md` is the runbook.
-- `.agents/skills/` — canonical repo-specific skills, symlinked from `.claude/skills/`; `spec implement clean-code` are the shared global skills.
-  `CONTEXT.md` is domain language only; `docs/` is design only; `scripts/lint-docs.ts` enforces the shape.
+- `CONTEXT.md` is domain language only; `docs/` is design only; `scripts/lint-docs.ts` enforces the shape.
 - `vaults/` — NOT in this repo (gitignored). Bring-your-own (ADR 0017), plural (ADR 0018): `ZNOTES_VAULTS_DIR`
   (default `./vaults`) holds one subdirectory per vault, the primary at `ZNOTES_VAULT` (default `./vaults/vault`).
 
