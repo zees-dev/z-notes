@@ -288,10 +288,14 @@ test("retained lists that become adjacent join one run; item-level looseness cou
   expect(inner.serialize([...clone(inner.blocks), item("bulletListItem", "c")])).toBe("- a\n  - a1\n\n- b\n\n- c\n");
 });
 test('a multi-line verbatim span inside a quote or list item survives repeated edits of its container', () => {
-  for (const raw of ['> hi\n>\n> <div>\n> x\n> </div>\n', '- item\n\n  <div>\n  x\n  </div>\n', '> a <span\n> x>b\n', '- a <span\n  x>b\n', '> - in\n>\n>   <div>\n>   y\n>   </div>\n']) {
+  const cases: [string, string][] = [['> hi\n>\n> <div>\n> x\n> </div>\n', '<div>\nx\n</div>'], ['- item\n\n  <div>\n  x\n  </div>\n', '<div>\nx\n</div>'], ['> a <span\n> x>b\n', '<span\nx>'], ['- a <span\n  x>b\n', '<span\nx>'], ['> - in\n>\n>   <div>\n>   y\n>   </div>\n', '<div>\ny\n</div>'],
+    // the marker's own indent, a task's box and a tab are the container's, never the span's
+    [' - item\n\n   <pre>\n   a\n     b\n   </pre>\n', '<pre>\na\n  b\n</pre>'], ['>  - item\n>\n>    <pre>\n>    a\n>    </pre>\n', '<pre>\na\n</pre>'], ['- [ ] item\n\n  <div>\n    x\n  </div>\n', '<div>\n  x\n</div>'], ['-\titem\n\n\t<div>\n\t  x\n\t</div>\n', '<div>\n  x\n</div>']];
+  for (const [raw, expected] of cases) {
     let session = new SourceSession(raw);
     const html = (s: SourceSession) => JSON.stringify(s.blocks).match(/"source":"([^"]*)"/)?.[1];
     const before = html(session);
+    expect(before?.replace(/\\n/g, '\n')).toBe(expected);
     for (const n of [1, 2]) {
       const blocks = clone(session.blocks);
       const first = blocks[0].content as import('../app/markdown-source').Inline[];
@@ -304,4 +308,13 @@ test('a multi-line verbatim span inside a quote or list item survives repeated e
 test('a fence inside a verbatim footnote is not a secret block and does not shift the nested ones', () => {
   const s = new SourceSession('> note[^1]\n>\n> [^1]: foot\n>\n>     ```age\n>     FOOT\n>     ```\n>\n> ```age\n> MINE\n> ```\n');
   expect(s.secrets().map(secret => secret.ciphertext)).toEqual(['> MINE']);
+});
+test('an edited list whose marker is indented keeps its nesting', () => {
+  for (const raw of [' - a\n   - b\n', 'Intro\n\n - a\n   - b\n']) {
+    const session = new SourceSession(raw);
+    const blocks = clone(session.blocks);
+    prose(blocks.find(block => block.type === 'bulletListItem')!, 'a1');
+    const reloaded = new SourceSession(session.serialize(blocks));
+    expect(reloaded.blocks.filter(block => block.type === 'bulletListItem').map(block => block.children.length)).toEqual([1]);
+  }
 });

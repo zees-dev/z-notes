@@ -68,12 +68,27 @@ function inlines(nodes: Node[], source: string, strip: Strip, styles: Record<str
   });
 }
 /* A container's first paragraph is its block's text; everything after it nests. */
+/* Columns, with tabs at 4-column stops, as CommonMark measures indentation. */
+const columns = (text: string) => [...text].reduce((col, c) => c === '\t' ? col + 4 - col % 4 : col + 1, 0);
+const expandTabs = (line: string) => line.replace(/^[ \t]+/, lead => ' '.repeat(columns(lead)));
+/* The column a list item's content starts at: its marker, then 1–4 columns of
+   space (one when the item is empty or opens with indented code). A task's box is content. */
+function itemWidth(node: Node, source: string, strip: Strip): number {
+  const start = node.position!.start.offset, end = source.indexOf('\n', start);
+  const line = strip(source.slice(source.lastIndexOf('\n', start - 1) + 1, end < 0 ? undefined : end)).replace(/\r$/, '');
+  const [, lead = '', marker = '', gap = ''] = line.match(/^([ \t]*)([-+*]|\d{1,9}[.)])([ \t]*)/) || [];
+  const markerEnd = columns(lead + marker), pad = columns(lead + marker + gap) - markerEnd;
+  return markerEnd + (pad >= 1 && pad <= 4 && line.length > (lead + marker + gap).length ? pad : 1);
+}
 function container(type: string, node: Node, source: string, spread: Map<string, boolean>, strip: Strip, props: SourceBlock['props'] = {}): SourceBlock {
   const [first, ...rest] = node.children || [];
   const lead = first?.type === 'paragraph';
   // A quote's lines open with `>`; an item's continue at its content's column.
-  const width = first ? first.position!.start.column - node.position!.start.column : 0;
-  const inner: Strip = node.type === 'blockquote' ? line => strip(line).replace(/^ {0,3}> ?/, '') : line => strip(line).replace(new RegExp(`^[ \\t]{0,${width}}`), '');
+  const width = node.type === 'blockquote' ? 0 : itemWidth(node, source, strip);
+  const inner: Strip = node.type === 'blockquote' ? line => strip(line).replace(/^ {0,3}> ?/, '') : line => {
+    const expanded = expandTabs(strip(line)), indent = expanded.match(/^ */)![0].length;
+    return expanded.slice(Math.min(indent, width));
+  };
   return block(type, lead ? inlines(first.children || [], source, inner) : [], props, (lead ? rest : node.children || []).flatMap(n => importNode(n, source, spread, inner)));
 }
 function importNode(node: Node, source: string, spread: Map<string, boolean>, strip: Strip = keep): SourceBlock[] {
@@ -349,14 +364,16 @@ export class SourceSession {
         if (this.requiresEnd(source)) throw new Error('This block must remain last');
       }
       if (i === 0 && normalizeLeading) { source = emit(blocks.slice(i, i + count)); unchanged = false; }
-      if (i === 0) append(this.groups.length && groupIndex === 0 ? this.body.slice(0, this.groups[0].start) : '');
+      // A reprinted list sets its own indent: the old marker's would misalign every continuation line.
+      const outdent = (gap: string) => !retained && listType(b) ? gap.replace(/[ \t]+$/, '') : gap;
+      if (i === 0) append(outdent(this.groups.length && groupIndex === 0 ? this.body.slice(0, this.groups[0].start) : ''));
       else {
         let separator = previous >= 0 && groupIndex === previous + 1 ? this.body.slice(this.groups[previous].end, this.groups[groupIndex].start) : '\n\n';
         // An odd gap's final separator can be short while its synthetic blank
         // stays empty, but newly cleared prose needs its own paragraph's space.
         const blankBoundary = unchanged && source === '' || source !== '' && previousUnchanged && previous >= 0 && this.groups[previous].start === this.groups[previous].end;
         if (!(unchanged && previousUnchanged || blankBoundary) && separator.split('\n').length < 3) separator = (separator.includes('\r\n') ? '\r\n\r\n' : '\n\n') + separator.slice(separator.lastIndexOf('\n') + 1);
-        append(separator);
+        append(outdent(separator));
       }
       const start = markdown.length;
       const range = { start, end: start + source.length, line };
