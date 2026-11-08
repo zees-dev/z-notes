@@ -44,9 +44,11 @@ const quoted = (outer: Strip): Strip => line => {
   const { rest, col } = outer(line), prefix = rest.match(/^ {0,3}> ?/)?.[0] ?? '';
   return { rest: rest.slice(prefix.length), col: columns(prefix, col) };
 };
-/* Whitespace up to column `to`; a tab that crosses it leaves its remainder as spaces. */
-const indented = (outer: Strip, to: number): Strip => line => {
+/* Whitespace up to `width` columns past the outer prefix; a tab that crosses
+   that column leaves its remainder as spaces. */
+const indented = (outer: Strip, width: number): Strip => line => {
   let { rest, col } = outer(line), i = 0;
+  const to = col + width;
   for (; i < rest.length && col < to && (rest[i] === ' ' || rest[i] === '\t'); i++) {
     const next = advance(col, rest[i]);
     if (next > to) return { rest: ' '.repeat(next - to) + rest.slice(i + 1), col: to };
@@ -91,19 +93,35 @@ function inlines(nodes: Node[], source: string, strip: Strip, styles: Record<str
    A task's box is content. */
 function itemColumn(node: Node, source: string): number {
   const start = node.position!.start.offset;
-  const markerCol = columns(source.slice(source.lastIndexOf('\n', start - 1) + 1, start));
+  const markerCol = columns(source.slice(lineStart(source, start), start));
   const [, marker = '', gap = '', after = ''] = source.slice(start).match(/^([-+*]|\d{1,9}[.)])([ \t]*)([^\r\n]?)/) || [];
   const markerEnd = markerCol + marker.length, pad = columns(gap, markerEnd) - markerEnd;
   return pad >= 1 && pad <= 4 && after ? markerEnd + pad : markerEnd + 1;
 }
-function container(type: string, node: Node, source: string, spread: Map<string, boolean>, strip: Strip, props: SourceBlock['props'] = {}): SourceBlock {
+/* The column a container's content starts at on the line holding `offset`. */
+type Base = (offset: number) => number;
+const lineStart = (source: string, offset: number) => source.lastIndexOf('\n', offset - 1) + 1;
+const lineAt = (source: string, offset: number) => { const end = source.indexOf('\n', offset); return source.slice(lineStart(source, offset), end < 0 ? undefined : end); };
+function container(type: string, node: Node, source: string, spread: Map<string, boolean>, strip: Strip, base: Base, props: SourceBlock['props'] = {}): SourceBlock {
   const [first, ...rest] = node.children || [];
   const lead = first?.type === 'paragraph';
-  // A quote's lines open with `>`; an item's continue at its content's column.
-  const inner = node.type === 'blockquote' ? quoted(strip) : indented(strip, itemColumn(node, source));
-  return block(type, lead ? inlines(first.children || [], source, inner) : [], props, (lead ? rest : node.children || []).flatMap(n => importNode(n, source, spread, inner)));
+  let inner: Strip, innerBase: Base;
+  if (node.type === 'blockquote') {
+    // A quote's lines open with `>` and one optional space, wherever its `>` sits.
+    inner = quoted(strip);
+    innerBase = offset => {
+      const prefix = source.slice(lineStart(source, offset), offset), at = prefix.lastIndexOf('>');
+      return columns(prefix.slice(0, at + 1)) + (/[ \t]/.test(prefix[at + 1] ?? '') ? 1 : 0);
+    };
+  } else {
+    // An item's lines continue as far past its container's content as its marker line put its own.
+    const start = node.position!.start.offset, column = itemColumn(node, source), width = column - base(start);
+    inner = indented(strip, width);
+    innerBase = offset => lineStart(source, offset) === lineStart(source, start) ? column : strip(lineAt(source, offset)).col + width;
+  }
+  return block(type, lead ? inlines(first.children || [], source, inner) : [], props, (lead ? rest : node.children || []).flatMap(n => importNode(n, source, spread, inner, innerBase)));
 }
-function importNode(node: Node, source: string, spread: Map<string, boolean>, strip: Strip = keep): SourceBlock[] {
+function importNode(node: Node, source: string, spread: Map<string, boolean>, strip: Strip = keep, base: Base = () => 0): SourceBlock[] {
   const children = node.children || [];
   if (node.type === 'paragraph' || node.type === 'heading') return [block(node.type, inlines(children, source, strip), node.type === 'heading' ? { level: node.depth || 1 } : {})];
   if (node.type === 'thematicBreak') return [block('divider')];
@@ -113,10 +131,10 @@ function importNode(node: Node, source: string, spread: Map<string, boolean>, st
     if (node.lang === 'mermaid' && (node.value || '').trim()) return [block('diagram', node.value || '')];
     return [block('codeBlock', [text(node.value || '')], { language: node.lang || 'text' })];
   }
-  if (node.type === 'blockquote') return [container('quote', node, source, spread, strip)];
+  if (node.type === 'blockquote') return [container('quote', node, source, spread, strip, base)];
   if (node.type === 'list') return children.map((item, index) => {
     // An ordered task has no editor form: it is a task, numbered by its file until edited.
-    const imported = container(typeof item.checked === 'boolean' ? 'checkListItem' : node.ordered ? 'numberedListItem' : 'bulletListItem', item, source, spread, strip, typeof item.checked === 'boolean' ? { checked: item.checked } : node.ordered ? { start: (node.start ?? 1) + index } : {});
+    const imported = container(typeof item.checked === 'boolean' ? 'checkListItem' : node.ordered ? 'numberedListItem' : 'bulletListItem', item, source, spread, strip, base, typeof item.checked === 'boolean' ? { checked: item.checked } : node.ordered ? { start: (node.start ?? 1) + index } : {});
     // Looseness is the source list's, not the editor's: BlockNote has no prop
     // for it, so an edited item is reprinted from what the file already said.
     // A blank line inside one item makes the whole list loose, whatever the list node says.

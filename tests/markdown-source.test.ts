@@ -293,7 +293,9 @@ test('a multi-line verbatim span inside a quote or list item survives repeated e
     [' - item\n\n   <pre>\n   a\n     b\n   </pre>\n', '<pre>\na\n  b\n</pre>'], ['>  - item\n>\n>    <pre>\n>    a\n>    </pre>\n', '<pre>\na\n</pre>'], ['- [ ] item\n\n  <div>\n    x\n  </div>\n', '<div>\n  x\n</div>'], ['-\titem\n\n\t<div>\n\t  x\n\t</div>\n', '<div>\n  x\n</div>'],
     // an item opening on its parent's line measures its own marker; a tab stops from the real line's start
     ['1. - a\n\n     <pre>\n     x\n       y\n     </pre>\n', '<pre>\nx\n  y\n</pre>'], ['- 1. a\n\n     <pre>\n     x\n       y\n     </pre>\n', '<pre>\nx\n  y\n</pre>'],
-    ['> -\ta\n>\n>   <pre>\n>   x\n>     y\n>   </pre>\n', '<pre>\nx\n  y\n</pre>'], ['- 1. a <span\n     x  y>b\n', '<span\nx  y>']];
+    ['> -\ta\n>\n>   <pre>\n>   x\n>     y\n>   </pre>\n', '<pre>\nx\n  y\n</pre>'], ['- 1. a <span\n     x  y>b\n', '<span\nx  y>'],
+    // a quote's prefix may be wider on the marker line than on the lines after it
+    [' > - a\n>\n>   <pre>\n>   x\n>     y\n>   </pre>\n', '<pre>\nx\n  y\n</pre>'], [' > - a\n>   - b\n>\n>     <pre>\n>     x\n>       y\n>     </pre>\n', '<pre>\nx\n  y\n</pre>']];
   for (const [raw, expected] of cases) {
     let session = new SourceSession(raw);
     const html = (s: SourceSession) => JSON.stringify(s.blocks).match(/"source":"([^"]*)"/)?.[1];
