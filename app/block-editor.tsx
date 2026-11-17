@@ -311,6 +311,23 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
       },
     }),
   });
+  /* BlockNote's ``` rule fires on Enter only where nothing claims Enter
+     first; a list item splits instead, keeping the fence as literal text.
+     Its own block shortcuts outrank the default priority. */
+  const fenceEnter = Extension.create({
+    name: 'zFenceEnter',
+    priority: 1000,
+    addKeyboardShortcuts: () => ({
+      Enter: ({ editor: tiptap }) => {
+        const { selection } = tiptap.state;
+        const content = selection.$from.parent;
+        const fence = /^```([^`\s]*)$/.exec(content.textContent);
+        if (!selection.empty || !fence || !['paragraph', ...listItemTypes].includes(content.type.name)) return false;
+        editor.updateBlock(editor.getTextCursorPosition().block, { type: 'codeBlock', props: { language: fence[1] }, content: [] });
+        return true;
+      },
+    }),
+  });
   /* Multi-line text committed as input rather than pasted (a keyboard's
      clipboard strip, dictation) is one `beforeinput` the browser plays as
      insert/split/insert, and ProseMirror undoes the split along with every
@@ -341,7 +358,7 @@ export function mountEditor(host: HTMLElement, options: EditorOptions): EditorCo
     domAttributes: { editor: { 'aria-label': 'Doc editor' } },
     // `_tiptapOptions.extensions` is BlockNote's own undocumented door; it
     // APPENDS to the editor's extension list rather than replacing it.
-    _tiptapOptions: { extensions: [linkCopy, listBackspace, multiLineInput] },
+    _tiptapOptions: { extensions: [linkCopy, listBackspace, fenceEnter, multiLineInput] },
   });
   let snapshot = JSON.stringify(editor.document);
   function blocks(): SourceBlock[] { return editor.document as unknown as SourceBlock[]; }

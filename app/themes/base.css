@@ -2382,9 +2382,10 @@ button.model-chip:focus-visible { outline: none; box-shadow: var(--sh-focus); }
 .z-link-copy:hover, .z-link-copy:focus-visible { opacity: 1; color: var(--accent); background: var(--accent-soft); }
 /* Code WRAPS, here as everywhere: a long line is content, not a reason to hide
    the rest of the block behind a horizontal scrollbar. The top padding is the
-   Copy button's room. */
+   Copy button's room; the block's density padding is the only inset, so the
+   `pre` drops BlockNote's own 24px. */
 .doc .bn-block-content[data-content-type="codeBlock"] { position: relative; font-family: var(--mono); font-size: calc(var(--d-code-fs) * var(--doc-zoom, 1)); line-height: var(--d-pre-lh); background: var(--code-bg); color: var(--code-fg); white-space: pre-wrap; padding: var(--d-pre-pad); padding-top: calc(var(--d-code-btn-h) + 8px); }
-.doc .bn-block-content[data-content-type="codeBlock"] pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; min-width: 0; }
+.doc .bn-block-content[data-content-type="codeBlock"] pre { padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; min-width: 0; }
 .z-code-copy { position: absolute; top: 4px; right: 4px; height: var(--d-code-btn-h); padding: 0 7px; border: var(--bd); border-radius: var(--r-sm); background: var(--btn-bg); color: var(--btn-fg); font: var(--d-code-bar-fs) var(--font); cursor: pointer; }
 .z-code-copy:hover { background: var(--btn-hover-bg); }
 /* the secret block's own DOM, injected into a non-editable node view */

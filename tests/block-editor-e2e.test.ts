@@ -628,3 +628,17 @@ test("the copy button puts the exact href on the clipboard and writes nothing to
   expect(await currentMarkdown()).toBe(LINKED);
   expect(readVaultText(srv.vault, path)).toBe(LINKED);
 }, 40000);
+
+// BlockNote's own rule converts a paragraph; a list item used to split instead.
+test("a fence typed in a nested list item starts a code block there on Enter", async () => {
+  await boot("- get approval\n");
+  await endOfFirst("bulletListItem");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await settled();
+  await page.keyboard.type("```ts");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("hi");
+  await save();
+  expect(readVaultText(srv.vault, path)).toBe("- get approval\n  ```ts\n  hi\n  ```\n");
+}, 40000);

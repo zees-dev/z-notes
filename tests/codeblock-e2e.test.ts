@@ -270,12 +270,7 @@ describe("code blocks answer to density, in every theme", () => {
       expect(`${theme} compact read as: ${compact.density}`).toBe(`${theme} compact read as: compact`);
 
       /* Named one by one, and asserted in ONE breath, so a failure names every
-         knob the rescale forgot rather than only the first.
-
-         (Not `pre padding-top`: measured, the island's code block keeps a flat
-         24px in both densities and all three themes — the old `--d-pre-pad`
-         token belonged to a DOM that no longer exists, and the block's own
-         padding is not claimed to scale.) */
+         knob the rescale forgot rather than only the first. */
       const knobs: Array<[string, number, number]> = [
         ["code font-size", compact.fontSize, comfy.fontSize],
         ["code line-height", compact.lineHeight, comfy.lineHeight],
