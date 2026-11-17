@@ -641,7 +641,11 @@ Verified on this machine:
   smoke-tested on its image and applied the same way. Release 0.23.0 (no
   protected Markdown, ADR 0044; the foldable sidebar, ADR 0045) was smoke-tested
   on its image at 882x1104: a list ending in a bare `-` opened as bullets, not a
-  raw panel, and the tree was a column. It was applied the same way.
+  raw panel, and the tree was a column. It was applied the same way. Release
+  0.23.1 (a code block drops BlockNote's 24px `pre` padding; ``` then Enter
+  starts a code block in a list item) was smoke-tested on its image: it served
+  the new theme rule and editor bundle and listed a vault. It was applied the
+  same way.
 
 - **`docker build` was never run.** The `docker` CLI exists but no daemon is
   reachable (`/var/run/docker.sock` absent). The Dockerfile is therefore
