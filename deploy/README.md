@@ -645,7 +645,10 @@ Verified on this machine:
   0.23.1 (a code block drops BlockNote's 24px `pre` padding; ``` then Enter
   starts a code block in a list item) was smoke-tested on its image: it served
   the new theme rule and editor bundle and listed a vault. It was applied the
-  same way.
+  same way. Release 0.23.2 (the AI capability probe sends no reasoning effort,
+  so a model without effort `none` probes ok instead of unreachable) was
+  smoke-tested on its image: it served the shell and listed a vault. It was
+  applied the same way.
 
 - **`docker build` was never run.** The `docker` CLI exists but no daemon is
   reachable (`/var/run/docker.sock` absent). The Dockerfile is therefore
