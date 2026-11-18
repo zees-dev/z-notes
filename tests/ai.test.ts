@@ -2275,6 +2275,18 @@ describe("endpoint status — probed at boot, and truthful between probes", () =
     expect(`POST answered a fresh verdict: ${p.body.status.state}`).toBe("POST answered a fresh verdict: ok");
   }, 60000);
 
+  test("a model whose effort scale has no `none` still probes ok", async () => {
+    /* REGRESSION: the reachability step sent effort `none`, which gpt-6.2-sol
+       answers 400, so a working endpoint read "unreachable" */
+    const m = await newMock();
+    const s = await newServer({ seed: { "inbox.md": "# Inbox\n\n" } });
+    await configure(s, m);
+    m.rejectEffort(["none"]);
+
+    const p = await s.api("POST", "/api/ai/status", {});
+    expect(`state: ${p.body.status.state}`).toBe("state: ok");
+  }, 60000);
+
   test("a real turn that fails flips the status to unreachable, and a good one flips it back", async () => {
     const m = await newMock();
     const s = await newServer({ seed: { "inbox.md": "# Inbox\n\nhello\n" } });

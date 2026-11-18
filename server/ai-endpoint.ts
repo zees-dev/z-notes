@@ -513,15 +513,10 @@ export class AiEndpoint {
       /* a proxy without /models is not a failure — step 2 is the real test */
     }
 
-    // 2. does /responses answer at all?
+    // 2. does /responses answer at all? No `reasoning`: effort scales differ per
+    //    model (gpt-6.2-sol refuses `none`), and step 3 tests reasoning
     try {
-      const r = await call("/responses", {
-        model,
-        input: "ping",
-        max_output_tokens: 16,
-        stream: false,
-        reasoning: { effort: "none" },
-      });
+      const r = await call("/responses", { model, input: "ping", max_output_tokens: 16, stream: false });
       out.responses = r.status >= 200 && r.status < 300;
       if (!out.responses) out.error = `POST /responses → ${r.status}: ${classifyProbe(r.status)}`;
       // research §7 step 2: 404/405 ⇒ this endpoint is chat-completions only
